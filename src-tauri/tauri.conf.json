@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "light-editor-vidz",
+  "version": "1.0.0",
+  "identifier": "com.sikander.lighteditorvidz",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "light-editor-vidz",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1000,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm", "appimage", "app"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEyMzM0MEQwNEVENkU3OTIKUldTUzU5Wk8wRUF6RWthVkQ5SXQvQkpzYkxia3Z5VFlGbFdzelpTbGZjVFZLNXJGbG0yL2srYmEK",
+      "endpoints": ["https://github.com/light-editor-vidz/light-editor-vidz/releases/latest/download/latest.json"]
+    }
+  }
+}

@@ -1,0 +1,354 @@
+use serde::Serialize;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// Lit un média (vidéo/image/audio) et le renvoie en octets bruts plutôt que via le protocole
+/// `asset://`. Contournement pour la vidéo : WebKitGTK (webview Tauri sur Linux) rejette parfois
+/// un `<video src="asset://...">` avec `MEDIA_ERR_SRC_NOT_SUPPORTED` alors que le fichier est
+/// parfaitement lisible (GStreamer le décode sans problème en dehors de la webview) — un schéma
+/// d'URL personnalisé n'est pas toujours accepté comme source par l'élément `<video>`, contrairement
+/// à `<img>`. Charger les octets et construire une URL `blob:` côté frontend contourne le problème.
+// `async` : lire un fichier vidéo de plusieurs centaines de Mo ne doit pas bloquer le thread
+// principal (les commandes synchrones Tauri v2 y sont exécutées par défaut).
+#[tauri::command(async)]
+pub fn read_media_file(
+    project_dir: String,
+    relative_src: String,
+) -> Result<tauri::ipc::Response, String> {
+    let path = scene_core::paths::resolve_media_path(Path::new(&project_dir), &relative_src)?;
+    let bytes = fs::read(&path).map_err(|e| format!("Failed to read media file: {e}"))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Sous-dossier de `assets/` dans lequel stocker ce type de média.
+pub(crate) fn kind_subdir(kind: &str) -> Result<&'static str, String> {
+    match kind {
+        "image" => Ok("images"),
+        "video" => Ok("videos"),
+        "audio" => Ok("audio"),
+        _ => Err(format!("Unknown media type: {kind}")),
+    }
+}
+
+/// Évite d'écraser un fichier existant en suffixant `-2`, `-3`, ... avant l'extension.
+pub(crate) fn unique_destination(dir: &Path, filename: &str) -> PathBuf {
+    let mut dest = dir.join(filename);
+    if !dest.exists() {
+        return dest;
+    }
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename);
+    let ext = Path::new(filename)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let mut i = 2;
+    loop {
+        let candidate = if ext.is_empty() {
+            format!("{stem}-{i}")
+        } else {
+            format!("{stem}-{i}.{ext}")
+        };
+        dest = dir.join(candidate);
+        if !dest.exists() {
+            return dest;
+        }
+        i += 1;
+    }
+}
+
+/// Copie un fichier choisi par l'utilisateur dans `<project_dir>/assets/<kind>s/`.
+/// Retourne le chemin relatif au dossier projet (ex: `assets/images/logo.png`).
+#[tauri::command]
+pub fn import_asset(
+    project_dir: String,
+    kind: String,
+    source_path: String,
+) -> Result<String, String> {
+    let subdir = kind_subdir(&kind)?;
+    let target_dir = Path::new(&project_dir).join("assets").join(subdir);
+    fs::create_dir_all(&target_dir)
+        .map_err(|e| format!("Failed to create assets directory: {e}"))?;
+
+    let source = Path::new(&source_path);
+    let filename = source
+        .file_name()
+        .and_then(|f| f.to_str())
+        .ok_or_else(|| "Invalid source filename".to_string())?;
+
+    let dest = unique_destination(&target_dir, filename);
+    fs::copy(source, &dest).map_err(|e| format!("Failed to copy file: {e}"))?;
+
+    let dest_filename = dest
+        .file_name()
+        .and_then(|f| f.to_str())
+        .ok_or_else(|| "Invalid destination filename".to_string())?;
+    Ok(format!("assets/{subdir}/{dest_filename}"))
+}
+
+#[derive(Debug, Serialize)]
+pub struct AssetInfo {
+    pub filename: String,
+    pub relative_path: String,
+}
+
+/// Liste les médias déjà importés dans `<project_dir>/assets/<kind>s/`.
+#[tauri::command]
+pub fn list_assets(project_dir: String, kind: String) -> Result<Vec<AssetInfo>, String> {
+    let subdir = kind_subdir(&kind)?;
+    let dir = Path::new(&project_dir).join("assets").join(subdir);
+    let entries = match fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(vec![]),
+    };
+
+    let mut assets = Vec::new();
+    for entry in entries.flatten() {
+        if entry.path().is_file() {
+            if let Some(filename) = entry.file_name().to_str() {
+                assets.push(AssetInfo {
+                    filename: filename.to_string(),
+                    relative_path: format!("assets/{subdir}/{filename}"),
+                });
+            }
+        }
+    }
+    assets.sort_by(|a, b| a.filename.cmp(&b.filename));
+    Ok(assets)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kind_subdir_maps_known_kinds() {
+        assert_eq!(kind_subdir("image"), Ok("images"));
+        assert_eq!(kind_subdir("video"), Ok("videos"));
+        assert_eq!(kind_subdir("audio"), Ok("audio"));
+    }
+
+    #[test]
+    fn kind_subdir_rejects_an_unknown_kind() {
+        assert!(kind_subdir("subtitle").is_err());
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "letest-assets-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn unique_destination_returns_the_plain_name_when_free() {
+        let dir = temp_dir("free");
+        assert_eq!(unique_destination(&dir, "logo.png"), dir.join("logo.png"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unique_destination_suffixes_on_collision_and_preserves_the_extension() {
+        let dir = temp_dir("collision");
+        fs::write(dir.join("logo.png"), b"a").unwrap();
+        assert_eq!(unique_destination(&dir, "logo.png"), dir.join("logo-2.png"));
+
+        fs::write(dir.join("logo-2.png"), b"b").unwrap();
+        assert_eq!(unique_destination(&dir, "logo.png"), dir.join("logo-3.png"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unique_destination_handles_a_filename_without_extension() {
+        let dir = temp_dir("noext");
+        fs::write(dir.join("README"), b"a").unwrap();
+        assert_eq!(unique_destination(&dir, "README"), dir.join("README-2"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── import ───────────────────────────────────────────────────────────────
+
+    /// Projet temporaire, avec un fichier source à importer.
+    fn project_with_source(filename: &str) -> (tempfile::TempDir, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("clip.lvproj");
+        std::fs::create_dir_all(&project).unwrap();
+        let source = dir.path().join(filename);
+        std::fs::write(&source, b"MEDIA").unwrap();
+        (
+            dir,
+            project.to_string_lossy().into_owned(),
+            source.to_string_lossy().into_owned(),
+        )
+    }
+
+    #[test]
+    fn importing_copies_the_file_and_returns_its_project_relative_path() {
+        let (_dir, project, source) = project_with_source("logo.png");
+
+        let rel = import_asset(project.clone(), "image".into(), source).unwrap();
+
+        assert_eq!(rel, "assets/images/logo.png");
+        assert_eq!(
+            std::fs::read(Path::new(&project).join(&rel)).unwrap(),
+            b"MEDIA"
+        );
+    }
+
+    #[test]
+    fn each_media_type_lands_in_its_own_folder() {
+        for (kind, subdir, name) in [
+            ("image", "images", "a.png"),
+            ("video", "videos", "b.mp4"),
+            ("audio", "audio", "c.mp3"),
+        ] {
+            let (_dir, project, source) = project_with_source(name);
+
+            let rel = import_asset(project, kind.into(), source).unwrap();
+
+            assert_eq!(rel, format!("assets/{subdir}/{name}"));
+        }
+    }
+
+    #[test]
+    fn importing_the_same_name_twice_keeps_both_files() {
+        let (_dir, project, source) = project_with_source("logo.png");
+        let first = import_asset(project.clone(), "image".into(), source.clone()).unwrap();
+
+        let second = import_asset(project.clone(), "image".into(), source).unwrap();
+
+        assert_eq!(first, "assets/images/logo.png");
+        assert_eq!(second, "assets/images/logo-2.png");
+        assert!(Path::new(&project).join(&first).is_file());
+        assert!(Path::new(&project).join(&second).is_file());
+    }
+
+    #[test]
+    fn importing_an_unknown_media_type_is_refused() {
+        let (_dir, project, source) = project_with_source("a.bin");
+
+        let err = import_asset(project, "hologram".into(), source).unwrap_err();
+
+        assert_eq!(err, "Unknown media type: hologram");
+    }
+
+    #[test]
+    fn importing_a_missing_source_is_refused() {
+        let (_dir, project, _source) = project_with_source("a.png");
+
+        let err = import_asset(project, "image".into(), "/nowhere/a.png".into()).unwrap_err();
+
+        assert!(err.starts_with("Failed to copy file:"), "{err}");
+    }
+
+    #[test]
+    fn a_source_path_with_no_filename_is_refused() {
+        let (_dir, project, _source) = project_with_source("a.png");
+
+        let err = import_asset(project, "image".into(), "/".into()).unwrap_err();
+
+        assert_eq!(err, "Invalid source filename");
+    }
+
+    // ── listing ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn listing_returns_the_imported_files_sorted() {
+        let (_dir, project, source) = project_with_source("b.png");
+        import_asset(project.clone(), "image".into(), source).unwrap();
+        let other = Path::new(&project).join("assets/images/a.png");
+        std::fs::write(&other, b"X").unwrap();
+
+        let assets = list_assets(project, "image".into()).unwrap();
+
+        assert_eq!(
+            assets
+                .iter()
+                .map(|a| a.filename.as_str())
+                .collect::<Vec<_>>(),
+            ["a.png", "b.png"]
+        );
+        assert_eq!(assets[0].relative_path, "assets/images/a.png");
+    }
+
+    #[test]
+    fn listing_a_folder_that_does_not_exist_yet_is_empty() {
+        let (_dir, project, _source) = project_with_source("a.png");
+
+        assert!(list_assets(project, "video".into()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn listing_skips_sub_folders() {
+        let (_dir, project, source) = project_with_source("a.png");
+        import_asset(project.clone(), "image".into(), source).unwrap();
+        std::fs::create_dir_all(Path::new(&project).join("assets/images/nested")).unwrap();
+
+        let assets = list_assets(project, "image".into()).unwrap();
+
+        assert_eq!(assets.len(), 1);
+    }
+
+    #[test]
+    fn listing_an_unknown_media_type_is_refused() {
+        let (_dir, project, _source) = project_with_source("a.png");
+
+        assert!(list_assets(project, "hologram".into()).is_err());
+    }
+
+    #[test]
+    fn each_kind_only_lists_its_own_folder() {
+        let (_dir, project, source) = project_with_source("a.png");
+        import_asset(project.clone(), "image".into(), source.clone()).unwrap();
+        import_asset(project.clone(), "audio".into(), source).unwrap();
+
+        assert_eq!(
+            list_assets(project.clone(), "image".into()).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            list_assets(project.clone(), "audio".into()).unwrap().len(),
+            1
+        );
+        assert!(list_assets(project, "video".into()).unwrap().is_empty());
+    }
+
+    // ── lecture brute ────────────────────────────────────────────────────────
+
+    #[test]
+    fn reading_a_media_file_succeeds_for_an_imported_asset() {
+        let (_dir, project, source) = project_with_source("clip.mp4");
+        let rel = import_asset(project.clone(), "video".into(), source).unwrap();
+
+        // `Response` n'implémente pas Debug : on teste l'issue, pas son contenu.
+        assert!(read_media_file(project, rel).is_ok());
+    }
+
+    #[test]
+    fn reading_a_media_file_that_is_gone_is_refused() {
+        let (_dir, project, _source) = project_with_source("a.png");
+
+        let Err(err) = read_media_file(project, "assets/images/absent.png".into()) else {
+            panic!("un fichier absent doit être refusé");
+        };
+
+        // La résolution du chemin échoue avant même la lecture.
+        assert!(err.starts_with("media file not found:"), "{err}");
+    }
+
+    #[test]
+    fn reading_outside_the_project_is_refused() {
+        // `resolve_media_path` interdit de remonter hors du dossier projet.
+        let (_dir, project, _source) = project_with_source("a.png");
+
+        assert!(read_media_file(project, "../../etc/passwd".into()).is_err());
+    }
+}

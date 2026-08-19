@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <title>LightEditorVidz — desktop video editor</title>
+    <meta
+      name="description"
+      content="A desktop video editor built with Tauri + React. Real mp4 export, animations, multi-scene timeline. Free and open source."
+    />
+    <style>
+      :root {
+        --bg-deepest: #0b0b0f;
+        --bg-app: #0f0f15;
+        --bg-panel: #16161d;
+        --bg-card: #1a1a22;
+        --text-primary: #e9e9f0;
+        --text-muted: #9a9aa8;
+        --text-faint: #6b6b78;
+        --border-thin: rgba(255, 255, 255, 0.07);
+        --border-field: rgba(255, 255, 255, 0.1);
+        --accent: #5c86ff;
+        --accent2: #a45cff;
+        --accent-gradient: linear-gradient(135deg, var(--accent), var(--accent2));
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: radial-gradient(circle at 50% 0%, #16161f 0%, var(--bg-app) 60%);
+        color: var(--text-primary);
+        font-family:
+          "Manrope",
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        line-height: 1.55;
+      }
+
+      code,
+      pre {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+      }
+
+      main {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 80px 24px 100px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 28px;
+      }
+
+      .logo {
+        width: 52px;
+        height: 52px;
+        border-radius: 15px;
+        background: var(--accent-gradient);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 10px 30px rgba(92, 134, 255, 0.36);
+        flex-shrink: 0;
+      }
+
+      .logo svg {
+        width: 20px;
+        height: 20px;
+      }
+
+      h1 {
+        font-size: 26px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        margin: 0;
+      }
+
+      .accent {
+        color: var(--accent);
+      }
+
+      .kicker {
+        font-size: 11px;
+        color: var(--text-faint);
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin-top: 2px;
+      }
+
+      .tagline {
+        font-size: 17px;
+        color: var(--text-muted);
+        max-width: 560px;
+      }
+
+      .actions {
+        display: flex;
+        gap: 12px;
+        margin: 32px 0 48px;
+        flex-wrap: wrap;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 13px 22px;
+        border-radius: 12px;
+        font-weight: 700;
+        font-size: 14px;
+        text-decoration: none;
+        border: 1px solid var(--border-field);
+      }
+
+      .btn-primary {
+        background: var(--accent-gradient);
+        color: #fff;
+        border: none;
+        box-shadow: 0 10px 30px rgba(92, 134, 255, 0.36);
+      }
+
+      .btn-secondary {
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text-primary);
+      }
+
+      section {
+        margin-top: 56px;
+      }
+
+      h2 {
+        font-size: 18px;
+        font-weight: 800;
+        margin: 0 0 16px;
+      }
+
+      .install-block {
+        background: var(--bg-panel);
+        border: 1px solid var(--border-thin);
+        border-radius: 14px;
+        padding: 18px 20px;
+        margin-bottom: 14px;
+      }
+
+      .install-block h3 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      pre {
+        background: var(--bg-deepest);
+        border: 1px solid var(--border-field);
+        border-radius: 10px;
+        padding: 14px 16px;
+        overflow-x: auto;
+        font-size: 13px;
+        margin: 0;
+      }
+
+      /* Une commande et son bouton de copie. La commande défile si elle est longue,
+         le bouton reste à sa place. */
+      .cmd {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--bg-deepest);
+        border: 1px solid var(--border-field);
+        border-radius: 10px;
+        padding: 12px 12px 12px 16px;
+        margin: 0 0 10px;
+      }
+
+      .cmd code {
+        flex: 1;
+        min-width: 0;
+        overflow-x: auto;
+        white-space: nowrap;
+        font-size: 13px;
+        background: none;
+        padding: 0;
+      }
+
+      .copy-btn {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-muted);
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+
+      .copy-btn:hover {
+        color: var(--text);
+        background: var(--border-field);
+      }
+
+      .copy-btn.copied {
+        color: #34d399;
+      }
+
+      .cmd-label {
+        display: block;
+        margin: 12px 0 6px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-muted);
+      }
+
+      ul {
+        color: var(--text-muted);
+        padding-left: 20px;
+      }
+
+      li {
+        margin-bottom: 8px;
+      }
+
+      .features {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
+      }
+
+      .feature-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-thin);
+        border-radius: 12px;
+        padding: 16px;
+        font-size: 13.5px;
+        color: var(--text-muted);
+      }
+
+      .feature-card strong {
+        display: block;
+        color: var(--text-primary);
+        font-size: 14px;
+        margin-bottom: 4px;
+      }
+
+      footer {
+        margin-top: 80px;
+        padding-top: 24px;
+        border-top: 1px solid var(--border-thin);
+        color: var(--text-faint);
+        font-size: 13px;
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      footer a {
+        color: var(--text-muted);
+      }
+
+      @media (max-width: 600px) {
+        .features {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .lang-toggle {
+        position: fixed;
+        top: 18px;
+        right: 18px;
+        z-index: 50;
+        padding: 6px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border-field);
+        background: var(--bg-card);
+        color: var(--text-muted);
+        font: 700 12px/1 inherit;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+      }
+      .lang-toggle:hover {
+        color: var(--text-primary);
+        border-color: var(--accent);
+      }
+
+      .install-block-primary {
+        border: 1px solid var(--accent);
+        background: linear-gradient(180deg, rgba(92, 134, 255, 0.08), transparent);
+      }
+      .badge-reco {
+        display: inline-block;
+        padding: 3px 10px;
+        margin-bottom: 10px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      .pill {
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border-field);
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+
+      /* ── Barre de navigation ── (structure commune aux six sites) */
+      .site-nav {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: color-mix(in srgb, var(--bg-app) 85%, transparent);
+        backdrop-filter: blur(16px);
+        border-bottom: 1px solid var(--border-thin);
+      }
+
+      .site-nav-inner {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 0 24px;
+        height: 60px;
+        display: flex;
+        align-items: center;
+        gap: 32px;
+      }
+
+      .site-nav-logo {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-weight: 700;
+        font-size: 0.95rem;
+        color: var(--text-primary);
+      }
+      .site-nav-logo img {
+        display: block;
+        width: 28px;
+        height: 28px;
+      }
+
+      .site-nav-links {
+        display: flex;
+        gap: 24px;
+        margin-left: auto;
+        align-items: center;
+      }
+
+      .site-nav-links a {
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        text-decoration: none;
+        transition: color 0.2s;
+      }
+      .site-nav-links a:hover {
+        color: var(--text-primary);
+      }
+
+      /* La bascule de langue rejoint la barre : elle flottait au-dessus du contenu. */
+      .site-nav .lang-toggle {
+        position: static;
+        margin: 0;
+      }
+
+      /* ── En-tête ── */
+      .site-hero {
+        position: relative;
+        overflow: hidden;
+        padding: 96px 24px 72px;
+        text-align: center;
+      }
+
+      .site-hero-glow {
+        position: absolute;
+        top: -100px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 700px;
+        height: 500px;
+        max-width: 100vw;
+        background: radial-gradient(
+          ellipse at center,
+          color-mix(in srgb, var(--accent) 18%, transparent) 0%,
+          transparent 70%
+        );
+        pointer-events: none;
+      }
+
+      .site-hero-inner {
+        position: relative;
+        max-width: 700px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 20px;
+      }
+
+      .site-hero-logo {
+        width: 96px;
+        height: 96px;
+      }
+
+      .site-hero-title {
+        font-size: clamp(1.9rem, 5vw, 3rem);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        line-height: 1.15;
+        margin: 0;
+        color: var(--text-primary);
+      }
+
+      .site-hero-sub {
+        color: var(--text-muted);
+        font-size: 1.1rem;
+        max-width: 520px;
+        margin: 0;
+      }
+
+      .site-hero-actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
+      .site-btn-primary {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--accent);
+        color: #fff;
+        font-weight: 600;
+        padding: 12px 28px;
+        border-radius: 10px;
+        font-size: 0.95rem;
+        text-decoration: none;
+        transition:
+          background 0.2s,
+          transform 0.15s;
+      }
+      .site-btn-primary:hover {
+        background: var(--accent2);
+        transform: translateY(-1px);
+      }
+
+      .site-btn-ghost {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: transparent;
+        border: 1px solid var(--border-thin);
+        color: var(--text-primary);
+        font-weight: 500;
+        padding: 12px 24px;
+        border-radius: 10px;
+        font-size: 0.95rem;
+        text-decoration: none;
+        transition:
+          border-color 0.2s,
+          background 0.2s;
+      }
+      .site-btn-ghost:hover {
+        border-color: var(--accent);
+        background: var(--bg-card);
+      }
+
+      .site-hero-platforms {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
+      .site-platform-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-thin);
+        border-radius: 20px;
+        padding: 5px 14px;
+        font-size: 0.8rem;
+        color: var(--text-muted);
+      }
+
+      .site-platform-free {
+        color: #34d399;
+        border-color: #34d39930;
+        background: #34d3990d;
+      }
+
+      @media (max-width: 640px) {
+        .site-nav-links a:not(.site-nav-gh) {
+          display: none;
+        }
+        .site-hero {
+          padding: 64px 20px 56px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-nav">
+      <div class="site-nav-inner">
+        <a href="#" class="site-nav-logo">
+          <img src="favicon.png" alt="LightEditorVidz" />
+          <span>LightEditorVidz</span>
+        </a>
+        <nav class="site-nav-links">
+          <a href="#features" data-fr="Fonctionnalit&eacute;s" data-en="Features">Fonctionnalit&eacute;s</a>
+          <a href="#install" data-fr="Installation" data-en="Install">Installation</a>
+          <a href="#uninstall" data-fr="D&eacute;sinstallation" data-en="Uninstall">D&eacute;sinstallation</a>
+          <a
+            href="https://github.com/light-editor-vidz/light-editor-vidz"
+            target="_blank"
+            rel="noopener"
+            class="site-nav-gh"
+            >GitHub</a
+          >
+        </nav>
+        <button class="lang-toggle" id="langToggle" aria-label="Switch language">EN</button>
+      </div>
+    </header>
+
+    <section class="site-hero">
+      <div class="site-hero-inner">
+        <img src="favicon.png" alt="LightEditorVidz" class="site-hero-logo" />
+        <h1
+          class="site-hero-title"
+          data-fr="Composez vos sc&egrave;nes, exportez un vrai mp4."
+          data-en="Compose your scenes, export a real mp4."
+        >
+          Composez vos sc&egrave;nes, exportez un vrai mp4.
+        </h1>
+        <p
+          class="site-hero-sub"
+          data-fr="Texte, images, vid&eacute;os, audio et formes sur un canvas, anim&eacute;s puis export&eacute;s &mdash; enti&egrave;rement en local, sans cloud ni filigrane."
+          data-en="Text, images, video, audio and shapes on a canvas, animated then exported &mdash; fully local, no cloud, no watermark."
+        >
+          Texte, images, vid&eacute;os, audio et formes sur un canvas, anim&eacute;s puis export&eacute;s &mdash;
+          enti&egrave;rement en local, sans cloud ni filigrane.
+        </p>
+        <div class="site-hero-actions">
+          <a href="#install" class="site-btn-primary" data-fr="Télécharger" data-en="Download">Télécharger</a>
+          <a
+            href="https://github.com/light-editor-vidz/light-editor-vidz"
+            target="_blank"
+            rel="noopener"
+            class="site-btn-ghost"
+            ><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"
+              />
+            </svg>
+            GitHub</a
+          >
+        </div>
+        <div class="site-hero-platforms">
+          <span class="site-platform-badge"
+            ><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"
+              />
+            </svg>
+            macOS</span
+          >
+          <span class="site-platform-badge"
+            ><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M12.504 0c-.155 0-.315.008-.48.021C7.309.358 3.561 3.522 2.27 7.665c-.01.03-.019.06-.027.09C.594 9.73 0 11.89 0 14.024 0 19.983 5.04 24 10.63 24c1.57 0 3.1-.3 4.52-.84l-.012.006c.8-.3 1.56-.68 2.26-1.13A11.73 11.73 0 0 0 24 12.06C24 5.44 18.854.037 12.504 0zm-.218 2.375c5.16.09 9.12 4.18 9.12 9.295 0 2.77-1.19 5.27-3.08 7.01a9.71 9.71 0 0 1-6.83 2.75c-4.94 0-8.94-3.74-9.27-8.47l-.004-.09c.36-3.67 3.07-6.67 6.63-7.47.45-.1.91-.15 1.43-.02z"
+              />
+            </svg>
+            Linux</span
+          >
+          <span class="site-platform-badge site-platform-free" data-fr="100% Gratuit" data-en="100% Free"
+            >100% Gratuit</span
+          >
+        </div>
+      </div>
+      <div class="site-hero-glow"></div>
+    </section>
+
+    <main>
+      <section id="install">
+        <h2 data-fr="Installation" data-en="Install">Installation</h2>
+
+        <div class="install-block install-block-primary">
+          <span class="badge-reco" data-fr="Recommandé" data-en="Recommended">Recommandé</span>
+          <h3 data-fr="macOS &amp; Linux — une seule commande" data-en="macOS &amp; Linux — one command">
+            macOS &amp; Linux — une seule commande
+          </h3>
+          <div class="cmd">
+            <code class="copy-target"
+              >curl -fsSL https://raw.githubusercontent.com/light-editor-vidz/light-editor-vidz/main/install.sh |
+              bash</code
+            >
+            <button class="copy-btn" aria-label="Copy">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+          <div class="pills">
+            <span class="pill">macOS → Homebrew</span>
+            <span class="pill">Ubuntu / Debian → .deb</span>
+            <span class="pill" data-fr="Autres Linux → AppImage" data-en="Other Linux → AppImage"
+              >Autres Linux → AppImage</span
+            >
+          </div>
+        </div>
+
+        <ul>
+          <li
+            data-fr="macOS — installe via un tap Homebrew personnel et récupère ffmpeg comme dépendance."
+            data-en="macOS — installs via a personal Homebrew tap and pulls in ffmpeg as a dependency."
+          >
+            macOS — installe via un tap Homebrew personnel et récupère ffmpeg comme dépendance.
+          </li>
+          <li
+            data-fr="Linux — installe le .deb sur Debian et Ubuntu, sinon l’AppImage dans ~/.local/bin, et ajoute ffmpeg s’il manque."
+            data-en="Linux — installs the .deb on Debian and Ubuntu, otherwise the AppImage into ~/.local/bin, and adds ffmpeg if missing."
+          >
+            Linux — installe le .deb sur Debian et Ubuntu, sinon l’AppImage dans ~/.local/bin, et ajoute ffmpeg s’il
+            manque.
+          </li>
+        </ul>
+
+        <div class="install-block">
+          <h3 data-fr="Installation manuelle" data-en="Manual install">Installation manuelle</h3>
+          <span class="cmd-label">macOS</span>
+          <div class="cmd">
+            <code class="copy-target">brew install light-editor-vidz/tap/light-editor-vidz</code>
+            <button class="copy-btn" aria-label="Copy">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+          <span class="cmd-label">Linux (.deb)</span>
+          <div class="cmd">
+            <code class="copy-target"
+              >curl -fsSL -o light-editor-vidz.deb "$(curl -fsSL
+              https://api.github.com/repos/light-editor-vidz/light-editor-vidz/releases/latest | grep -o
+              'https://[^"]*_amd64\.deb' | head -1)" &amp;&amp; sudo apt install ./light-editor-vidz.deb</code
+            >
+            <button class="copy-btn" aria-label="Copy">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+          <span class="cmd-label">Linux (AppImage)</span>
+          <div class="cmd">
+            <code class="copy-target"
+              >mkdir -p ~/.local/bin &amp;&amp; curl -fsSL -o ~/.local/bin/light-editor-vidz.AppImage "$(curl -fsSL
+              https://api.github.com/repos/light-editor-vidz/light-editor-vidz/releases/latest | grep -o
+              'https://[^"]*_amd64\.AppImage' | head -1)" &amp;&amp; chmod +x
+              ~/.local/bin/light-editor-vidz.AppImage</code
+            >
+            <button class="copy-btn" aria-label="Copy">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+          <p
+            style="margin: 12px 0 0; color: var(--text-muted); font-size: 13.5px"
+            data-fr="ou récupérez le .deb ou l’AppImage sur la page des releases."
+            data-en="or grab the .deb or .AppImage from the releases page."
+          >
+            ou récupérez le .deb ou l’AppImage sur la page des releases.
+          </p>
+        </div>
+      </section>
+
+      <section id="uninstall">
+        <h2 data-fr="Désinstallation" data-en="Uninstall">Désinstallation</h2>
+        <div class="install-block install-block-primary">
+          <span class="badge-reco" data-fr="Recommandé" data-en="Recommended">Recommandé</span>
+          <h3 data-fr="macOS &amp; Linux — une seule commande" data-en="macOS &amp; Linux — one command">
+            macOS &amp; Linux — une seule commande
+          </h3>
+          <div class="cmd">
+            <code class="copy-target"
+              >curl -fsSL https://raw.githubusercontent.com/light-editor-vidz/light-editor-vidz/main/uninstall.sh |
+              bash</code
+            >
+            <button class="copy-btn" aria-label="Copy">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+          <p
+            style="margin: 12px 0 0; color: var(--text-muted); font-size: 13.5px"
+            data-fr="Retire l’application quelle que soit la façon dont elle a été installée. Vos projets et réglages sont conservés."
+            data-en="Removes the app whichever way it was installed. Your projects and settings are kept."
+          >
+            Retire l’application quelle que soit la façon dont elle a été installée. Vos projets et réglages sont
+            conservés.
+          </p>
+        </div>
+
+        <div class="install-block">
+          <h3 data-fr="Désinstallation manuelle" data-en="Manual uninstall">Désinstallation manuelle</h3>
+          <span class="cmd-label">macOS</span>
+          <div class="cmd">
+            <code class="copy-target">brew uninstall --cask light-editor-vidz</code>
+            <button class="copy-btn" aria-label="Copy">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+          <span class="cmd-label">Linux (.deb)</span>
+          <div class="cmd">
+            <code class="copy-target">sudo apt remove light-editor-vidz</code>
+            <button class="copy-btn" aria-label="Copy">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+          <span class="cmd-label">Linux (AppImage)</span>
+          <div class="cmd">
+            <code class="copy-target">rm ~/.local/bin/light-editor-vidz.AppImage</code>
+            <button class="copy-btn" aria-label="Copy">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section id="features">
+        <h2 data-fr="Fonctionnalités" data-en="Features">Fonctionnalités</h2>
+        <div class="features">
+          <div class="feature-card">
+            <strong data-fr="Timeline multi-scènes" data-en="Multi-scene timeline">Timeline multi-scènes</strong
+            ><span
+              data-fr="Une vraie horloge de lecture, pas un intervalle fixe bricolé."
+              data-en="A real playback clock, not a fixed-interval hack."
+              >Une vraie horloge de lecture, pas un intervalle fixe bricolé.</span
+            >
+          </div>
+          <div class="feature-card">
+            <strong data-fr="Texte · Image · Vidéo · Audio · Formes" data-en="Text · Image · Video · Audio · Shapes"
+              >Texte · Image · Vidéo · Audio · Formes</strong
+            ><span
+              data-fr="Déplacez, redimensionnez et pivotez selon un même modèle d’interaction."
+              data-en="Drag, resize and rotate with one shared interaction model."
+              >Déplacez, redimensionnez et pivotez selon un même modèle d’interaction.</span
+            >
+          </div>
+          <div class="feature-card">
+            <strong data-fr="Animations composables" data-en="Composable animations">Animations composables</strong
+            ><span
+              data-fr="Fondu, glissement, zoom, rotation, flou, rebond — superposés, jamais écrasés."
+              data-en="Fade, slide, zoom, rotate, blur, bounce — layered, not overwritten."
+              >Fondu, glissement, zoom, rotation, flou, rebond — superposés, jamais écrasés.</span
+            >
+          </div>
+          <div class="feature-card">
+            <strong data-fr="Export mp4 réel" data-en="Real mp4 export">Export mp4 réel</strong
+            ><span
+              data-fr="Rastérisation native + ffmpeg, avec mixage audio. Pas un rejeu du DOM."
+              data-en="Native rasterization + ffmpeg, with audio mixing. Not a DOM replay."
+              >Rastérisation native + ffmpeg, avec mixage audio. Pas un rejeu du DOM.</span
+            >
+          </div>
+          <div class="feature-card">
+            <strong data-fr="Annuler / rétablir" data-en="Undo/redo">Annuler / rétablir</strong
+            ><span
+              data-fr="Avec duplication, découpe, suppression et import de projets JSON hérités."
+              data-en="Plus duplicate, split, delete, and legacy JSON project import."
+              >Avec duplication, découpe, suppression et import de projets JSON hérités.</span
+            >
+          </div>
+          <div class="feature-card">
+            <strong data-fr="Mise à jour signée" data-en="Signed auto-update">Mise à jour signée</strong
+            ><span
+              data-fr="Consulte les releases GitHub, télécharge, installe et relance."
+              data-en="Checks GitHub Releases, downloads, installs, relaunches."
+              >Consulte les releases GitHub, télécharge, installe et relance.</span
+            >
+          </div>
+        </div>
+      </section>
+
+      <footer>
+        <span data-fr="LightEditorVidz — sous licence MIT" data-en="LightEditorVidz — MIT licensed"
+          >LightEditorVidz — sous licence MIT</span
+        >
+        <a href="https://github.com/light-editor-vidz/light-editor-vidz"
+          >github.com/light-editor-vidz/light-editor-vidz</a
+        >
+      </footer>
+    </main>
+    <script>
+      // Le formateur HTML peut replier une commande longue sur deux lignes ; un
+      // textContent brut recopierait alors le retour à la ligne et l'indentation
+      // dans le presse-papiers. On aplatit toute suite d'espaces.
+      function commandText(el) {
+        return el.textContent.replace(/\s+/g, " ").trim();
+      }
+
+      // ── Bascule de langue ──
+      // Chaque texte porte ses deux versions en attributs ; seul le contenu change.
+      let lang = localStorage.getItem("lc-lang") || "fr";
+
+      function applyLang() {
+        document.documentElement.lang = lang;
+        document.querySelectorAll("[data-fr][data-en]").forEach((el) => {
+          el.textContent = el.dataset[lang];
+        });
+        document.getElementById("langToggle").textContent = lang === "fr" ? "EN" : "FR";
+        document.title =
+          lang === "fr" ? "LightEditorVidz — Éditeur vidéo desktop" : "LightEditorVidz — Desktop video editor";
+      }
+
+      document.getElementById("langToggle").addEventListener("click", () => {
+        lang = lang === "fr" ? "en" : "fr";
+        localStorage.setItem("lc-lang", lang);
+        applyLang();
+      });
+
+      applyLang();
+
+      // ── Copie des commandes ──
+      // Le repli sélectionne la commande : si l'écriture dans le presse-papiers est
+      // refusée, il reste au moins un Cmd+C à faire, plutôt que rien du tout.
+      document.querySelectorAll(".copy-btn").forEach((btn) => {
+        const cmdEl = btn.closest(".cmd").querySelector(".copy-target");
+        btn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(commandText(cmdEl));
+            btn.classList.add("copied");
+            setTimeout(() => btn.classList.remove("copied"), 2000);
+          } catch {
+            const range = document.createRange();
+            range.selectNode(cmdEl);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+          }
+        });
+      });
+    </script>
+  </body>
+</html>

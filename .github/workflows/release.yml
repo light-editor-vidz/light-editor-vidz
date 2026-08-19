@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  # tauri-action names the bundles after the version in tauri.conf.json, while the
+  # tap workflow derives the version from the git tag. When they disagree the release
+  # publishes assets under a name the cask url cannot resolve, and the failure only
+  # surfaces after the GitHub release is already public.
+  check-version:
+    name: Check the tag matches the manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare the tag with tauri.conf.json and Cargo.toml
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          WANT="${TAG#v}"
+          CONF=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          CARGO=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)
+          echo "tag=$WANT tauri.conf.json=$CONF Cargo.toml=$CARGO"
+          [ "$WANT" = "$CONF" ] || { echo "::error::tag $WANT does not match tauri.conf.json $CONF"; exit 1; }
+          [ "$WANT" = "$CARGO" ] || { echo "::error::tag $WANT does not match Cargo.toml $CARGO"; exit 1; }
+
+  release:
+    needs: [check-version]
+    # Le repo est configuré en permissions par défaut "lecture seule" pour GITHUB_TOKEN
+    # (Settings > Actions > Workflow permissions) : sans cette déclaration explicite,
+    # tauri-action échoue à la création de la release ("Resource not accessible by
+    # integration"). Scopé à ce job plutôt que d'assouplir le réglage global du repo.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-latest
+            args: ""
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # src/bindings/ est généré depuis le modèle Rust et gitignoré : sans cette étape,
+      # le build frontend échoue (mêmes types que dans le job CI).
+      - name: Generate TS bindings from the Rust model
+        run: npm run gen:types
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "LightEditorVidz ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  # La release reste en brouillon le temps de la construction : elle ne devient
+  # publique qu'une fois toutes les plateformes réussies, pour qu'une seule d'entre
+  # elles qui casse ne laisse jamais une release incomplète aux utilisateurs.
+  publish-release:
+    name: Publish GitHub Release
+    needs: [release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Mark release as latest
+        run: gh release edit "${{ github.ref_name }}" --draft=false --latest --repo "${{ github.repository }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
