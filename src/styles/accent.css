@@ -1,0 +1,20 @@
+/* This editor's own primary colour. Loaded after the suite's stylesheet (suite/suite.css), which
+   defines the same variable for the other apps. */
+:root,
+:root[data-theme="dark"] {
+  --accent: #5c86ff;
+  --accent-hover: #7a9dff;
+  --accent-ink: #ffffff;
+}
+:root[data-theme="light"] {
+  --accent: #2f5fe0;
+  --accent-hover: #2450c2;
+  --accent-ink: #ffffff;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --accent: #2f5fe0;
+    --accent-hover: #2450c2;
+    --accent-ink: #ffffff;
+  }
+}

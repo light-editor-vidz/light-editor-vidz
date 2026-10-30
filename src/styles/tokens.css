@@ -1,0 +1,35 @@
+/* Colours, text and sizes come from the suite (suite/suite.css): the same in every app. What is
+   left here is this editor's own: its primary colour, the colour of each kind of element, radii,
+   shadows and the fixed layout. */
+:root {
+  --color-video: #5c86ff;
+  --color-text: #a45cff;
+  --color-image: #2fc4b6;
+  --color-audio: #38d17a;
+  --color-shape: #ff8a5c;
+
+  /* Rayons */
+  --radius-field: 11px;
+  --radius-panel: 11px;
+  --radius-modal: 18px;
+  --radius-pill: 9px;
+  --radius-clip: 6px;
+  --radius-logo: 15px;
+
+  /* Ombres */
+  --shadow-primary-btn: 0 10px 30px color-mix(in srgb, var(--accent) 36%, transparent);
+  --shadow-primary-btn-sm: 0 5px 16px color-mix(in srgb, var(--accent) 32%, transparent);
+  --shadow-modal: 0 30px 90px rgba(0, 0, 0, 0.6);
+  --shadow-canvas: 0 24px 70px rgba(0, 0, 0, 0.6);
+
+  /* Layout fixe */
+  --w-rail: 74px;
+  --w-library: 264px;
+  --w-properties: 300px;
+  --w-timeline-labels: 104px;
+  --h-topbar: 44px;
+  --h-toolbar: 42px;
+  --h-playback-bar: 46px;
+  --h-timeline: 230px;
+  --h-track-row: 36px;
+}

@@ -1,0 +1,44 @@
+[package]
+name = "light-editor-vidz"
+version = "1.0.0"
+description = "Light video editor: compose scenes, text, images and video, export to MP4"
+authors = ["Sikander RAVATE <r.sik@hotmail.fr>"]
+license = "MIT"
+repository = "https://github.com/light-editor-vidz/light-editor-vidz"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "light_editor_vidz_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-store = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+scene-core = { path = "../crates/scene-core" }
+# Recherche/téléchargement d'assets libres de droit (Pexels, Pixabay, Freesound, Openverse).
+# rustls plutôt qu'openssl : pas de dépendance système supplémentaire au build.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+futures = "0.3"
+# Écriture asynchrone des téléchargements (déjà une dépendance transitive de reqwest/tauri).
+tokio = { version = "1", features = ["fs", "io-util"] }
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "apple-native", "windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
+[dev-dependencies]
+tempfile = "3"
