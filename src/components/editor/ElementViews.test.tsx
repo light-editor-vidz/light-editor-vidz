@@ -84,7 +84,7 @@ describe("TextElementView", () => {
 
   it("applies the colour and background", () => {
     const el = draw({ color: "rgb(255, 0, 0)", background_color: "rgb(0, 0, 255)" } as Partial<TextEl>);
-    expect(el).toHaveStyle({ color: "rgb(255, 0, 0)", background: "rgb(0, 0, 255)" });
+    expect(el).toHaveStyle({ color: "rgb(255, 0, 0)", "background-color": "rgb(0, 0, 255)" });
   });
 
   it("defaults the font size to 4cqw", () => {

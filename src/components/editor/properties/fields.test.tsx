@@ -31,7 +31,7 @@ describe("Header", () => {
     expect(screen.getByText("A caption")).toBeInTheDocument();
     expect(screen.getByText("ico")).toBeInTheDocument();
     expect(container.querySelector(".properties-badge")).toHaveStyle({
-      background: "rgb(255, 0, 0)",
+      "background-color": "rgb(255, 0, 0)",
     });
   });
 });
