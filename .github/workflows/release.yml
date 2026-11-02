@@ -62,7 +62,7 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.kind == 'macos' && 'universal-apple-darwin' || '' }}
+          targets: ${{ matrix.kind == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
