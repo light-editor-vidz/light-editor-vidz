@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod audio_tool;
 pub mod error;
 pub mod export;
 pub mod media_protocol;

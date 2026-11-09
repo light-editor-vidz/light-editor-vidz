@@ -2,7 +2,7 @@ import { render, screen, fireEvent, waitFor, act, within } from "@testing-librar
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
-import { cancelExport, exportProject } from "../../lib/commands";
+import { cancelExport, exportProject, exportProjectAudio } from "../../lib/commands";
 import TopBar from "./TopBar";
 import { inertBridge } from "../../lib/menuBridge";
 import type { Project } from "../../bindings/Project";
@@ -11,14 +11,25 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
 vi.mock("../../lib/commands", () => ({
   exportProject: vi.fn(),
+  exportProjectAudio: vi.fn(),
   cancelExport: vi.fn(),
   EXPORT_CANCELLED: "export-cancelled",
+  AUDIO_FORMAT_EXTENSION: {
+    wav16: "wav",
+    wav24: "wav",
+    wav32f: "wav",
+    mp3: "mp3",
+    flac: "flac",
+    ogg: "ogg",
+    m4a: "m4a",
+  },
 }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir: vi.fn(() => Promise.resolve()) }));
 
 const mockListen = vi.mocked(listen);
 const mockSave = vi.mocked(save);
 const mockExport = vi.mocked(exportProject);
+const mockExportAudio = vi.mocked(exportProjectAudio);
 
 /** Progress handlers the bar registered, keyed by event name. */
 let handlers: Record<string, (e: { payload: unknown }) => void>;
@@ -57,6 +68,7 @@ beforeEach(() => {
   }) as typeof listen);
   mockSave.mockResolvedValue(null);
   mockExport.mockResolvedValue({ missing_media: [] });
+  mockExportAudio.mockResolvedValue({ missing_media: [] });
 });
 
 describe("TopBar — chrome", () => {
@@ -248,6 +260,58 @@ describe("TopBar — exporting", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Cancel export" }));
 
     expect(vi.mocked(cancelExport)).toHaveBeenCalled();
+  });
+
+  async function chooseAudioFormat(format: string) {
+    const { confirm, onNotice } = await openExportModal();
+    fireEvent.click(screen.getByRole("button", { name: "Audio only" }));
+    fireEvent.click(screen.getByRole("button", { name: format }));
+    return { confirm, onNotice };
+  }
+
+  it("exports the audio mix in the chosen format, under an extension-matching name", async () => {
+    mockSave.mockResolvedValue("/out.flac");
+    const { confirm, onNotice } = await chooseAudioFormat("FLAC");
+
+    await act(async () => {
+      fireEvent.click(confirm());
+    });
+
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        defaultPath: "My clip.flac",
+        filters: [{ name: "FLAC audio file", extensions: ["flac"] }],
+      }),
+    );
+    expect(mockExportAudio).toHaveBeenCalledWith("/p", expect.anything(), "/out.flac", "flac");
+    expect(mockExport).not.toHaveBeenCalled();
+    expect(onNotice).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "info", message: "Export finished." }));
+  });
+
+  it("exports no audio when the save dialog is dismissed", async () => {
+    mockSave.mockResolvedValue(null);
+    const { confirm } = await chooseAudioFormat("MP3");
+
+    await act(async () => {
+      fireEvent.click(confirm());
+    });
+
+    expect(mockExportAudio).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed audio export through a notice, with the reason", async () => {
+    mockSave.mockResolvedValue("/out.wav");
+    mockExportAudio.mockRejectedValue(new Error("The project has no audio to export."));
+    const { confirm, onNotice } = await chooseAudioFormat("WAV 16-bit");
+
+    await act(async () => {
+      fireEvent.click(confirm());
+    });
+
+    expect(onNotice).toHaveBeenLastCalledWith({
+      kind: "error",
+      message: "Export failed: The project has no audio to export.",
+    });
   });
 
   it("falls back to a generic file name for an unnamed project", async () => {

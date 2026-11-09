@@ -123,7 +123,7 @@ describe("isTrackAudible", () => {
   });
 });
 
-import { audioFadeGain } from "./audio";
+import { audioFadeGain, audioSourceTime, defaultAudioFilter, fadeGain } from "./audio";
 
 describe("audioFadeGain", () => {
   const track = (over: Partial<AudioTrack> = {}) => ({ ...createAudioTrack("a.mp3", "a", 3), ...over });
@@ -150,5 +150,49 @@ describe("audioFadeGain", () => {
 
   it("vaut 1 sans fondu", () => {
     expect(audioFadeGain(track(), 4, 20)).toBe(1);
+  });
+});
+
+describe("fade curves", () => {
+  const track = (over: Partial<AudioTrack> = {}) => ({ ...createAudioTrack("a.mp3", "a", 0), ...over });
+
+  it("fadeGain: linear is the identity, equal-power is a quarter sine", () => {
+    expect(fadeGain("linear", 0.5)).toBe(0.5);
+    expect(fadeGain("equal-power", 0)).toBe(0);
+    expect(fadeGain("equal-power", 0.5)).toBeCloseTo(Math.SQRT1_2);
+    expect(fadeGain("equal-power", 1)).toBeCloseTo(1);
+    expect(fadeGain("equal-power", 7)).toBeCloseTo(1);
+    expect(fadeGain("linear", -1)).toBe(0);
+  });
+
+  it("audioFadeGain follows the track's curve", () => {
+    const t = track({ fade_in: 2, duration: 10, fade_curve: "equal-power" });
+    expect(audioFadeGain(t, 1, 20)).toBeCloseTo(Math.SQRT1_2);
+  });
+
+  it("overlapping fades multiply, like two afade filters in series", () => {
+    const t = track({ fade_in: 10, fade_out: 10, duration: 10 });
+    expect(audioFadeGain(t, 5, 20)).toBeCloseTo(0.25);
+  });
+});
+
+describe("audio speed and filter helpers", () => {
+  it("a new track plays at normal speed, with linear fades and no filter", () => {
+    const t = createAudioTrack("a.mp3", "a");
+    expect(t.speed).toBe(1);
+    expect(t.fade_curve).toBe("linear");
+    expect(t.filter).toBeNull();
+  });
+
+  it("audioSourceTime consumes the source faster at higher speeds, from the in-point", () => {
+    const t = { ...createAudioTrack("a.mp3", "a", 4), audio_offset: 1.5, speed: 2 };
+    expect(audioSourceTime(t, 4)).toBe(1.5);
+    expect(audioSourceTime(t, 7)).toBe(7.5);
+  });
+
+  it("defaultAudioFilter picks a sensible frequency per kind", () => {
+    expect(defaultAudioFilter("low-pass")).toEqual({ kind: "low-pass", frequency: 4000, slope: 12, q: 0.707 });
+    expect(defaultAudioFilter("high-pass").frequency).toBe(200);
+    expect(defaultAudioFilter("band-pass").frequency).toBe(1000);
   });
 });

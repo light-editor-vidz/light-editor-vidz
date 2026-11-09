@@ -5,7 +5,27 @@
     "openProject": "Ouvrir un projet",
     "recentProjects": "Projets récents",
     "removeRecent": "Retirer de la liste",
-    "clearRecent": "Effacer"
+    "clearRecent": "Effacer",
+    "tools": "Outils",
+    "comingSoon": "Bientôt",
+    "tool": {
+      "audio": {
+        "name": "Audio",
+        "hint": "Couper, fondre, filtrer, normaliser"
+      },
+      "video": {
+        "name": "Vidéo",
+        "hint": ""
+      },
+      "image": {
+        "name": "Image",
+        "hint": ""
+      },
+      "subtitles": {
+        "name": "Sous-titres",
+        "hint": ""
+      }
+    }
   },
   "modal": {
     "title": "Nouvelle vidéo",
@@ -65,6 +85,7 @@
     "showInFolder": "Afficher le fichier",
     "cancelExport": "Annuler l'export",
     "mp4Filter": "Vidéo MP4",
+    "audioFilter": "Fichier audio {{ext}}",
     "keySpace": "Espace",
     "keyHomeEnd": "Début/Fin",
     "keyDelete": "Suppr",
@@ -72,7 +93,10 @@
     "shortcutsMenu": "Raccourcis clavier…",
     "closeProject": "Fermer le projet",
     "openRecent": "Ouvrir récent",
-    "clearRecent": "Effacer les récents"
+    "clearRecent": "Effacer les récents",
+    "openFile": "Ouvrir un fichier…",
+    "openProjectFolder": "Ouvrir un dossier de projet…",
+    "closeTab": "Fermer l'onglet"
   },
   "update": {
     "checkForUpdates": "Rechercher une mise à jour",
@@ -185,6 +209,19 @@
     "muted": "Muet",
     "fadeIn": "Fondu d'entrée (s)",
     "fadeOut": "Fondu de sortie (s)",
+    "fadeCurve": "Courbe des fondus",
+    "fadeCurveLinear": "Linéaire",
+    "fadeCurveEqualPower": "Puissance constante",
+    "audioSpeed": "Vitesse (×)",
+    "filter": "Filtre",
+    "filterNone": "Aucun",
+    "filterLowPass": "Passe-bas",
+    "filterHighPass": "Passe-haut",
+    "filterBandPass": "Passe-bande",
+    "filterFrequency": "Fréquence (Hz)",
+    "filterSlope": "Pente",
+    "filterSlopeValue": "{{slope}} dB/octave",
+    "filterQ": "Q (largeur)",
     "advance": "Avancer",
     "sendBack": "Reculer",
     "animFade": "Fondu",
@@ -335,6 +372,11 @@
   },
   "exportModal": {
     "title": "Exporter la vidéo",
+    "titleAudio": "Exporter l'audio",
+    "modeVideo": "Vidéo (MP4)",
+    "modeAudio": "Audio seul",
+    "audioFormat": "Format",
+    "audioHint": "Mixe toutes les pistes audio et le son de vos vidéos dans un seul fichier.",
     "subtitle": "Réglages du projet : {{width}}×{{height}} · {{fps}}fps",
     "resolution": "Résolution",
     "resolutionOriginal": "Originale",
@@ -399,5 +441,130 @@
   },
   "about": {
     "tagline": "Composez des scènes avec vidéo, texte, images, son et formes, puis exportez-les en MP4."
+  },
+  "audioTool": {
+    "header": {
+      "openOther": "Ouvrir un autre fichier",
+      "open": "Ouvrir un fichier audio",
+      "undo": "Annuler",
+      "redo": "Rétablir"
+    },
+    "drop": {
+      "title": "Déposez un fichier audio ici",
+      "or": "ou",
+      "open": "Parcourir les fichiers",
+      "name": "Audio"
+    },
+    "recent": {
+      "title": "Récents",
+      "clear": "Effacer",
+      "remove": "Retirer de la liste"
+    },
+    "player": {
+      "playPause": "Espace pour lire/mettre en pause",
+      "waveform": "Forme d’onde. Clique ou utilise les flèches pour déplacer la tête de lecture ; I marque le début d’une coupe et O sa fin, à la tête de lecture.",
+      "seek": "Position de lecture"
+    },
+    "cut": {
+      "title": "COUPES",
+      "clear": "Tout effacer",
+      "sideHint": "Sur la timeline ci-dessous, faites glisser pour sélectionner les zones à supprimer. Plusieurs sélections possibles.",
+      "hint": "Faites glisser sur la piste pour marquer les parties à retirer",
+      "selected": "Coupe sélectionnée :",
+      "placeholder": "Cliquez sur une coupe pour modifier ses temps",
+      "start": "Début",
+      "end": "Fin",
+      "delete": "Supprimer la coupe",
+      "resize": "Glisser pour redimensionner",
+      "count_one": "{{count}} coupe",
+      "count_other": "{{count}} coupes"
+    },
+    "fade": {
+      "title": "Fondu",
+      "in": "Fondu entrant",
+      "out": "Fondu sortant",
+      "curve": "Courbe",
+      "linear": "Linéaire",
+      "equalPower": "Puissance égale"
+    },
+    "volume": {
+      "title": "Volume",
+      "normalize": "Normaliser (pic −1 dBFS)"
+    },
+    "speed": {
+      "title": "Vitesse"
+    },
+    "filter": {
+      "title": "Filtre",
+      "none": "Aucun",
+      "frequency": "Fréquence",
+      "cutoff": "Coupure",
+      "centre": "Centre",
+      "bandwidth": "Largeur",
+      "slope": "Pente",
+      "q": "Q",
+      "lowpass": "Passe-bas",
+      "highpass": "Passe-haut",
+      "bandpass": "Passe-bande"
+    },
+    "export": {
+      "run": "Exporter",
+      "title": "Exporter",
+      "close": "Fermer",
+      "cancel": "Annuler",
+      "depth": "Format des échantillons WAV",
+      "progress": "Traitement… {{percent}} %",
+      "cancelled": "Export annulé",
+      "done": "Export réussi : {{name}}"
+    },
+    "depth": {
+      "float32": "Flottant 32 bits",
+      "pcm24": "24 bits",
+      "pcm16": "16 bits (dithering)"
+    },
+    "msg": {
+      "loading": "Chargement…",
+      "error": "Erreur : {{error}}",
+      "unreachable": "Impossible d'accéder au fichier ({{status}})",
+      "previewUnavailable": "Aperçu indisponible pour ce format ; l'export fonctionne."
+    },
+    "badge": {
+      "meta": "{{channels}} can. · {{rate}} Hz · {{duration}}"
+    },
+    "err": {
+      "trim_range": "Plage de trim invalide {{start}}–{{end}} s (l'audio dure {{total}} s)",
+      "trim_empty": "Tout est coupé : il n’y aurait aucun audio à exporter",
+      "fade_too_long": {
+        "in": "Le fondu entrant ({{secs}} s) dépasse l'audio conservé",
+        "out": "Le fondu sortant ({{secs}} s) dépasse l'audio conservé"
+      },
+      "filter_value": "Fréquence ou largeur invalide : « {{value}} »",
+      "filter_range": "La fréquence {{hz}} Hz doit être comprise entre 0 et {{max}} Hz",
+      "filter_bandwidth": "La largeur doit être un nombre positif (reçu {{hz}} Hz)",
+      "filter_spec": "Filtre invalide : {{spec}}",
+      "cannot_open": "Impossible d’ouvrir « {{path}} »",
+      "cannot_write": "Impossible d’écrire « {{path}} »",
+      "unsupported_format": "Ce format audio n'est pas pris en charge",
+      "empty_audio": "Le fichier ne contient aucun audio",
+      "ffmpeg_missing": "ffmpeg est introuvable — installe-le pour exporter en MP3, FLAC, OGG ou M4A",
+      "ffmpeg_failed": "ffmpeg n'a pas pu encoder en {{format}} : {{detail}}",
+      "unknown_format": "Format d'export inconnu : {{format}}",
+      "speed_invalid": "Facteur de vitesse invalide",
+      "cancelled": "Export annulé",
+      "path_not_approved": "« {{path}} » n’a pas été choisi avec le sélecteur de fichiers ni déposé sur la fenêtre",
+      "wav_depth": "Format d’échantillons WAV inconnu : {{value}}",
+      "fade_curve": "Courbe de fondu inconnue : {{value}}",
+      "filter_slope": "La pente doit valoir 12, 24, 36 ou 48 dB/octave (reçu {{value}})",
+      "filter_q": "Q doit être un nombre positif (reçu « {{value}} »)",
+      "filter_q_slope": "Q ne se règle que sur un filtre à 12 dB/octave"
+    }
+  },
+  "tabs": {
+    "label": "Onglets ouverts",
+    "home": "Accueil",
+    "audio": "Audio",
+    "close": "Fermer l'onglet",
+    "closeNamed": "Fermer {{name}}",
+    "unsupportedFile": "Ce type de fichier ne peut pas être ouvert."
   }
 }

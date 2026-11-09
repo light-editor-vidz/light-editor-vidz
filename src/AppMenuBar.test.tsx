@@ -79,4 +79,57 @@ describe("AppMenuBar", () => {
     await mount();
     expect(entry("Help", "Keyboard shortcuts…")).toBeTruthy();
   });
+
+  it("Open file… (Ctrl+O) asks the screen in front to open a media file; Open project folder… has its own shortcut", async () => {
+    await mount();
+    const openFile = vi.fn();
+    const openProject = vi.fn();
+    inertBridge.actions.current.openFile = openFile;
+    inertBridge.actions.current.openProject = openProject;
+
+    const file = entry("File", "Open file…");
+    const folder = entry("File", "Open project folder…");
+    file.action?.();
+    folder.action?.();
+
+    expect(file.accelerator).toBe("CmdOrCtrl+O");
+    expect(folder.accelerator).toBe("CmdOrCtrl+Shift+O");
+    expect(openFile).toHaveBeenCalledTimes(1);
+    expect(openProject).toHaveBeenCalledTimes(1);
+    delete inertBridge.actions.current.openFile;
+    delete inertBridge.actions.current.openProject;
+  });
+
+  it("disables Export and Close tab on the home screen", async () => {
+    await mount();
+
+    expect((entry("File", "Export…") as { enabled?: boolean }).enabled).toBe(false);
+    expect((entry("File", "Close tab") as { enabled?: boolean }).enabled).toBe(false);
+  });
+
+  it("enables Export and Close tab when an audio tab is shown, but not Save", async () => {
+    inertBridge.flags = { ...inertBridge.flags, inAudio: true };
+    try {
+      await mount();
+
+      expect((entry("File", "Export…") as { enabled?: boolean }).enabled).toBe(true);
+      expect((entry("File", "Close tab") as { enabled?: boolean }).enabled).toBe(true);
+      expect((entry("File", "Save") as { enabled?: boolean }).enabled).toBe(false);
+    } finally {
+      inertBridge.flags = { ...inertBridge.flags, inAudio: false };
+    }
+  });
+
+  it("Close tab (Ctrl+W) closes the tab in front", async () => {
+    await mount();
+    const close = vi.fn();
+    inertBridge.actions.current.closeProject = close;
+
+    const item = entry("File", "Close tab");
+    item.action?.();
+
+    expect(item.accelerator).toBe("CmdOrCtrl+W");
+    expect(close).toHaveBeenCalled();
+    delete inertBridge.actions.current.closeProject;
+  });
 });

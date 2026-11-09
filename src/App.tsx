@@ -1,19 +1,29 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 import Home from "./components/Home";
 import Editor from "./components/Editor";
+import AudioTool from "./components/audiotool/AudioTool";
+import TabBar from "./components/TabBar";
 import { installCloseGuard } from "./lib/closeGuard";
+import { describeError } from "./lib/errors";
+import { TabActiveProvider, useRegisterMenuActions } from "./lib/menuBridge";
+import { createProjectFromMedia, mediaKind, pickMediaFile, type PickedFile } from "./lib/openMedia";
+import { HOME, initialTabs, tabsReducer } from "./lib/tabs";
 
-interface Open {
-  dir: string;
-  /** Message à afficher à l'ouverture (ex : médias à ré-importer après un import legacy). */
-  notice: string | null;
+function TabPanel({ active, children }: { active: boolean; children: React.ReactNode }) {
+  return (
+    <div className="tab-panel" hidden={!active}>
+      <TabActiveProvider value={active}>{children}</TabActiveProvider>
+    </div>
+  );
 }
 
 function App() {
-  const [open, setOpen] = useState<Open | null>(null);
-  /** Ouvre la fenêtre de création de projet dès l'arrivée sur l'accueil (menu Fichier > Nouveau). */
-  const [startNewProject, setStartNewProject] = useState(false);
+  const { t } = useTranslation();
+  const [state, dispatch] = useReducer(tabsReducer, initialTabs);
+  const [error, setError] = useState<string | null>(null);
 
   // Fermer la fenêtre termine d'abord l'enregistrement des modifications en attente.
   useEffect(() => {
@@ -23,32 +33,106 @@ function App() {
     };
   }, []);
 
-  if (open) {
-    return (
-      // `key` : ouvrir un autre projet remonte tout l'éditeur. Sans cela, l'historique
-      // d'annulation du projet précédent survivrait, et Ctrl+Z restaurerait l'ancien projet dans
-      // le dossier du nouveau (la sauvegarde automatique l'y écrirait).
-      <Editor
-        key={open.dir}
-        projectDir={open.dir}
-        initialNotice={open.notice}
-        onBack={(intent) => {
-          setStartNewProject(intent === "new");
-          setOpen(null);
-        }}
-        onOpenProject={(dir, notice) => setOpen({ dir, notice: notice ?? null })}
-      />
-    );
-  }
+  /** Ce qu'un fichier ouvre : un onglet audio, ou un projet neuf contenant la vidéo / l'image. */
+  const openPicked = useCallback(
+    async ({ path, kind }: PickedFile) => {
+      setError(null);
+      try {
+        if (kind === "audio") {
+          dispatch({ type: "openAudio", path });
+        } else if (kind === "video" || kind === "image") {
+          const { dir, media } = await createProjectFromMedia(path, kind);
+          dispatch({ type: "openProject", dir, media });
+        } else {
+          setError(t("tabs.unsupportedFile"));
+        }
+      } catch (e) {
+        setError(describeError(e));
+      }
+    },
+    [t],
+  );
+
+  const openFile = useCallback(async () => {
+    try {
+      const picked = await pickMediaFile();
+      if (picked) await openPicked(picked);
+    } catch (e) {
+      setError(describeError(e));
+    }
+  }, [openPicked]);
+
+  // « Fichier > Ouvrir un fichier… » est à l'écoute quel que soit l'onglet affiché.
+  useRegisterMenuActions({ openFile: () => void openFile() });
+
+  // Un fichier déposé sur la fenêtre s'ouvre comme s'il avait été choisi dans le dialogue.
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    let cancelled = false;
+    getCurrentWindow()
+      .onDragDropEvent(async (event) => {
+        if (event.payload.type !== "drop") return;
+        for (const path of event.payload.paths ?? []) {
+          await openPicked({ path, kind: await mediaKind(path) });
+        }
+      })
+      .then((unlisten) => (cancelled ? unlisten() : (off = unlisten)))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, [openPicked]);
 
   return (
-    <Home
-      startNewProject={startNewProject}
-      onOpenProject={(dir) => {
-        setStartNewProject(false);
-        setOpen({ dir, notice: null });
-      }}
-    />
+    <div className="app-shell">
+      <TabBar
+        tabs={state.tabs}
+        active={state.active}
+        onActivate={(id) => dispatch({ type: "activate", id })}
+        onClose={(id) => dispatch({ type: "close", id })}
+      />
+      {error && (
+        <div className="app-error" role="alert">
+          <span>{error}</span>
+          <button type="button" onClick={() => setError(null)} aria-label={t("common.dismiss")}>
+            ×
+          </button>
+        </div>
+      )}
+      <div className="tab-panels">
+        <TabPanel active={state.active === HOME}>
+          <Home
+            startNewProject={state.startNewProject}
+            onNewProjectHandled={() => dispatch({ type: "clearNewProject" })}
+            onOpenProject={(dir) => dispatch({ type: "openProject", dir })}
+            onOpenTool={(tool) => {
+              if (tool === "audio") dispatch({ type: "openAudio", path: null });
+            }}
+          />
+        </TabPanel>
+        {state.tabs.map((tab) => (
+          <TabPanel key={tab.id} active={state.active === tab.id}>
+            {tab.kind === "project" ? (
+              // `key` : un projet par onglet, avec sa propre histoire d'annulation.
+              <Editor
+                projectDir={tab.dir}
+                initialNotice={tab.notice}
+                initialMedia={tab.media}
+                onBack={(intent) => dispatch({ type: "close", id: tab.id, intent })}
+                onOpenProject={(dir, notice) => dispatch({ type: "openProject", dir, notice })}
+              />
+            ) : (
+              <AudioTool
+                path={tab.path}
+                onOpen={(path) => dispatch({ type: "setAudioPath", id: tab.id, path })}
+                onClose={() => dispatch({ type: "close", id: tab.id })}
+              />
+            )}
+          </TabPanel>
+        ))}
+      </div>
+    </div>
   );
 }
 

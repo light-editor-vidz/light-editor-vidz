@@ -21,6 +21,7 @@ beforeEach(() => {
 describe("ExportModal", () => {
   function setup(props: Partial<Parameters<typeof ExportModal>[0]> = {}) {
     const onExport = vi.fn();
+    const onExportAudio = vi.fn();
     const onClose = vi.fn();
     const view = render(
       <ExportModal
@@ -28,12 +29,13 @@ describe("ExportModal", () => {
         projectHeight={1080}
         projectFps={30}
         onExport={onExport}
+        onExportAudio={onExportAudio}
         onClose={onClose}
         exporting={false}
         {...props}
       />,
     );
-    return { onExport, onClose, ...view };
+    return { onExport, onExportAudio, onClose, ...view };
   }
 
   const exportButton = () => screen.getByRole("button", { name: /^Export$/ });
@@ -46,7 +48,51 @@ describe("ExportModal", () => {
   it("starts on the original resolution, frame rate and medium quality", () => {
     const { container } = setup();
     const selected = [...container.querySelectorAll(".fps-option.selected")].map((b) => b.textContent);
-    expect(selected).toEqual(["Original", "Original", "Medium"]);
+    expect(selected).toEqual(["Video (MP4)", "Original", "Original", "Medium"]);
+  });
+
+  it("switches to audio only: formats replace the video settings, MP3 is preselected", () => {
+    const { onExport, onExportAudio, container } = setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Audio only" }));
+
+    expect(screen.getByText("Export audio")).toBeInTheDocument();
+    expect(screen.queryByText("Resolution")).not.toBeInTheDocument();
+    expect(screen.queryByText("Frame rate")).not.toBeInTheDocument();
+    const selected = [...container.querySelectorAll(".fps-option.selected")].map((b) => b.textContent);
+    expect(selected).toEqual(["Audio only", "MP3"]);
+
+    fireEvent.click(exportButton());
+    expect(onExportAudio).toHaveBeenCalledWith("mp3");
+    expect(onExport).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["WAV 16-bit", "wav16"],
+    ["WAV 24-bit", "wav24"],
+    ["WAV 32-bit float", "wav32f"],
+    ["FLAC", "flac"],
+    ["OGG Vorbis", "ogg"],
+    ["M4A (AAC)", "m4a"],
+  ])("exports the audio as %s", (label, format) => {
+    const { onExportAudio } = setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Audio only" }));
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    fireEvent.click(exportButton());
+
+    expect(onExportAudio).toHaveBeenCalledWith(format);
+  });
+
+  it("keeps the video settings when switching back from audio only", () => {
+    const { onExport } = setup();
+
+    fireEvent.click(screen.getByText("720p"));
+    fireEvent.click(screen.getByRole("button", { name: "Audio only" }));
+    fireEvent.click(screen.getByRole("button", { name: "Video (MP4)" }));
+    fireEvent.click(exportButton());
+
+    expect(onExport).toHaveBeenCalledWith(expect.objectContaining({ width: 1280, height: 720 }));
   });
 
   it("exports untouched dimensions and frame rate by default", () => {

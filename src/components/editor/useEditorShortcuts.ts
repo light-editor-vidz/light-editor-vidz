@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTabActive } from "../../lib/menuBridge";
 
 export interface ShortcutActions {
   save: () => void;
@@ -34,8 +35,11 @@ interface Options {
  */
 export function useEditorShortcuts({ hasActiveComposition, selectedIds, selectedElementIds, actions }: Options) {
   const handler = useRef<(e: KeyboardEvent) => void>(() => {});
+  const tabActive = useTabActive();
   useEffect(() => {
     handler.current = (e: KeyboardEvent) => {
+      // Un éditeur resté monté dans un onglet masqué ne réagit pas au clavier.
+      if (!tabActive) return;
       // Ctrl+S avant le filtre sur les champs de saisie : la sauvegarde doit marcher aussi
       // pendant l'édition d'un texte (comportement standard, affiché dans le menu Fichier).
       if (e.key.toLowerCase() === "s" && (e.metaKey || e.ctrlKey)) {

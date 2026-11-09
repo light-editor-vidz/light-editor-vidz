@@ -3,6 +3,7 @@
 //! TS pour la preview temps réel — voir la doc de ce module ; `raster` est natif (export mp4).
 
 pub mod animate;
+pub mod audio_fx;
 pub mod color;
 pub mod ffmpeg_path;
 pub mod model;

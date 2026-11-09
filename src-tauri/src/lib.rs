@@ -14,6 +14,20 @@ pub fn run() {
             Ok(())
         })
         .manage(commands::export::ExportControl::default())
+        .manage(audio_dsp::approval::Approved::default())
+        .manage(audio_dsp::pipeline::DecodeCache::default())
+        .manage(commands::audio_tool::AudioExportControl::default())
+        // Un fichier déposé sur la fenêtre est un geste de l'utilisateur : le seul moyen, avec les
+        // dialogues, de désigner un fichier que l'application peut ouvrir.
+        .on_window_event(|window, event| {
+            use tauri::Manager;
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                let approved = window.state::<audio_dsp::approval::Approved>();
+                for path in paths {
+                    approved.allow_input(path);
+                }
+            }
+        })
         .manage(commands::registry::OpenProjects::default())
         .register_uri_scheme_protocol("lvmedia", |ctx, request| {
             use tauri::Manager;
@@ -48,7 +62,18 @@ pub fn run() {
             commands::secrets::load_api_keys,
             commands::secrets::save_api_keys,
             commands::export::export_project,
+            commands::export::export_project_audio,
             commands::export::cancel_export,
+            commands::audio_tool::pick_media_file,
+            commands::audio_tool::media_kind,
+            commands::audio_tool::audio_pick_file,
+            commands::audio_tool::audio_pick_output,
+            commands::audio_tool::audio_allow_asset,
+            commands::audio_tool::audio_load,
+            commands::audio_tool::audio_recent_list,
+            commands::audio_tool::audio_recent_forget,
+            commands::audio_tool::audio_process,
+            commands::audio_tool::audio_cancel,
             commands::release_notes::release_notes,
         ])
         .run(tauri::generate_context!())

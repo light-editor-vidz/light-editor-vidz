@@ -1,14 +1,30 @@
 //! Résolution des binaires ffmpeg/ffprobe à utiliser (décodage des sources vidéo à l'export, et
-//! encodage/mixage côté `src-tauri`). Par défaut, `ffmpeg` et `ffprobe` sont cherchés dans le
-//! `PATH` système. Les variables d'environnement `LIGHT_EDITOR_VIDZ_FFMPEG` et
-//! `LIGHT_EDITOR_VIDZ_FFPROBE` permettent de pointer vers des binaires précis (build packagé,
-//! ffmpeg installé hors du `PATH`) ; si seul ffmpeg est configuré, ffprobe est cherché à côté.
+//! encodage/mixage côté `src-tauri`). Ordre de recherche :
+//!
+//! 1. les variables d'environnement `LIGHT_EDITOR_VIDZ_FFMPEG` et `LIGHT_EDITOR_VIDZ_FFPROBE`
+//!    (si seul ffmpeg est configuré, ffprobe est cherché à côté) ;
+//! 2. les binaires embarqués avec l'application (sidecars Tauri), situés à côté de l'exécutable ;
+//! 3. `ffmpeg` et `ffprobe` dans le `PATH` système (développement, tests).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+const EXE_SUFFIX: &str = if cfg!(windows) { ".exe" } else { "" };
+
+/// Binaire `name` livré à côté de l'exécutable courant, s'il existe.
+fn bundled(name: &str) -> Option<PathBuf> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let path = dir.join(format!("{name}{EXE_SUFFIX}"));
+    path.is_file().then_some(path)
+}
 
 /// Nom ou chemin du binaire ffmpeg à invoquer.
 pub fn ffmpeg_binary() -> String {
-    std::env::var("LIGHT_EDITOR_VIDZ_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_string())
+    if let Ok(path) = std::env::var("LIGHT_EDITOR_VIDZ_FFMPEG") {
+        return path;
+    }
+    bundled("ffmpeg")
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "ffmpeg".to_string())
 }
 
 /// Nom ou chemin du binaire ffprobe à invoquer.
@@ -16,7 +32,12 @@ pub fn ffprobe_binary() -> String {
     if let Ok(path) = std::env::var("LIGHT_EDITOR_VIDZ_FFPROBE") {
         return path;
     }
-    sibling_ffprobe(&ffmpeg_binary())
+    if std::env::var("LIGHT_EDITOR_VIDZ_FFMPEG").is_ok() {
+        return sibling_ffprobe(&ffmpeg_binary());
+    }
+    bundled("ffprobe")
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "ffprobe".to_string())
 }
 
 /// `ffprobe` situé à côté de `ffmpeg` quand ce dernier est un chemin (et non un nom résolu par
@@ -36,6 +57,20 @@ fn sibling_ffprobe(ffmpeg: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_bundled_binary_falls_back_to_the_path() {
+        // Le binaire de test n'a pas de `ffmpeg` à côté de lui.
+        assert!(bundled("definitely-not-a-bundled-binary").is_none());
+    }
+
+    #[test]
+    fn a_bundled_binary_is_found_next_to_the_executable() {
+        let exe = std::env::current_exe().unwrap();
+        let name = exe.file_name().unwrap().to_string_lossy().into_owned();
+        let name = name.strip_suffix(EXE_SUFFIX).unwrap_or(&name);
+        assert_eq!(bundled(name), Some(exe));
+    }
 
     #[test]
     fn ffprobe_is_resolved_from_the_path_when_ffmpeg_is_a_bare_name() {

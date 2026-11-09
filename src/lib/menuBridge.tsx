@@ -5,6 +5,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 export interface MenuActions {
   newProject?: () => void;
   openProject?: () => void;
+  /** « Fichier > Ouvrir un fichier… » : un fichier audio, vidéo ou image. */
+  openFile?: () => void;
   importLegacy?: () => void;
   closeProject?: () => void;
   openRecent?: (dir: string) => void;
@@ -22,12 +24,14 @@ export interface MenuActions {
  * one of them really changes. */
 export interface MenuFlags {
   inEditor: boolean;
+  /** Un onglet audio est affiché. */
+  inAudio: boolean;
   canUndo: boolean;
   canRedo: boolean;
   hasSelection: boolean;
 }
 
-const NO_FLAGS: MenuFlags = { inEditor: false, canUndo: false, canRedo: false, hasSelection: false };
+const NO_FLAGS: MenuFlags = { inEditor: false, inAudio: false, canUndo: false, canRedo: false, hasSelection: false };
 
 interface Bridge {
   actions: React.MutableRefObject<MenuActions>;
@@ -56,6 +60,12 @@ export function MenuBridgeProvider({ children }: { children: ReactNode }) {
  * flags never change. Tests read the registered actions from it. */
 export const inertBridge: Bridge = { actions: { current: {} }, flags: NO_FLAGS, setFlags: () => {} };
 
+/** Vrai pour l'écran affiché ; faux pour un onglet resté monté en arrière-plan. Seul l'écran affiché
+ * enregistre les actions du menu et réagit au clavier. Hors onglets (test, rendu isolé) : vrai. */
+const TabActiveContext = createContext(true);
+export const TabActiveProvider = TabActiveContext.Provider;
+export const useTabActive = () => useContext(TabActiveContext);
+
 export function useMenuBridge(): Bridge {
   return useContext(BridgeContext) ?? inertBridge;
 }
@@ -64,11 +74,13 @@ export function useMenuBridge(): Bridge {
  * always the ones called, without rebuilding the menu. */
 export function useRegisterMenuActions(actions: MenuActions) {
   const { actions: ref } = useMenuBridge();
+  const active = useTabActive();
   const latest = useRef(actions);
   useEffect(() => {
     latest.current = actions;
   });
   useEffect(() => {
+    if (!active) return;
     const keys = Object.keys(latest.current) as (keyof MenuActions)[];
     for (const key of keys) {
       ref.current[key] = ((...args: unknown[]) =>
@@ -77,5 +89,5 @@ export function useRegisterMenuActions(actions: MenuActions) {
     return () => {
       for (const key of keys) delete ref.current[key];
     };
-  }, [ref]);
+  }, [ref, active]);
 }

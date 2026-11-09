@@ -76,7 +76,7 @@ export interface ExportResult {
 /** Message d'erreur renvoyé par `export_project` quand l'utilisateur a annulé l'export. */
 export const EXPORT_CANCELLED = "export-cancelled";
 
-/** Exporte le projet en mp4 (ffmpeg doit être installé). Rejette avec `EXPORT_CANCELLED` si
+/** Exporte le projet en mp4. Rejette avec `EXPORT_CANCELLED` si
  * l'export a été annulé. */
 export function exportProject(
   projectDir: string,
@@ -85,6 +85,31 @@ export function exportProject(
   options: ExportOptions,
 ): Promise<ExportResult> {
   return invoke("export_project", { projectDir, project, outputPath, options });
+}
+
+/** Formats de l'export « audio seul » (valeurs attendues par la commande Rust). */
+export type AudioExportFormat = "wav16" | "wav24" | "wav32f" | "mp3" | "flac" | "ogg" | "m4a";
+
+/** Extension du fichier produit pour chaque format. */
+export const AUDIO_FORMAT_EXTENSION: Record<AudioExportFormat, string> = {
+  wav16: "wav",
+  wav24: "wav",
+  wav32f: "wav",
+  mp3: "mp3",
+  flac: "flac",
+  ogg: "ogg",
+  m4a: "m4a",
+};
+
+/** Exporte uniquement le son du projet (pistes audio + audio des vidéos) dans `format`. Rejette
+ * avec `EXPORT_CANCELLED` si l'export a été annulé. */
+export function exportProjectAudio(
+  projectDir: string,
+  project: Project,
+  outputPath: string,
+  format: AudioExportFormat,
+): Promise<ExportResult> {
+  return invoke("export_project_audio", { projectDir, project, outputPath, format });
 }
 
 /** Demande l'arrêt de l'export en cours. */

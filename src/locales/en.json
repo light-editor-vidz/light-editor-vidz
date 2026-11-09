@@ -5,7 +5,27 @@
     "openProject": "Open project",
     "recentProjects": "Recent projects",
     "removeRecent": "Remove from the list",
-    "clearRecent": "Clear"
+    "clearRecent": "Clear",
+    "tools": "Tools",
+    "comingSoon": "Coming soon",
+    "tool": {
+      "audio": {
+        "name": "Audio",
+        "hint": "Trim, fade, filter, normalise"
+      },
+      "video": {
+        "name": "Video",
+        "hint": ""
+      },
+      "image": {
+        "name": "Image",
+        "hint": ""
+      },
+      "subtitles": {
+        "name": "Subtitles",
+        "hint": ""
+      }
+    }
   },
   "modal": {
     "title": "New video",
@@ -65,6 +85,7 @@
     "showInFolder": "Show file",
     "cancelExport": "Cancel export",
     "mp4Filter": "MP4 video",
+    "audioFilter": "{{ext}} audio file",
     "keySpace": "Space",
     "keyHomeEnd": "Home/End",
     "keyDelete": "Del",
@@ -72,7 +93,10 @@
     "shortcutsMenu": "Keyboard shortcuts…",
     "closeProject": "Close project",
     "openRecent": "Open recent",
-    "clearRecent": "Clear recent"
+    "clearRecent": "Clear recent",
+    "openFile": "Open file…",
+    "openProjectFolder": "Open project folder…",
+    "closeTab": "Close tab"
   },
   "update": {
     "checkForUpdates": "Check for updates",
@@ -185,6 +209,19 @@
     "muted": "Muted",
     "fadeIn": "Fade in (s)",
     "fadeOut": "Fade out (s)",
+    "fadeCurve": "Fade curve",
+    "fadeCurveLinear": "Linear",
+    "fadeCurveEqualPower": "Equal power",
+    "audioSpeed": "Speed (×)",
+    "filter": "Filter",
+    "filterNone": "None",
+    "filterLowPass": "Low-pass",
+    "filterHighPass": "High-pass",
+    "filterBandPass": "Band-pass",
+    "filterFrequency": "Frequency (Hz)",
+    "filterSlope": "Slope",
+    "filterSlopeValue": "{{slope}} dB/octave",
+    "filterQ": "Q (width)",
     "advance": "Bring forward",
     "sendBack": "Send backward",
     "animFade": "Fade",
@@ -335,6 +372,11 @@
   },
   "exportModal": {
     "title": "Export video",
+    "titleAudio": "Export audio",
+    "modeVideo": "Video (MP4)",
+    "modeAudio": "Audio only",
+    "audioFormat": "Format",
+    "audioHint": "Mixes every audio track and the sound of your videos into one file.",
     "subtitle": "Project settings: {{width}}×{{height}} · {{fps}}fps",
     "resolution": "Resolution",
     "resolutionOriginal": "Original",
@@ -399,5 +441,130 @@
   },
   "about": {
     "tagline": "Compose scenes with video, text, images, sound and shapes, and export them to MP4."
+  },
+  "audioTool": {
+    "header": {
+      "openOther": "Open another file",
+      "open": "Open an audio file",
+      "undo": "Undo",
+      "redo": "Redo"
+    },
+    "drop": {
+      "title": "Drop an audio file here",
+      "or": "or",
+      "open": "Browse files",
+      "name": "Audio"
+    },
+    "recent": {
+      "title": "Recent",
+      "clear": "Clear",
+      "remove": "Remove from the list"
+    },
+    "player": {
+      "playPause": "Space to play/pause",
+      "waveform": "Waveform. Click or use the arrow keys to move the playhead; I marks the start of a cut and O its end, at the playhead.",
+      "seek": "Seek"
+    },
+    "cut": {
+      "title": "CUTS",
+      "clear": "Clear all",
+      "sideHint": "On the timeline below, drag to select the parts to remove. Several selections are possible.",
+      "hint": "Drag on the track to mark the parts to remove",
+      "selected": "Selected cut:",
+      "placeholder": "Click a cut to edit its times",
+      "start": "Start",
+      "end": "End",
+      "delete": "Delete cut",
+      "resize": "Drag to resize",
+      "count_one": "{{count}} cut",
+      "count_other": "{{count}} cuts"
+    },
+    "fade": {
+      "title": "Fade",
+      "in": "Fade in",
+      "out": "Fade out",
+      "curve": "Curve",
+      "linear": "Linear",
+      "equalPower": "Equal power"
+    },
+    "volume": {
+      "title": "Volume",
+      "normalize": "Normalise (peak −1 dBFS)"
+    },
+    "speed": {
+      "title": "Speed"
+    },
+    "filter": {
+      "title": "Filter",
+      "none": "None",
+      "frequency": "Frequency",
+      "cutoff": "Cutoff",
+      "centre": "Centre",
+      "bandwidth": "Bandwidth",
+      "slope": "Slope",
+      "q": "Q",
+      "lowpass": "Low-pass",
+      "highpass": "High-pass",
+      "bandpass": "Band-pass"
+    },
+    "export": {
+      "run": "Export",
+      "title": "Export",
+      "close": "Close",
+      "cancel": "Cancel",
+      "depth": "WAV sample format",
+      "progress": "Processing… {{percent}}%",
+      "cancelled": "Export cancelled",
+      "done": "Exported: {{name}}"
+    },
+    "depth": {
+      "float32": "32-bit float",
+      "pcm24": "24-bit",
+      "pcm16": "16-bit (dithered)"
+    },
+    "msg": {
+      "loading": "Loading…",
+      "error": "Error: {{error}}",
+      "unreachable": "Cannot read the file ({{status}})",
+      "previewUnavailable": "Preview unavailable for this format — the export still works."
+    },
+    "badge": {
+      "meta": "{{channels}}ch · {{rate}}Hz · {{duration}}"
+    },
+    "err": {
+      "trim_range": "Invalid trim range {{start}}–{{end}} s (the audio is {{total}} s long)",
+      "trim_empty": "Everything is cut: there would be no audio to export",
+      "fade_too_long": {
+        "in": "The fade in ({{secs}} s) is longer than the audio kept",
+        "out": "The fade out ({{secs}} s) is longer than the audio kept"
+      },
+      "filter_value": "Invalid frequency or bandwidth: “{{value}}”",
+      "filter_range": "The frequency {{hz}} Hz must be between 0 and {{max}} Hz",
+      "filter_bandwidth": "The bandwidth must be a positive number (got {{hz}} Hz)",
+      "filter_spec": "Invalid filter: {{spec}}",
+      "cannot_open": "Cannot open “{{path}}”",
+      "cannot_write": "Cannot write “{{path}}”",
+      "unsupported_format": "This audio format is not supported",
+      "empty_audio": "The file contains no audio",
+      "ffmpeg_missing": "ffmpeg was not found — install it to export MP3, FLAC, OGG or M4A",
+      "ffmpeg_failed": "ffmpeg could not encode {{format}}: {{detail}}",
+      "unknown_format": "Unknown export format: {{format}}",
+      "speed_invalid": "Invalid speed factor",
+      "cancelled": "Export cancelled",
+      "path_not_approved": "“{{path}}” was not chosen with the file picker or dropped on the window",
+      "wav_depth": "Unknown WAV sample format: {{value}}",
+      "fade_curve": "Unknown fade curve: {{value}}",
+      "filter_slope": "The slope must be 12, 24, 36 or 48 dB/octave (got {{value}})",
+      "filter_q": "Q must be a positive number (got “{{value}}”)",
+      "filter_q_slope": "Q can only be set on a 12 dB/octave filter"
+    }
+  },
+  "tabs": {
+    "label": "Open tabs",
+    "home": "Home",
+    "audio": "Audio",
+    "close": "Close tab",
+    "closeNamed": "Close {{name}}",
+    "unsupportedFile": "This file type cannot be opened."
   }
 }

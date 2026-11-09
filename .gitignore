@@ -15,6 +15,9 @@ dist-ssr
 # Rust
 /target
 
+# Binaires ffmpeg/ffprobe embarqués (téléchargés par `npm run fetch:ffmpeg`)
+/src-tauri/binaries
+
 # Types TS générés depuis scene-core (régénérer via `npm run gen:types`)
 /src/bindings
 /crates/scene-core/bindings

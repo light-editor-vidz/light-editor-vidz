@@ -1,6 +1,6 @@
 use super::error::CmdResult;
 use super::registry::OpenProjects;
-use crate::export::{export_video, ExportOverrides};
+use crate::export::{export_audio, export_video, AudioFormat, ExportOverrides};
 use scene_core::model::Project;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -79,6 +79,47 @@ pub async fn export_project(
             &project_dir,
             &output_path,
             overrides,
+            &cancel,
+            |fraction| {
+                let _ = app.emit("export-progress", fraction);
+            },
+        )
+    })
+    .await
+    .map_err(|e| format!("The export crashed: {e}"))??;
+    Ok(ExportResult {
+        missing_media: report.missing_media,
+    })
+}
+
+/// Exporte uniquement le son du projet (mix des pistes audio et de l'audio des vidéos) dans le
+/// format demandé. Même verrou, même annulation et même événement `export-progress` que
+/// `export_project`.
+#[tauri::command]
+pub async fn export_project_audio(
+    app: tauri::AppHandle,
+    control: State<'_, ExportControl>,
+    projects: State<'_, OpenProjects>,
+    project_dir: String,
+    project: Project,
+    output_path: String,
+    format: AudioFormat,
+) -> CmdResult<ExportResult> {
+    let project_dir = projects.require(&project_dir)?;
+    if control.running.swap(true, Ordering::SeqCst) {
+        return Err(("An export is already running.".to_string()).into());
+    }
+    let _guard = RunningGuard(control.running.clone());
+    let cancel = control.cancel.clone();
+    cancel.store(false, Ordering::SeqCst);
+
+    let output_path = PathBuf::from(output_path);
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        export_audio(
+            &project,
+            &project_dir,
+            &output_path,
+            format,
             &cancel,
             |fraction| {
                 let _ = app.emit("export-progress", fraction);

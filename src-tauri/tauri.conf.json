@@ -4,9 +4,9 @@
   "version": "1.0.2",
   "identifier": "com.sikander.lighteditorvidz",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run fetch:ffmpeg && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run fetch:ffmpeg && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -20,8 +20,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data: https:; media-src 'self' asset: http://asset.localhost lvmedia: http://lvmedia.localhost blob: https:; connect-src ipc: http://ipc.localhost",
-      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data: https:; media-src 'self' asset: http://asset.localhost lvmedia: http://lvmedia.localhost blob: https:; connect-src ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data: https:; media-src 'self' asset: http://asset.localhost lvmedia: http://lvmedia.localhost blob: https:; connect-src ipc: http://ipc.localhost asset: http://asset.localhost",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data: https:; media-src 'self' asset: http://asset.localhost lvmedia: http://lvmedia.localhost blob: https:; connect-src ipc: http://ipc.localhost asset: http://asset.localhost ws://localhost:1420 http://localhost:1420",
       "assetProtocol": {
         "enable": true,
         "scope": []
@@ -39,10 +39,7 @@
       "icons/icon.ico"
     ],
     "createUpdaterArtifacts": true,
-    "linux": {
-      "deb": { "depends": ["ffmpeg"] },
-      "rpm": { "depends": ["ffmpeg"] }
-    }
+    "externalBin": ["binaries/ffmpeg", "binaries/ffprobe"]
   },
   "plugins": {
     "updater": {

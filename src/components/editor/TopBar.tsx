@@ -6,7 +6,15 @@ import { listen } from "@tauri-apps/api/event";
 import { Redo2, Undo2 } from "lucide-react";
 import type { Project } from "../../bindings/Project";
 import { describeError, isExportCancelled } from "../../lib/errors";
-import { cancelExport, exportProject, type ExportOptions } from "../../lib/commands";
+import {
+  AUDIO_FORMAT_EXTENSION,
+  cancelExport,
+  exportProject,
+  exportProjectAudio,
+  type AudioExportFormat,
+  type ExportOptions,
+  type ExportResult,
+} from "../../lib/commands";
 import type { Notice } from "./StatusBanner";
 import ExportModal from "./ExportModal";
 import { useRegisterMenuActions } from "../../lib/menuBridge";
@@ -54,18 +62,32 @@ export default function TopBar({
 
   async function handleExport(options: ExportOptions) {
     onNotice(null);
-    const defaultName = `${project.name.trim() || "video"}.mp4`;
     const outputPath = await save({
-      defaultPath: defaultName,
+      defaultPath: `${project.name.trim() || "video"}.mp4`,
       filters: [{ name: t("topbar.mp4Filter"), extensions: ["mp4"] }],
     });
     if (!outputPath) return;
+    await runExport(outputPath, () => exportProject(projectDir, project, outputPath, options));
+  }
 
+  async function handleExportAudio(format: AudioExportFormat) {
+    onNotice(null);
+    const extension = AUDIO_FORMAT_EXTENSION[format];
+    const outputPath = await save({
+      defaultPath: `${project.name.trim() || "audio"}.${extension}`,
+      filters: [{ name: t("topbar.audioFilter", { ext: extension.toUpperCase() }), extensions: [extension] }],
+    });
+    if (!outputPath) return;
+    await runExport(outputPath, () => exportProjectAudio(projectDir, project, outputPath, format));
+  }
+
+  /** Suivi commun aux deux exports : progression, notification de fin, annulation, erreurs. */
+  async function runExport(outputPath: string, run: () => Promise<ExportResult>) {
     setExporting(true);
     setExportProgress(0);
     setExportStartedAt(performance.now());
     try {
-      const result = await exportProject(projectDir, project, outputPath, options);
+      const result = await run();
       setShowExportModal(false);
       const missing = result.missing_media;
       onNotice({
@@ -150,6 +172,7 @@ export default function TopBar({
           projectHeight={project.height}
           projectFps={project.fps}
           onExport={handleExport}
+          onExportAudio={handleExportAudio}
           onClose={() => setShowExportModal(false)}
           exporting={exporting}
         />

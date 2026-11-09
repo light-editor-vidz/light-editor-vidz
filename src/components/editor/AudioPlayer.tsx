@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import type { AudioTrack } from "../../bindings/AudioTrack";
 import type { Project } from "../../bindings/Project";
 import { useMediaSource } from "../../lib/useMediaSource";
-import { audioFadeGain, isAudioTrackActive, isTrackAudible } from "../../lib/audio";
+import { audioFadeGain, audioSourceTime, isAudioTrackActive, isTrackAudible } from "../../lib/audio";
 import { useClockValue, type PlaybackClock } from "../../lib/playbackClock";
 
 interface TrackProps {
@@ -27,6 +27,14 @@ function SingleAudio({ track, projectDir, projectDuration, clock, playing, audib
     if (ref.current) ref.current.volume = volume;
   }, [volume]);
 
+  // Vitesse : la hauteur du son est conservée, comme le filtre `atempo` de l'export.
+  useEffect(() => {
+    const audio = ref.current;
+    if (!audio) return;
+    audio.playbackRate = track.speed;
+    audio.preservesPitch = true;
+  }, [track.speed, mediaSrc]);
+
   // Lecture / pause : seulement quand l'état change (pas à chaque image).
   useEffect(() => {
     const audio = ref.current;
@@ -40,11 +48,11 @@ function SingleAudio({ track, projectDir, projectDuration, clock, playing, audib
     const audio = ref.current;
     if (!audio || !active) return;
     // `track.start_time` est absolu sur la timeline globale (pistes non rattachées aux scènes).
-    const targetTime = currentTime - track.start_time + track.audio_offset;
+    const targetTime = audioSourceTime(track, currentTime);
     if (Math.abs(audio.currentTime - targetTime) > 0.25) {
       audio.currentTime = Math.max(0, targetTime);
     }
-  }, [active, currentTime, track.start_time, track.audio_offset, mediaSrc]);
+  }, [active, currentTime, track, mediaSrc]);
 
   return <audio ref={ref} src={mediaSrc ?? undefined} preload="auto" onError={() => !usingBlob && fallBack()} />;
 }

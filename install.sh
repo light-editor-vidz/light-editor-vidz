@@ -19,7 +19,7 @@ APP_COMMENT="Scene-based video editor"
 CATEGORIES="AudioVideo;Video;"
 ICON_URL="https://raw.githubusercontent.com/$REPO/main/src-tauri/icons/icon.png"
 ICON_SIZE="512x512"
-RUNTIME_DEPS="ffmpeg"
+RUNTIME_DEPS=""
 
 log() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -35,13 +35,22 @@ fetch() {
   fi
 }
 
-# latest_asset <extension> — download URL of the first matching asset of the latest release
+# latest_asset <extension> <arch-regex> — download URL of the first asset of the latest release
+# with that extension whose name matches the CPU architecture (the release ships x86_64 and arm64).
 latest_asset() {
   fetch "https://api.github.com/repos/$REPO/releases/latest" \
     | grep -o "\"browser_download_url\": *\"[^\"]*\\.$1\"" \
-    | head -1 \
-    | sed 's/.*"\(https[^"]*\)"/\1/'
+    | sed 's/.*"\(https[^"]*\)"/\1/' \
+    | grep -E "$2" \
+    | head -1
 }
+
+# The Linux installers are built for amd64 and arm64 only.
+case "$(uname -m)" in
+  x86_64|amd64) LINUX_ARCH="amd64|x86_64" ;;
+  aarch64|arm64) LINUX_ARCH="arm64|aarch64" ;;
+  *) LINUX_ARCH="" ;;
+esac
 
 install_runtime_deps() {
   [ -n "$RUNTIME_DEPS" ] || return 0
@@ -65,6 +74,7 @@ install_runtime_deps() {
 }
 
 install_macos() {
+  [ "$(uname -m)" = "arm64" ] || die "LightEditorVidz for macOS requires Apple Silicon (arm64)."
   command -v brew >/dev/null 2>&1 \
     || die "Homebrew is required on macOS. Install it from https://brew.sh"
   brew tap "$TAP"
@@ -79,7 +89,7 @@ install_macos() {
 }
 
 install_deb() {
-  url="$(latest_asset deb)"
+  url="$(latest_asset deb "_($LINUX_ARCH)\\.deb")"
   [ -n "$url" ] || die "No .deb in the latest release — see https://github.com/$REPO/releases"
   tmp="$(mktemp -d)/$(basename "$url")"
   log "Downloading $(basename "$url")…"
@@ -91,7 +101,7 @@ install_deb() {
 }
 
 install_appimage() {
-  url="$(latest_asset AppImage)"
+  url="$(latest_asset AppImage "_($LINUX_ARCH)\\.AppImage")"
   [ -n "$url" ] || die "No .AppImage in the latest release — see https://github.com/$REPO/releases"
 
   bin_dir="$HOME/.local/bin"
@@ -134,6 +144,7 @@ case "$(uname -s)" in
     install_macos
     ;;
   Linux)
+    [ -n "$LINUX_ARCH" ] || die "Unsupported CPU architecture: $(uname -m) (amd64 and arm64 only)."
     install_runtime_deps
     if command -v apt-get >/dev/null 2>&1; then
       install_deb

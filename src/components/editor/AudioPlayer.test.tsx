@@ -24,6 +24,9 @@ const track = (over: Partial<AudioTrack> = {}): AudioTrack =>
     audio_offset: 0,
     fade_in: 0,
     fade_out: 0,
+    speed: 1,
+    fade_curve: "linear",
+    filter: null,
     ...over,
   }) as AudioTrack;
 
@@ -206,5 +209,17 @@ describe("AudioPlayer — fondus", () => {
     const calls = play.mock.calls.length;
     for (const t of [1.1, 1.2, 1.3, 1.4]) await act(async () => clock.set(t));
     expect(play.mock.calls.length).toBe(calls);
+  });
+
+  it("plays at the track's speed, keeping the pitch", async () => {
+    await renderPlayer([track({ speed: 1.5 })]);
+    expect(audios()[0].playbackRate).toBe(1.5);
+    expect(audios()[0].preservesPitch).toBe(true);
+  });
+
+  it("consumes the source faster than the timeline when sped up", async () => {
+    await renderPlayer([track({ start_time: 2, audio_offset: 1, speed: 2 })], 5);
+    // 3s into the track at 2× → 6s of source, +1s of offset.
+    expect(audios()[0].currentTime).toBeCloseTo(7);
   });
 });

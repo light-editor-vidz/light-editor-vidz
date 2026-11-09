@@ -1,0 +1,22 @@
+[package]
+name = "audio-dsp"
+version = "0.1.0"
+edition = "2021"
+description = "Décodage, traitement (coupe, fondus, vitesse, filtres, normalisation) et export audio, repris de LightCutSoundz."
+
+[lib]
+name = "audio_dsp"
+crate-type = ["rlib"]
+
+[dependencies]
+scene-core = { path = "../scene-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+symphonia = { version = "0.5", features = ["all", "opt-simd"] }
+hound = "3"
+rubato = "0.15"
+anyhow = "1"
+tempfile = "3"
+
+# Le décodage et le rééchantillonnage sont inutilisables sans optimisation (un MP3 de 5 min met
+# 15 s à se décoder) : les dépendances sont toujours optimisées, même en debug.

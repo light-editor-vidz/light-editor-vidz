@@ -1,0 +1,33 @@
+{
+  "version": "n8.1.3 (BtbN autobuild-2026-11-09-12-42) / Martin Riedl N-128220",
+  "targets": {
+    "x86_64-unknown-linux-gnu": {
+      "archive": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-09-12-42/ffmpeg-n8.1.3-34-ga35157abb9-linux64-gpl-8.1.tar.xz",
+      "sha256": "23c6279d9f10afbcc273082256ae2073495595ab53fbcd729a5a93913b3fdd75",
+      "format": "tar",
+      "ffmpeg": "ffmpeg-n8.1.3-34-ga35157abb9-linux64-gpl-8.1/bin/ffmpeg",
+      "ffprobe": "ffmpeg-n8.1.3-34-ga35157abb9-linux64-gpl-8.1/bin/ffprobe"
+    },
+    "aarch64-unknown-linux-gnu": {
+      "archive": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-09-12-42/ffmpeg-n8.1.3-34-ga35157abb9-linuxarm64-gpl-8.1.tar.xz",
+      "sha256": "28a4fdb4ac17ffb3b41dac009ceedb844de9988111d94d61f42521ff5aba6ee4",
+      "format": "tar",
+      "ffmpeg": "ffmpeg-n8.1.3-34-ga35157abb9-linuxarm64-gpl-8.1/bin/ffmpeg",
+      "ffprobe": "ffmpeg-n8.1.3-34-ga35157abb9-linuxarm64-gpl-8.1/bin/ffprobe"
+    },
+    "aarch64-apple-darwin": {
+      "separate": {
+        "ffmpeg": {
+          "archive": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1793460248_N-128220-gbea9d176f7/ffmpeg.zip",
+          "sha256": "8094d88c459b6e0ab3bd69e96729485b50cb859451ba92c3779818d38d4b656d",
+          "member": "ffmpeg"
+        },
+        "ffprobe": {
+          "archive": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1793460248_N-128220-gbea9d176f7/ffprobe.zip",
+          "sha256": "4587e2f13de2fa368067ad903def39306ba697cc07c1bb27da5753161628ce76",
+          "member": "ffprobe"
+        }
+      }
+    }
+  }
+}

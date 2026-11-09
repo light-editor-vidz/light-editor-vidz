@@ -45,3 +45,46 @@ select {
 .mono {
   font-family: var(--font-code);
 }
+
+/* Barre d'onglets au-dessus du contenu de l'écran affiché. */
+.app-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-panels {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.tab-panel {
+  height: 100%;
+  overflow: auto;
+}
+
+.tab-panel[hidden] {
+  display: none;
+}
+
+.app-error {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--danger) 18%, var(--bg-secondary));
+  border-bottom: 1px solid var(--danger);
+}
+
+.app-error button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+}

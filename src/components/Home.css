@@ -1,6 +1,6 @@
 .home {
   position: relative;
-  min-height: 100vh;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   background: radial-gradient(
@@ -203,4 +203,56 @@
 
 .recent-remove:hover {
   color: var(--danger);
+}
+
+/* Les outils : un bouton par ancienne application, avec son picto. */
+.home-tools {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 150px));
+  gap: 14px;
+}
+
+.home-tool {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  text-align: center;
+  transition:
+    border-color 0.12s,
+    background 0.12s,
+    transform 0.12s;
+}
+
+.home-tool:not(:disabled):hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+  transform: translateY(-1px);
+}
+
+.home-tool:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.home-tool-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+}
+
+.home-tool-name {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.home-tool-hint {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-secondary);
 }

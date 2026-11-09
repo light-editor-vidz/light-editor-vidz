@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs",
     "gen:types": "rm -rf src/bindings && TS_RS_EXPORT_DIR=\"$PWD/src/bindings\" cargo test -p scene-core export_bindings --quiet",
     "lint": "eslint .",
     "format": "prettier --write .",

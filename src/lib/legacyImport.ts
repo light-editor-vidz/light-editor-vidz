@@ -335,6 +335,9 @@ function convertAudioTrack(raw: unknown): AudioTrack | null {
     fade_out: 0,
     muted: false,
     solo: false,
+    speed: 1,
+    fade_curve: "linear",
+    filter: null,
   };
 }
 

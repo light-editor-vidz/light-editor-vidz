@@ -2443,7 +2443,7 @@ mod tests {
     }
 
     fn ffmpeg_available() -> bool {
-        std::process::Command::new("ffmpeg")
+        std::process::Command::new(crate::ffmpeg_path::ffmpeg_binary())
             .arg("-version")
             .output()
             .is_ok()
@@ -2451,7 +2451,7 @@ mod tests {
 
     fn make_test_video(dir: &Path, color: &str, size: &str, seconds: u32) -> PathBuf {
         let path = dir.join("video.mp4");
-        let status = std::process::Command::new("ffmpeg")
+        let status = std::process::Command::new(crate::ffmpeg_path::ffmpeg_binary())
             .args(["-y", "-f", "lavfi", "-i"])
             .arg(format!("color=c={color}:s={size}:d={seconds}"))
             .args(["-r", "10", "-pix_fmt", "yuv420p"])
@@ -2541,7 +2541,7 @@ mod tests {
         let dir = temp_dir("videotrim");
         // Rouge pendant 1 s puis bleu : un point d'entrée à 1,2 s doit montrer du bleu dès t=0.
         let path = dir.join("video.mp4");
-        let status = std::process::Command::new("ffmpeg")
+        let status = std::process::Command::new(crate::ffmpeg_path::ffmpeg_binary())
             .args(["-y", "-f", "lavfi", "-i", "color=c=red:s=32x32:d=1:r=10"])
             .args(["-f", "lavfi", "-i", "color=c=blue:s=32x32:d=2:r=10"])
             .args([

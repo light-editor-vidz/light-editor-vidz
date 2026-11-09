@@ -6,8 +6,10 @@
 //! (fichiers sources en entrées supplémentaires) : pas de fichier intermédiaire ni de seconde
 //! passe. La sortie est écrite dans un fichier temporaire puis renommée une fois complète.
 
+use scene_core::audio_fx::{fade_curve_name, filter_stages};
 use scene_core::ffmpeg_path::{ffmpeg_binary, ffprobe_binary};
-use std::io::{Read, Write};
+use scene_core::model::{AudioFilter, FadeCurve};
+use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::thread::JoinHandle;
@@ -37,6 +39,10 @@ pub struct AudioMixInput {
     pub loop_audio: bool,
     /// Durée (secondes) du fichier source, nécessaire pour boucler à partir de `offset`.
     pub source_duration: Option<f64>,
+    /// Courbe des fondus d'entrée et de sortie.
+    pub fade_curve: FadeCurve,
+    /// Filtre passe-bas / passe-haut / passe-bande, appliqué après le changement de vitesse.
+    pub filter: Option<AudioFilter>,
 }
 
 /// Paramètres de l'encodage final.
@@ -131,8 +137,8 @@ pub fn media_duration(path: &Path) -> Option<f64> {
 }
 
 /// Chaîne de filtres audio d'une entrée (`idx` = index de l'entrée ffmpeg), jusqu'à son
-/// étiquette `[a<n>]`. Ordre : bouclage → coupe à la durée → vitesse → fondus (dans le temps
-/// local du clip) → volume → décalage sur la timeline.
+/// étiquette `[a<n>]`. Ordre : bouclage → coupe à la durée → vitesse → filtre → fondus (dans le
+/// temps local du clip) → volume → décalage sur la timeline.
 fn audio_chain(input: &AudioMixInput, idx: usize, label: &str) -> String {
     let speed = input.speed.clamp(0.1, 4.0);
     let mut filters: Vec<String> = Vec::new();
@@ -150,12 +156,19 @@ fn audio_chain(input: &AudioMixInput, idx: usize, label: &str) -> String {
     if (speed - 1.0).abs() > 0.001 {
         filters.push(atempo_chain(speed));
     }
+    if let Some(filter) = &input.filter {
+        filters.extend(filter_stages(filter));
+    }
+    let curve = fade_curve_name(input.fade_curve);
     if input.fade_in > 0.0 {
-        filters.push(format!("afade=t=in:st=0:d={}", input.fade_in));
+        filters.push(format!("afade=t=in:st=0:d={}:curve={curve}", input.fade_in));
     }
     if input.fade_out > 0.0 {
         let start = (input.duration - input.fade_out).max(0.0);
-        filters.push(format!("afade=t=out:st={start}:d={}", input.fade_out));
+        filters.push(format!(
+            "afade=t=out:st={start}:d={}:curve={curve}",
+            input.fade_out
+        ));
     }
     filters.push(format!("volume={}", input.volume.clamp(0.0, 2.0)));
     let delay_ms = (input.start_time.max(0.0) * 1000.0).round() as i64;
@@ -172,25 +185,222 @@ fn filter_graph(spec: &EncoderSpec) -> (String, bool) {
     if spec.audio.is_empty() {
         return (graph, false);
     }
+    graph.push(';');
+    graph.push_str(&audio_mix_graph(spec.audio, 1, spec.duration, ""));
+    (graph, true)
+}
+
+/// Mix de toutes les pistes `audio` (entrées ffmpeg `first_input`, `first_input + 1`…), jusqu'à
+/// l'étiquette `[aout]`. `tail` s'ajoute juste avant (filtres de fin de chaîne, ex. dither).
+fn audio_mix_graph(
+    audio: &[AudioMixInput],
+    first_input: usize,
+    duration: f64,
+    tail: &str,
+) -> String {
+    let mut graph = String::new();
     let mut labels = String::new();
-    for (i, input) in spec.audio.iter().enumerate() {
+    for (i, input) in audio.iter().enumerate() {
         let label = format!("a{i}");
+        graph.push_str(&audio_chain(input, first_input + i, &label));
         graph.push(';');
-        graph.push_str(&audio_chain(input, i + 1, &label));
         labels.push_str(&format!("[{label}]"));
     }
     // Le mix dure aussi longtemps que la piste la plus longue ; `apad` le complète par du silence
     // jusqu'à la durée du projet (`-t` coupe l'excédent).
-    let mix = if spec.audio.len() == 1 {
+    let mix = if audio.len() == 1 {
         format!("{labels}anull")
     } else {
         format!(
             "{labels}amix=inputs={}:duration=longest:normalize=0",
-            spec.audio.len()
+            audio.len()
         )
     };
-    graph.push_str(&format!(";{mix},apad=whole_dur={}[aout]", spec.duration));
-    (graph, true)
+    graph.push_str(&format!("{mix},apad=whole_dur={duration}{tail}[aout]"));
+    graph
+}
+
+/// Une entrée ffmpeg par piste du mix (lecture à partir de l'offset, ou boucle).
+fn push_audio_inputs(args: &mut Vec<String>, audio: &[AudioMixInput]) {
+    for input in audio {
+        let loops_from_offset = input.loop_audio && input.source_duration.is_some();
+        if input.loop_audio && !loops_from_offset {
+            // Durée de source inconnue : repli sur la boucle du fichier entier.
+            args.extend(["-stream_loop".to_string(), "-1".to_string()]);
+        }
+        if !loops_from_offset {
+            args.extend(["-ss".to_string(), input.offset.max(0.0).to_string()]);
+        }
+        args.push("-i".to_string());
+        args.push(input.path.to_string_lossy().into_owned());
+    }
+}
+
+/// Format de l'export « audio seul ».
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AudioFormat {
+    /// WAV 16 bits, avec dither triangulaire.
+    Wav16,
+    Wav24,
+    /// WAV flottant 32 bits.
+    Wav32f,
+    /// MP3 VBR (V2, ≈ 190 kb/s).
+    Mp3,
+    Flac,
+    /// OGG Vorbis (qualité 5).
+    Ogg,
+    /// AAC 192 kb/s dans un conteneur M4A.
+    M4a,
+}
+
+impl AudioFormat {
+    #[cfg(test)]
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Wav16 | Self::Wav24 | Self::Wav32f => "wav",
+            Self::Mp3 => "mp3",
+            Self::Flac => "flac",
+            Self::Ogg => "ogg",
+            Self::M4a => "m4a",
+        }
+    }
+
+    /// Conteneur (`-f`) : le fichier temporaire n'a pas d'extension exploitable par ffmpeg.
+    fn container(self) -> &'static str {
+        match self {
+            Self::Wav16 | Self::Wav24 | Self::Wav32f => "wav",
+            Self::Mp3 => "mp3",
+            Self::Flac => "flac",
+            Self::Ogg => "ogg",
+            Self::M4a => "ipod",
+        }
+    }
+
+    fn codec_args(self) -> &'static [&'static str] {
+        match self {
+            Self::Wav16 => &["-c:a", "pcm_s16le"],
+            Self::Wav24 => &["-c:a", "pcm_s24le"],
+            Self::Wav32f => &["-c:a", "pcm_f32le"],
+            Self::Mp3 => &["-c:a", "libmp3lame", "-q:a", "2"],
+            Self::Flac => &["-c:a", "flac"],
+            Self::Ogg => &["-c:a", "libvorbis", "-q:a", "5"],
+            Self::M4a => &["-c:a", "aac", "-b:a", "192k"],
+        }
+    }
+
+    /// Filtre de fin de chaîne : le passage en 16 bits est dithéré plutôt que tronqué.
+    fn graph_tail(self) -> &'static str {
+        match self {
+            Self::Wav16 => ",aresample=osf=s16:dither_method=triangular",
+            _ => "",
+        }
+    }
+}
+
+/// Paramètres de l'export « audio seul » : le mix des pistes, sans vidéo.
+pub struct AudioExportSpec<'a> {
+    pub audio: &'a [AudioMixInput],
+    /// Durée (secondes) du fichier : le mix est complété par du silence ou coupé.
+    pub duration: f64,
+    pub format: AudioFormat,
+    /// Titre inscrit dans les métadonnées du fichier.
+    pub title: &'a str,
+    pub output_path: &'a Path,
+}
+
+/// Arguments complets de ffmpeg pour un export audio seul (hors binaire).
+fn audio_export_args(spec: &AudioExportSpec) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "-y",
+        "-nostdin",
+        "-nostats",
+        "-loglevel",
+        "error",
+        // Progression lisible sur stdout (`out_time_us=`).
+        "-progress",
+        "pipe:1",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    push_audio_inputs(&mut args, spec.audio);
+    args.extend([
+        "-filter_complex".to_string(),
+        audio_mix_graph(spec.audio, 0, spec.duration, spec.format.graph_tail()),
+        "-map".to_string(),
+        "[aout]".to_string(),
+        "-ar".to_string(),
+        MIX_SAMPLE_RATE.to_string(),
+    ]);
+    args.extend(spec.format.codec_args().iter().map(|s| s.to_string()));
+    if !spec.title.trim().is_empty() {
+        args.extend(["-metadata".to_string(), format!("title={}", spec.title)]);
+    }
+    if spec.format == AudioFormat::M4a {
+        args.extend(["-movflags".to_string(), "+faststart".to_string()]);
+    }
+    args.extend(["-f".to_string(), spec.format.container().to_string()]);
+    args.push("-t".to_string());
+    args.push(format!("{:.6}", spec.duration));
+    args.push(spec.output_path.to_string_lossy().into_owned());
+    args
+}
+
+/// Lance l'export audio seul et attend sa fin. `on_progress` reçoit une fraction 0.0..1.0.
+/// `cancelled` est interrogé à chaque mise à jour de progression (ffmpeg en émet plusieurs par
+/// seconde) : s'il renvoie vrai, ffmpeg est tué et `Err(CANCELLED)` est retourné.
+pub fn run_audio_export(
+    spec: &AudioExportSpec,
+    cancelled: impl Fn() -> bool,
+    mut on_progress: impl FnMut(f32),
+) -> Result<(), String> {
+    let mut child = Command::new(ffmpeg_binary())
+        .args(audio_export_args(spec))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to launch ffmpeg: {e}"))?;
+    let stderr = child.stderr.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut tail: Vec<u8> = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while let Ok(n) = pipe.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                tail.extend_from_slice(&chunk[..n]);
+                if tail.len() > STDERR_TAIL_BYTES {
+                    tail.drain(..tail.len() - STDERR_TAIL_BYTES);
+                }
+            }
+            String::from_utf8_lossy(&tail).into_owned()
+        })
+    });
+    let stdout = child.stdout.take().ok_or("ffmpeg stdout unavailable")?;
+    for line in std::io::BufReader::new(stdout)
+        .lines()
+        .map_while(Result::ok)
+    {
+        if cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(crate::export::CANCELLED.to_string());
+        }
+        if let Some(micros) = line.strip_prefix("out_time_us=") {
+            if let Ok(micros) = micros.trim().parse::<f64>() {
+                on_progress((micros / 1e6 / spec.duration).clamp(0.0, 1.0) as f32);
+            }
+        }
+    }
+    let status = child.wait().map_err(|e| format!("ffmpeg failed: {e}"))?;
+    let stderr = stderr.and_then(|h| h.join().ok()).unwrap_or_default();
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("ffmpeg failed: {}", tail(&stderr, 2000)))
+    }
 }
 
 /// Arguments complets de ffmpeg pour `spec` (hors binaire).
@@ -216,18 +426,7 @@ fn encoder_args(spec: &EncoderSpec) -> Vec<String> {
     // `-nostdin` ne concerne que les commandes interactives : l'entrée vidéo lit bien `pipe:0`.
     args.extend(["-i".to_string(), "pipe:0".to_string()]);
 
-    for input in spec.audio {
-        let loops_from_offset = input.loop_audio && input.source_duration.is_some();
-        if input.loop_audio && !loops_from_offset {
-            // Durée de source inconnue : repli sur la boucle du fichier entier.
-            args.extend(["-stream_loop".to_string(), "-1".to_string()]);
-        }
-        if !loops_from_offset {
-            args.extend(["-ss".to_string(), input.offset.max(0.0).to_string()]);
-        }
-        args.push("-i".to_string());
-        args.push(input.path.to_string_lossy().into_owned());
-    }
+    push_audio_inputs(&mut args, spec.audio);
 
     let (graph, has_audio) = filter_graph(spec);
     args.extend(["-filter_complex".to_string(), graph]);
@@ -389,6 +588,8 @@ mod tests {
             speed: 1.0,
             loop_audio: false,
             source_duration: None,
+            fade_curve: FadeCurve::Linear,
+            filter: None,
         }
     }
 
@@ -533,6 +734,65 @@ mod tests {
         looping.loop_audio = true;
         let args = encoder_args(&spec(&[looping], Path::new("/tmp/o")));
         assert!(args.windows(2).any(|w| w == ["-stream_loop", "-1"]));
+    }
+
+    #[test]
+    fn equal_power_fades_use_the_quarter_sine_curve() {
+        let mut track = input(10.0);
+        track.fade_in = 1.0;
+        track.fade_out = 2.0;
+        assert!(audio_chain(&track, 1, "a0").contains("afade=t=in:st=0:d=1:curve=tri"));
+        track.fade_curve = FadeCurve::EqualPower;
+        let chain = audio_chain(&track, 1, "a0");
+        assert!(chain.contains("afade=t=in:st=0:d=1:curve=qsin"), "{chain}");
+        assert!(chain.contains("afade=t=out:st=8:d=2:curve=qsin"), "{chain}");
+    }
+
+    #[test]
+    fn the_filter_runs_after_the_speed_change_and_before_the_fades() {
+        let mut track = input(10.0);
+        track.speed = 2.0;
+        track.fade_in = 1.0;
+        track.filter = Some(AudioFilter {
+            kind: scene_core::model::AudioFilterKind::LowPass,
+            frequency: 800.0,
+            slope: 24,
+            q: 0.707,
+        });
+        let chain = audio_chain(&track, 1, "a0");
+        let tempo = chain.find("atempo").expect(&chain);
+        let filter = chain.find("lowpass=f=800").expect(&chain);
+        let fade = chain.find("afade").expect(&chain);
+        assert!(tempo < filter && filter < fade, "{chain}");
+        assert_eq!(chain.matches("lowpass").count(), 2, "24 dB/oct = 2 biquads");
+    }
+
+    #[test]
+    fn audio_export_args_describe_a_video_less_mix() {
+        let tracks = [input(4.0), input(2.0)];
+        let spec = AudioExportSpec {
+            audio: &tracks,
+            duration: 6.0,
+            format: AudioFormat::Wav16,
+            title: "Mon projet",
+            output_path: Path::new("/tmp/o"),
+        };
+        let args = audio_export_args(&spec);
+        let graph = args
+            .windows(2)
+            .find(|w| w[0] == "-filter_complex")
+            .map(|w| w[1].clone())
+            .unwrap();
+        // Les entrées audio commencent à l'index 0 (pas de flux vidéo sur stdin).
+        assert!(graph.starts_with("[0:a]"), "{graph}");
+        assert!(graph.contains("[1:a]"), "{graph}");
+        assert!(graph.contains("dither_method=triangular[aout]"), "{graph}");
+        assert!(!args.iter().any(|a| a == "pipe:0" || a == "[vout]"));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["-metadata", "title=Mon projet"]));
+        assert!(args.windows(2).any(|w| w == ["-f", "wav"]));
+        assert!(args.windows(2).any(|w| w == ["-c:a", "pcm_s16le"]));
     }
 
     // --- Intégration : vraie exécution de ffmpeg ---------------------------------------------
@@ -733,6 +993,126 @@ mod tests {
             !Path::new(&format!("/proc/{pid}")).exists() || cfg!(not(target_os = "linux")),
             "ffmpeg ne doit pas survivre à l'encodeur"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn make_sine(dir: &Path, name: &str, hz: u32, seconds: u32) -> PathBuf {
+        let path = dir.join(name);
+        let status = Command::new(ffmpeg_binary())
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i"])
+            .arg(format!("sine=frequency={hz}:duration={seconds}"))
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        path
+    }
+
+    #[test]
+    fn a_low_pass_removes_a_tone_above_its_cutoff_and_keeps_one_below() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("lowpass");
+        let low = make_sine(&dir, "low.wav", 200, 4);
+        let high = make_sine(&dir, "high.wav", 8000, 4);
+        let filtered = |path: PathBuf| {
+            let mut track = input(4.0);
+            track.path = path;
+            track.filter = Some(AudioFilter {
+                kind: scene_core::model::AudioFilterKind::LowPass,
+                frequency: 1000.0,
+                slope: 48,
+                q: 0.707,
+            });
+            let out = dir.join("filtered.wav");
+            let spec = AudioExportSpec {
+                audio: &[track],
+                duration: 4.0,
+                format: AudioFormat::Wav32f,
+                title: "",
+                output_path: &out,
+            };
+            run_audio_export(&spec, || false, |_| {}).unwrap();
+            max_volume(&out, 1.0, 2.0)
+        };
+        let kept = filtered(low);
+        let removed = filtered(high);
+        // La source sinus de ffmpeg culmine à −18 dBFS : le passe-bas ne doit pas l'atténuer.
+        assert!(kept > -19.0, "200 Hz doit passer : {kept} dB");
+        assert!(removed < -60.0, "8 kHz doit être coupé : {removed} dB");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_audio_format_produces_a_file_with_the_right_codec_and_duration() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("formats");
+        let tone = make_tone(&dir, "tone.wav", 3);
+        let cases = [
+            (AudioFormat::Wav16, "pcm_s16le"),
+            (AudioFormat::Wav24, "pcm_s24le"),
+            (AudioFormat::Wav32f, "pcm_f32le"),
+            (AudioFormat::Mp3, "mp3"),
+            (AudioFormat::Flac, "flac"),
+            (AudioFormat::Ogg, "vorbis"),
+            (AudioFormat::M4a, "aac"),
+        ];
+        for (format, codec) in cases {
+            let mut track = input(3.0);
+            track.path = tone.clone();
+            let out = dir.join(format!("out-{codec}.{}", format.extension()));
+            let spec = AudioExportSpec {
+                audio: &[track],
+                duration: 5.0,
+                format,
+                title: "Titre",
+                output_path: &out,
+            };
+            run_audio_export(&spec, || false, |_| {}).unwrap_or_else(|e| panic!("{codec}: {e}"));
+            let probed = ffprobe(
+                &[
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "a:0",
+                    "-show_entries",
+                    "stream=codec_name",
+                    "-of",
+                    "csv=p=0",
+                ],
+                &out,
+            )
+            .unwrap();
+            assert_eq!(probed.trim(), codec, "{format:?}");
+            // La piste (3 s) est complétée par du silence jusqu'à la durée demandée (5 s).
+            let duration = media_duration(&out).unwrap();
+            assert!((duration - 5.0).abs() < 0.3, "{codec} : {duration} s");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cancelled_audio_export_kills_ffmpeg_and_reports_the_cancellation() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("cancel-audio");
+        let tone = make_tone(&dir, "tone.wav", 60);
+        let mut track = input(60.0);
+        track.path = tone;
+        let out = dir.join("never.wav");
+        let spec = AudioExportSpec {
+            audio: &[track],
+            duration: 60.0,
+            format: AudioFormat::Wav16,
+            title: "",
+            output_path: &out,
+        };
+        let err = run_audio_export(&spec, || true, |_| {}).unwrap_err();
+        assert_eq!(err, crate::export::CANCELLED);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -41,12 +41,20 @@ export default function AppMenuBar() {
 
   // Calls go through `actions`: the screen's latest functions, whenever it is clicked.
   const call = (name: Exclude<keyof typeof actions.current, "openRecent">) => () => actions.current[name]?.();
-  const { inEditor, canUndo, canRedo, hasSelection } = flags;
+  const { inEditor, inAudio, canUndo, canRedo, hasSelection } = flags;
+  /** Un projet ou un fichier audio est affiché : l'export et la fermeture de l'onglet ont un sens. */
+  const inTab = inEditor || inAudio;
 
   const file = useMemo<MenuSpec[]>(
     () => [
       { kind: "item", text: t("topbar.newProject"), accelerator: "CmdOrCtrl+N", action: call("newProject") },
-      { kind: "item", text: t("topbar.openProject"), accelerator: "CmdOrCtrl+O", action: call("openProject") },
+      { kind: "item", text: t("topbar.openFile"), accelerator: "CmdOrCtrl+O", action: call("openFile") },
+      {
+        kind: "item",
+        text: t("topbar.openProjectFolder"),
+        accelerator: "CmdOrCtrl+Shift+O",
+        action: call("openProject"),
+      },
       {
         kind: "submenu",
         text: t("topbar.openRecent"),
@@ -74,10 +82,16 @@ export default function AppMenuBar() {
         kind: "item",
         text: t("topbar.exportEllipsis"),
         accelerator: "CmdOrCtrl+E",
-        enabled: inEditor,
+        enabled: inTab,
         action: call("openExport"),
       },
-      { kind: "item", text: t("topbar.closeProject"), enabled: inEditor, action: call("closeProject") },
+      {
+        kind: "item",
+        text: t("topbar.closeTab"),
+        accelerator: "CmdOrCtrl+W",
+        enabled: inTab,
+        action: call("closeProject"),
+      },
       { kind: "separator" },
       {
         kind: "item",
@@ -88,7 +102,7 @@ export default function AppMenuBar() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, inEditor, recents, refreshRecents],
+    [t, inEditor, inTab, recents, refreshRecents],
   );
 
   // Undo, redo, delete and duplicate are already keys of the editor (Ctrl+Z…): no accelerator here,

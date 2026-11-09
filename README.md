@@ -16,6 +16,10 @@ Compose scenes on a canvas with text, images, video, audio and shapes, animate t
 - **Five element types** — text, image, video, audio and shapes — all drag/resize/rotate through one shared interaction component
 - **Composable animations** — fade, slide, zoom, rotate, blur, bounce… that stack instead of overwriting each other, plus composition transitions and Ken Burns pans
 - **Editing** — undo/redo, duplicate, split, delete, and an import path for the legacy JSON project format
+- **Tabs** — the home screen, every open project and every open audio file each have a tab; File > Open file… (Ctrl+O) picks the right one from the file type: an audio file opens the Audio view, a video or an image becomes a new project holding it
+- **Audio view** (from the Audio button on the home screen, or by opening an audio file) — the former LightCutSoundz: waveform with cuts to remove, fades (linear or equal power), speed 0.25×–4×, low-pass / high-pass (12–48 dB/octave) / band-pass filters, peak normalisation, live preview, undo / redo, WAV (16/24-bit, 32-bit float) / MP3 / FLAC / OGG / M4A export with the tags and cover of the source
+- **Audio tracks** — trim (source in-point, drag the clip edge), fades with a linear or equal-power curve, speed 0.25×–4× (pitch kept), low-pass / high-pass (12–48 dB/octave) / band-pass filters, mute and solo
+- **Audio-only export** — the mix of every track and of your videos' sound as WAV (16/24-bit, 32-bit float), MP3, FLAC, OGG Vorbis or M4A
 - **Real mp4 export** — frames are rasterized natively (in parallel) and piped to `ffmpeg`, which mixes the audio in the same pass; not a DOM/CSS replay. Cancellable, with a report of any media that could not be read
 - **Signed update on demand** — _Help › Check for updates_ checks GitHub Releases, downloads, installs and relaunches (pending changes are saved first)
 - **Bilingual** — English and French UI
@@ -69,12 +73,7 @@ chmod +x LightEditorVidz_*_amd64.AppImage
 
 ## Requirements
 
-- [`ffmpeg`](https://ffmpeg.org) is a **required runtime dependency** — it encodes exports and decodes video frames, and is not bundled inside the app.
-  - On macOS the Homebrew cask pulls it in automatically.
-  - On Linux the one-line installer installs it via your system package manager if missing.
-  - You can point the app at a specific binary with `LIGHT_EDITOR_VIDZ_FFMPEG`.
-
----
+None: `ffmpeg` and `ffprobe` (GPL build with x264, vidstab, mp3lame, vorbis) ship inside the app, see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). You can still point the app at another build with `LIGHT_EDITOR_VIDZ_FFMPEG` / `LIGHT_EDITOR_VIDZ_FFPROBE`. Supported platforms: Linux x86_64, Linux arm64, macOS Apple Silicon.
 
 ## Uninstall
 
@@ -114,7 +113,7 @@ update-desktop-database ~/.local/share/applications
 
 - [Rust](https://rustup.rs) stable
 - [Node.js](https://nodejs.org) 20+
-- `ffmpeg` / `ffprobe` on your `PATH`
+- Nothing for ffmpeg: `npm run fetch:ffmpeg` downloads the pinned, checksum-verified build for your platform (run automatically by `tauri dev` / `tauri build`)
 - The [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/) for your OS
 
 ### Setup
@@ -167,7 +166,7 @@ portable, no database.
 - Video sources are decoded by `ffmpeg` as a stream while exporting (nothing is written to disk); only the part of the file used by the clip is decoded.
 - Lengths such as stroke width, corner radius, border and blur are expressed in 1/1000 of the canvas width, so they look the same at any resolution (preview and export).
 - Text uses the bundled Manrope / JetBrains Mono fonts; any other font name must be installed on the system for the export to use it.
-- `ffmpeg` must be installed and reachable (via `PATH` or `LIGHT_EDITOR_VIDZ_FFMPEG`) — it is not bundled as a sidecar binary.
+- `ffmpeg` / `ffprobe` are bundled as sidecar binaries, about 170 MB each before compression.
 
 ---
 

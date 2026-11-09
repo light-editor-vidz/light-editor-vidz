@@ -1,8 +1,9 @@
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listRecentProjects, newProject, removeRecentProject, type RecentProject } from "../lib/commands";
 import Home from "./Home";
+import { TabActiveProvider } from "../lib/menuBridge";
 import NewProjectModal from "./NewProjectModal";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
@@ -288,5 +289,78 @@ describe("Home — projets récents et création", () => {
   it("propose le nom de projet par défaut dans la langue courante", async () => {
     render(<Home onOpenProject={vi.fn()} startNewProject />);
     expect(await screen.findByDisplayValue("My video")).toBeInTheDocument();
+  });
+});
+
+describe("Home — outils", () => {
+  it("propose un bouton par ancienne application, avec son picto", async () => {
+    render(<Home onOpenProject={vi.fn()} />);
+    await act(async () => {});
+
+    const tools = screen.getByRole("region", { name: "Tools" });
+    expect(within(tools).getAllByRole("button")).toHaveLength(4);
+    expect(tools.querySelectorAll("img")).toHaveLength(4);
+    expect(within(tools).getByRole("button", { name: /Audio/ })).toBeEnabled();
+  });
+
+  it("Audio ouvre l'outil audio", async () => {
+    const onOpenTool = vi.fn();
+    render(<Home onOpenProject={vi.fn()} onOpenTool={onOpenTool} />);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByRole("button", { name: /Audio/ }));
+
+    expect(onOpenTool).toHaveBeenCalledWith("audio");
+  });
+
+  it("les outils pas encore disponibles sont grisés, avec la mention « Coming soon »", async () => {
+    const onOpenTool = vi.fn();
+    render(<Home onOpenProject={vi.fn()} onOpenTool={onOpenTool} />);
+    await act(async () => {});
+
+    for (const name of [/Video/, /Image/, /Subtitles/]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      expect(button).toHaveTextContent("Coming soon");
+      fireEvent.click(button);
+    }
+    expect(onOpenTool).not.toHaveBeenCalled();
+  });
+
+  it("relit les projets récents chaque fois que l'accueil revient au premier plan", async () => {
+    const { rerender } = render(
+      <TabActiveProvider value={false}>
+        <Home onOpenProject={vi.fn()} />
+      </TabActiveProvider>,
+    );
+    await act(async () => {});
+    expect(mockList).not.toHaveBeenCalled();
+
+    rerender(
+      <TabActiveProvider value={true}>
+        <Home onOpenProject={vi.fn()} />
+      </TabActiveProvider>,
+    );
+    await act(async () => {});
+
+    expect(mockList).toHaveBeenCalledTimes(1);
+  });
+
+  it("acquitte la demande « Nouveau projet » une fois la fenêtre ouverte", async () => {
+    const onNewProjectHandled = vi.fn();
+    render(<Home onOpenProject={vi.fn()} startNewProject onNewProjectHandled={onNewProjectHandled} />);
+
+    expect(await screen.findByText("New video")).toBeInTheDocument();
+    expect(onNewProjectHandled).toHaveBeenCalled();
+  });
+
+  it("rouvre la fenêtre de création à chaque nouvelle demande", async () => {
+    const { rerender } = render(<Home onOpenProject={vi.fn()} startNewProject={false} />);
+    await act(async () => {});
+    expect(screen.queryByText("New video")).not.toBeInTheDocument();
+
+    rerender(<Home onOpenProject={vi.fn()} startNewProject />);
+
+    expect(await screen.findByText("New video")).toBeInTheDocument();
   });
 });

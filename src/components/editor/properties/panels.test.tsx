@@ -21,6 +21,9 @@ const track = (over: Partial<AudioTrack> = {}): AudioTrack =>
     audio_offset: 0,
     fade_in: 0,
     fade_out: 0,
+    speed: 1,
+    fade_curve: "linear",
+    filter: null,
     ...over,
   }) as AudioTrack;
 
@@ -151,6 +154,56 @@ describe("AudioProperties", () => {
     fireEvent.change(inputUnder("Source in-point (s)"), { target: { value: "-5" } });
 
     expect(onUpdate).toHaveBeenCalledWith({ audio_offset: 0 });
+  });
+
+  it("changes the fade curve", () => {
+    const { onUpdate } = setup();
+
+    fireEvent.change(screen.getByDisplayValue("Linear"), { target: { value: "equal-power" } });
+
+    expect(onUpdate).toHaveBeenCalledWith({ fade_curve: "equal-power" });
+  });
+
+  it("changes the speed, bounded to 0.25–4", () => {
+    const { onUpdate } = setup();
+
+    fireEvent.change(inputUnder("Speed (×)"), { target: { value: "2" } });
+    fireEvent.change(inputUnder("Speed (×)"), { target: { value: "10" } });
+    fireEvent.change(inputUnder("Speed (×)"), { target: { value: "0.01" } });
+
+    expect(onUpdate).toHaveBeenNthCalledWith(1, { speed: 2 });
+    expect(onUpdate).toHaveBeenNthCalledWith(2, { speed: 4 });
+    expect(onUpdate).toHaveBeenNthCalledWith(3, { speed: 0.25 });
+  });
+
+  it("offers no filter settings until a filter is chosen, then starts from neutral values", () => {
+    const { onUpdate } = setup();
+    expect(screen.queryByText("Frequency (Hz)")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByDisplayValue("None"), { target: { value: "low-pass" } });
+
+    expect(onUpdate).toHaveBeenCalledWith({ filter: { kind: "low-pass", frequency: 4000, slope: 12, q: 0.707 } });
+  });
+
+  it("edits a low-pass filter's frequency and slope, and removes it", () => {
+    const filter = { kind: "low-pass", frequency: 4000, slope: 12, q: 0.707 } as const;
+    const { onUpdate } = setup({ filter });
+
+    fireEvent.change(inputUnder("Frequency (Hz)"), { target: { value: "1500" } });
+    expect(onUpdate).toHaveBeenLastCalledWith({ filter: { ...filter, frequency: 1500 } });
+
+    fireEvent.change(screen.getByDisplayValue("12 dB/octave"), { target: { value: "48" } });
+    expect(onUpdate).toHaveBeenLastCalledWith({ filter: { ...filter, slope: 48 } });
+
+    fireEvent.change(screen.getByDisplayValue("Low-pass"), { target: { value: "none" } });
+    expect(onUpdate).toHaveBeenLastCalledWith({ filter: null });
+  });
+
+  it("shows Q instead of the slope for a band-pass filter", () => {
+    setup({ filter: { kind: "band-pass", frequency: 1000, slope: 12, q: 2 } });
+
+    expect(screen.getByText("Q (width)")).toBeInTheDocument();
+    expect(screen.queryByText("Slope")).not.toBeInTheDocument();
   });
 });
 

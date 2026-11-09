@@ -187,6 +187,52 @@ pub struct AudioTrack {
     pub muted: bool,
     /// Si au moins une piste du projet a `solo = true`, seules les pistes solo sont audibles.
     pub solo: bool,
+    /// Vitesse de lecture (1.0 = normale), la hauteur du son est conservée. `duration` reste
+    /// exprimée en temps de timeline : à 2×, une piste de 5 s consomme 10 s de source.
+    #[serde(default = "default_speed")]
+    pub speed: f64,
+    /// Courbe des fondus d'entrée et de sortie.
+    #[serde(default)]
+    pub fade_curve: FadeCurve,
+    /// Filtre passe-bas / passe-haut / passe-bande appliqué à la piste.
+    #[serde(default)]
+    pub filter: Option<AudioFilter>,
+}
+
+fn default_speed() -> f64 {
+    1.0
+}
+
+/// Forme des fondus : linéaire, ou « equal-power » (quart de sinus) qui garde une énergie
+/// perçue constante lors d'un enchaînement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum FadeCurve {
+    #[default]
+    Linear,
+    EqualPower,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum AudioFilterKind {
+    LowPass,
+    HighPass,
+    BandPass,
+}
+
+/// Filtre IIR d'une piste audio. `slope` (12, 24, 36 ou 48 dB/octave) ne concerne que les
+/// passe-bas et passe-haut (cascades de Butterworth) ; `q` ne concerne que le passe-bande.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AudioFilter {
+    pub kind: AudioFilterKind,
+    /// Fréquence de coupure ou centrale, en Hz.
+    pub frequency: f64,
+    pub slope: u32,
+    pub q: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]

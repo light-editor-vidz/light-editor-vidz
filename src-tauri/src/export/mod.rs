@@ -1,6 +1,10 @@
 mod ffmpeg;
 
-use ffmpeg::{has_audio_stream, media_duration, AudioMixInput, EncoderSpec, VideoEncoder};
+pub use ffmpeg::AudioFormat;
+use ffmpeg::{
+    has_audio_stream, media_duration, run_audio_export, AudioExportSpec, AudioMixInput,
+    EncoderSpec, VideoEncoder,
+};
 use scene_core::model::{Element, Project};
 use scene_core::raster::FrameRenderer;
 use std::path::{Path, PathBuf};
@@ -84,9 +88,15 @@ fn collect_project_audio_inputs(
             fade_in: track.fade_in.max(0.0),
             fade_out: track.fade_out.max(0.0),
             duration,
-            speed: 1.0,
+            speed: if track.speed.is_finite() && track.speed > 0.01 {
+                track.speed
+            } else {
+                1.0
+            },
             loop_audio: false,
             source_duration: None,
+            fade_curve: track.fade_curve,
+            filter: track.filter,
         });
     }
     inputs
@@ -146,6 +156,8 @@ fn collect_audio_inputs(
                 speed,
                 loop_audio: video_el.loop_video,
                 source_duration,
+                fade_curve: Default::default(),
+                filter: None,
             });
         }
     }
@@ -346,6 +358,49 @@ pub fn export_video(
     })
 }
 
+/// Mixe les pistes audio du projet (et l'audio des vidéos) dans un fichier audio seul. Mêmes
+/// garanties que `export_video` : fichier écrit à côté puis renommé, rien ne subsiste en cas
+/// d'échec ou d'annulation (erreur `CANCELLED`).
+pub fn export_audio(
+    project: &Project,
+    project_dir: &Path,
+    output_path: &Path,
+    format: AudioFormat,
+    cancel: &AtomicBool,
+    on_progress: impl FnMut(f32),
+) -> Result<ExportReport, String> {
+    if !is_usable_duration(project.duration) {
+        return Err("The project has no duration to export.".to_string());
+    }
+    let mut missing = Vec::new();
+    let audio_inputs = collect_audio_inputs(project, project_dir, &mut missing);
+    if audio_inputs.is_empty() {
+        return Err("The project has no audio to export.".to_string());
+    }
+    let partial = partial_output_path(output_path);
+    let result = run_audio_export(
+        &AudioExportSpec {
+            audio: &audio_inputs,
+            duration: project.duration,
+            format,
+            title: &project.name,
+            output_path: &partial,
+        },
+        || cancel.load(Ordering::SeqCst),
+        on_progress,
+    )
+    .and_then(|()| {
+        std::fs::rename(&partial, output_path)
+            .map_err(|e| format!("Failed to write the exported audio: {e}"))
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    result.map(|()| ExportReport {
+        missing_media: missing,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,6 +432,9 @@ mod tests {
             fade_out: 0.0,
             muted: false,
             solo: false,
+            speed: 1.0,
+            fade_curve: FadeCurve::Linear,
+            filter: None,
         }
     }
 
@@ -548,7 +606,7 @@ mod tests {
         );
 
         // Vérifie avec ffprobe que le fichier est un mp4 h264 valide de la bonne durée.
-        let probe = std::process::Command::new("ffprobe")
+        let probe = std::process::Command::new(scene_core::ffmpeg_path::ffprobe_binary())
             .args([
                 "-v",
                 "error",
@@ -626,7 +684,7 @@ mod tests {
         )
         .expect("export with overrides should succeed");
 
-        let probe = std::process::Command::new("ffprobe")
+        let probe = std::process::Command::new(scene_core::ffmpeg_path::ffprobe_binary())
             .args([
                 "-v",
                 "error",
@@ -669,7 +727,7 @@ mod tests {
 
         // Génère une source vidéo synthétique avec une piste audio (ton sinusoïdal).
         let video_src = dir.join("clip.mp4");
-        let status = std::process::Command::new("ffmpeg")
+        let status = std::process::Command::new(scene_core::ffmpeg_path::ffmpeg_binary())
             .args([
                 "-y",
                 "-f",
@@ -748,7 +806,7 @@ mod tests {
         )
         .expect("export should succeed");
 
-        let probe = std::process::Command::new("ffprobe")
+        let probe = std::process::Command::new(scene_core::ffmpeg_path::ffprobe_binary())
             .args([
                 "-v",
                 "error",
@@ -784,7 +842,7 @@ mod tests {
             |_| {},
         )
         .expect("muted export should succeed");
-        let probe = std::process::Command::new("ffprobe")
+        let probe = std::process::Command::new(scene_core::ffmpeg_path::ffprobe_binary())
             .args([
                 "-v",
                 "error",
@@ -808,7 +866,7 @@ mod tests {
     }
 
     fn probe(path: &Path, args: &[&str]) -> String {
-        let out = std::process::Command::new("ffprobe")
+        let out = std::process::Command::new(scene_core::ffmpeg_path::ffprobe_binary())
             .args(["-v", "error"])
             .args(args)
             .arg(path)
@@ -865,7 +923,7 @@ mod tests {
     fn export_duration_follows_the_project_even_with_a_short_audio_track() {
         let dir = temp_dir_with_files("shortaudio", &[]);
         let tone = dir.join("a1.mp3");
-        let status = std::process::Command::new("ffmpeg")
+        let status = std::process::Command::new(scene_core::ffmpeg_path::ffmpeg_binary())
             .args([
                 "-y",
                 "-v",
@@ -1015,7 +1073,7 @@ mod tests {
         ];
         export_to(&dir, &project, ExportOverrides::default()).unwrap();
         let frame_color = |second: &str| -> &'static str {
-            let out = std::process::Command::new("ffmpeg")
+            let out = std::process::Command::new(scene_core::ffmpeg_path::ffmpeg_binary())
                 .args(["-v", "error", "-ss", second, "-i"])
                 .arg(dir.join("out.mp4"))
                 .args(["-frames:v", "1", "-vf", "scale=1:1", "-f", "rawvideo"])
@@ -1031,6 +1089,117 @@ mod tests {
         };
         assert_eq!(frame_color("0.3"), "red");
         assert_eq!(frame_color("1.5"), "blue");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn make_tone_file(dir: &Path, name: &str, seconds: u32) {
+        let status = std::process::Command::new(scene_core::ffmpeg_path::ffmpeg_binary())
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i"])
+            .arg(format!("sine=frequency=440:duration={seconds}"))
+            .arg(dir.join(name))
+            .status();
+        assert!(
+            status.is_ok_and(|s| s.success()),
+            "ffmpeg doit être disponible"
+        );
+    }
+
+    fn audio_only_project(track: AudioTrack, duration: f64) -> Project {
+        Project {
+            name: "Mix".into(),
+            width: 100,
+            height: 100,
+            fps: 30,
+            duration,
+            compositions: vec![empty_composition("c1", 0.0, duration)],
+            audio_tracks: vec![track],
+        }
+    }
+
+    fn ffmpeg_runs() -> bool {
+        std::process::Command::new(scene_core::ffmpeg_path::ffmpeg_binary())
+            .arg("-version")
+            .output()
+            .is_ok()
+    }
+
+    #[test]
+    fn exports_the_audio_mix_alone_with_the_speed_and_curve_of_the_tracks() {
+        if !ffmpeg_runs() {
+            return;
+        }
+        let dir = temp_dir_with_files("audio-only", &[]);
+        make_tone_file(&dir, "a1.mp3", 6);
+        let mut track = audio_track("a1", 0.0);
+        track.duration = Some(2.0);
+        track.speed = 2.0;
+        track.fade_in = 1.0;
+        track.fade_curve = FadeCurve::EqualPower;
+        let project = audio_only_project(track, 4.0);
+        let out = dir.join("mix.flac");
+        let cancel = AtomicBool::new(false);
+        let mut last = 0.0;
+        let report = export_audio(&project, &dir, &out, AudioFormat::Flac, &cancel, |p| {
+            last = p
+        })
+        .expect("l'export audio doit réussir");
+        assert!(report.missing_media.is_empty());
+        assert!(out.exists());
+        assert!(
+            !partial_output_path(&out).exists(),
+            "aucun fichier .part ne doit rester"
+        );
+        assert!(
+            last > 0.5,
+            "la progression doit avoir été signalée : {last}"
+        );
+        let duration = media_duration(&out).unwrap();
+        assert!((duration - 4.0).abs() < 0.3, "{duration} s");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_audio_export_without_any_sound_is_refused() {
+        let dir = temp_dir_with_files("audio-none", &[]);
+        let mut project = audio_only_project(audio_track("a1", 0.0), 3.0);
+        project.audio_tracks[0].muted = true;
+        let out = dir.join("mix.wav");
+        let err = export_audio(
+            &project,
+            &dir,
+            &out,
+            AudioFormat::Wav16,
+            &AtomicBool::new(false),
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(err.contains("no audio"), "{err}");
+        assert!(!out.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cancelling_an_audio_export_leaves_no_file_behind() {
+        if !ffmpeg_runs() {
+            return;
+        }
+        let dir = temp_dir_with_files("audio-cancel", &[]);
+        make_tone_file(&dir, "a1.mp3", 30);
+        let mut track = audio_track("a1", 0.0);
+        track.duration = Some(30.0);
+        let project = audio_only_project(track, 30.0);
+        let out = dir.join("mix.mp3");
+        let err = export_audio(
+            &project,
+            &dir,
+            &out,
+            AudioFormat::Mp3,
+            &AtomicBool::new(true),
+            |_| {},
+        )
+        .unwrap_err();
+        assert_eq!(err, CANCELLED);
+        assert!(!out.exists() && !partial_output_path(&out).exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
