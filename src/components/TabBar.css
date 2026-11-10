@@ -97,3 +97,8 @@
   background: var(--bg-card);
   color: var(--text-primary);
 }
+
+.tab-icon-image {
+  color: var(--color-image);
+  flex-shrink: 0;
+}

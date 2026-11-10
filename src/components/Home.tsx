@@ -15,7 +15,7 @@ export type HomeTool = "audio" | "video" | "image" | "subtitles";
 const TOOLS: { id: HomeTool; icon: string; enabled: boolean }[] = [
   { id: "audio", icon: "/tools/soundz.png", enabled: true },
   { id: "video", icon: "/tools/vidz.png", enabled: false },
-  { id: "image", icon: "/tools/imgz.png", enabled: false },
+  { id: "image", icon: "/tools/imgz.png", enabled: true },
   { id: "subtitles", icon: "/tools/subz.png", enabled: false },
 ];
 

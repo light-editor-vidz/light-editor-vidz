@@ -29,8 +29,8 @@ export interface CreatedProject {
   media: { kind: "video" | "image"; src: string; name: string };
 }
 
-/** Crée un projet (1920×1080, 30 i/s) à côté du fichier et y importe la vidéo ou l'image : le
- * projet porte le nom du fichier, et le média est posé dans sa première scène à l'ouverture. */
+/** Crée un projet (1920×1080, 30 i/s) à côté du fichier et y importe la vidéo : le projet porte le
+ * nom du fichier, et la vidéo est posée dans sa première scène à l'ouverture. */
 export async function createProjectFromMedia(path: string, kind: "video" | "image"): Promise<CreatedProject> {
   const dir = await newProject({
     parent_dir: dirName(path),

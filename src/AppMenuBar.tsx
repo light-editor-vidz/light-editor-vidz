@@ -41,9 +41,9 @@ export default function AppMenuBar() {
 
   // Calls go through `actions`: the screen's latest functions, whenever it is clicked.
   const call = (name: Exclude<keyof typeof actions.current, "openRecent">) => () => actions.current[name]?.();
-  const { inEditor, inAudio, canUndo, canRedo, hasSelection } = flags;
+  const { inEditor, inAudio, inImage, canUndo, canRedo, hasSelection } = flags;
   /** Un projet ou un fichier audio est affiché : l'export et la fermeture de l'onglet ont un sens. */
-  const inTab = inEditor || inAudio;
+  const inTab = inEditor || inAudio || inImage;
 
   const file = useMemo<MenuSpec[]>(
     () => [

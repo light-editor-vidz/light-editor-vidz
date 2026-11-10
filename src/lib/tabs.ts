@@ -19,7 +19,7 @@ export type Tab =
     }
   | {
       id: string;
-      kind: "audio";
+      kind: "audio" | "image";
       /** Fichier ouvert ; `null` = vue vide (zone de dépôt et fichiers récents). */
       path: string | null;
     };
@@ -39,9 +39,10 @@ export const initialTabs: TabsState = { tabs: [], active: HOME, startNewProject:
 export type TabsAction =
   | { type: "openProject"; dir: string; notice?: string | null; media?: ProjectMedia | null }
   | { type: "openAudio"; path: string | null }
+  | { type: "openImage"; path: string | null }
   | { type: "activate"; id: string }
   | { type: "close"; id: string; intent?: "new" }
-  | { type: "setAudioPath"; id: string; path: string }
+  | { type: "setTabPath"; id: string; path: string }
   | { type: "clearNewProject" };
 
 let counter = 0;
@@ -52,6 +53,20 @@ function neighbour(tabs: Tab[], closing: string): string {
   const index = tabs.findIndex((t) => t.id === closing);
   const next = tabs[index + 1] ?? tabs[index - 1];
   return next ? next.id : HOME;
+}
+
+/** Ouvre un fichier dans un onglet de ce type : un onglet qui l'a déjà est remis au premier plan,
+ * un onglet vide affiché est rempli, sinon un nouvel onglet est créé. La vue vide n'existe
+ * qu'une fois. */
+function openFileTab(state: TabsState, kind: "audio" | "image", path: string | null): TabsState {
+  const existing = state.tabs.find((t) => t.kind === kind && t.path === path);
+  if (existing) return { ...state, active: existing.id };
+  const shown = state.tabs.find((t) => t.id === state.active);
+  if (path !== null && shown && shown.kind === kind && shown.path === null) {
+    return { ...state, tabs: state.tabs.map((t) => (t === shown ? { ...shown, path } : t)) };
+  }
+  const tab: Tab = { id: newId(kind), kind, path };
+  return { ...state, tabs: [...state.tabs, tab], active: tab.id };
 }
 
 export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
@@ -69,13 +84,10 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
       };
       return { tabs: [...state.tabs, tab], active: tab.id, startNewProject: false };
     }
-    case "openAudio": {
-      // Un fichier déjà ouvert est remis au premier plan ; la vue vide n'existe qu'une fois.
-      const existing = state.tabs.find((t) => t.kind === "audio" && t.path === action.path);
-      if (existing) return { ...state, active: existing.id };
-      const tab: Tab = { id: newId("audio"), kind: "audio", path: action.path };
-      return { ...state, tabs: [...state.tabs, tab], active: tab.id };
-    }
+    case "openAudio":
+      return openFileTab(state, "audio", action.path);
+    case "openImage":
+      return openFileTab(state, "image", action.path);
     case "activate":
       return state.active === action.id || (action.id !== HOME && !state.tabs.some((t) => t.id === action.id))
         ? state
@@ -88,10 +100,10 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
         action.intent === "new" ? HOME : state.active === action.id ? neighbour(state.tabs, action.id) : state.active;
       return { tabs, active, startNewProject: action.intent === "new" };
     }
-    case "setAudioPath":
+    case "setTabPath":
       return {
         ...state,
-        tabs: state.tabs.map((t) => (t.id === action.id && t.kind === "audio" ? { ...t, path: action.path } : t)),
+        tabs: state.tabs.map((t) => (t.id === action.id && t.kind !== "project" ? { ...t, path: action.path } : t)),
       };
     case "clearNewProject":
       return state.startNewProject ? { ...state, startNewProject: false } : state;

@@ -11,6 +11,7 @@
     "core:window:allow-is-fullscreen",
     "opener:default",
     "dialog:default",
+    "dialog:allow-ask",
     "store:default",
     "updater:default",
     "process:default"

@@ -48,7 +48,7 @@ describe("tabsReducer", () => {
   it("an empty audio view takes the file chosen in it", () => {
     let s = run([{ type: "openAudio", path: null }]);
     const id = s.tabs[0].id;
-    s = tabsReducer(s, { type: "setAudioPath", id, path: "/m/a.mp3" });
+    s = tabsReducer(s, { type: "setTabPath", id, path: "/m/a.mp3" });
     expect(s.tabs[0]).toMatchObject({ kind: "audio", path: "/m/a.mp3" });
   });
 
@@ -107,5 +107,47 @@ describe("tabsReducer", () => {
     expect(s.startNewProject).toBe(false);
     const closed = tabsReducer(s, { type: "close", id: s.tabs[0].id, intent: "new" });
     expect(tabsReducer(closed, { type: "openProject", dir: "/p/b" }).startNewProject).toBe(false);
+  });
+
+  it("opens an image in a tab of its own, like an audio file", () => {
+    const s = run([
+      { type: "openImage", path: "/p/a.png" },
+      { type: "openAudio", path: "/m/a.mp3" },
+      { type: "openImage", path: "/p/a.png" },
+    ]);
+    expect(s.tabs.map((t) => (t.kind !== "project" ? [t.kind, t.path] : null))).toEqual([
+      ["image", "/p/a.png"],
+      ["audio", "/m/a.mp3"],
+    ]);
+    expect(s.active).toBe(s.tabs[0].id);
+  });
+
+  it("an audio file and an image with the same path are two different tabs", () => {
+    const s = run([
+      { type: "openImage", path: "/x/file" },
+      { type: "openAudio", path: "/x/file" },
+    ]);
+    expect(s.tabs).toHaveLength(2);
+  });
+
+  it("opening a file fills the empty view of the same kind that is shown", () => {
+    let s = run([{ type: "openImage", path: null }]);
+    const id = s.tabs[0].id;
+    s = tabsReducer(s, { type: "openImage", path: "/p/a.png" });
+    expect(s.tabs).toHaveLength(1);
+    expect(s.tabs[0]).toMatchObject({ id, kind: "image", path: "/p/a.png" });
+  });
+
+  it("does not fill an empty view of another kind, or one that is not shown", () => {
+    let s = run([{ type: "openAudio", path: null }]);
+    s = tabsReducer(s, { type: "openImage", path: "/p/a.png" });
+    expect(s.tabs).toHaveLength(2);
+
+    s = run([
+      { type: "openImage", path: null },
+      { type: "activate", id: HOME },
+    ]);
+    s = tabsReducer(s, { type: "openImage", path: "/p/b.png" });
+    expect(s.tabs).toHaveLength(2);
   });
 });

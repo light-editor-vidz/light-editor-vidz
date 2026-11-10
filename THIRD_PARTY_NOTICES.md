@@ -38,3 +38,11 @@ under the same MIT license. It decodes with [Symphonia](https://github.com/pdelj
 (MPL-2.0), writes WAV with [hound](https://github.com/ruuda/hound) (Apache-2.0) and resamples with
 [rubato](https://github.com/HEnquist/rubato) (MIT). MP3, FLAC, OGG and M4A are encoded by the FFmpeg
 above.
+
+## Image view (ex-LightCutImgz)
+
+The image view's engine (`src-tauri/src/imgz`) is the one of LightCutImgz, by the same author and
+under the same MIT license. It uses [image](https://github.com/image-rs/image) and
+[imageproc](https://github.com/image-rs/imageproc) (MIT), [kamadak-exif](https://github.com/kamadak/exif-rs)
+(BSD-2-Clause), [img-parts](https://github.com/paolobarbolini/img-parts) (MIT / Apache-2.0) and
+[Tailwind CSS](https://tailwindcss.com) (MIT) for the styling.

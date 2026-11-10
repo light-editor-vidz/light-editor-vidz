@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
+- An Image button on the home screen opens the image view of LightCutImgz — crop, rotate, flip, resize, canvas size, adjustments, filters, object removal, colour picker, EXIF, history and export — in the colours of the editor. File > Open file… opens an image there instead of creating a project.
 - Tabs: the home screen, each open project and each open audio file have their own tab.
 - An Audio button on the home screen opens the audio view of LightCutSoundz — waveform with cuts, fades, normalisation, speed, filters, live preview, undo / redo and export to WAV, MP3, FLAC, OGG or M4A — in the colours of the editor.
 - File > Open file… (Ctrl+O) opens an audio file in an Audio tab; a video or an image creates a new project that holds it. Files can also be dropped on the window. The former "Open project" is now File > Open project folder… (Ctrl+Shift+O).

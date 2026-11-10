@@ -318,13 +318,23 @@ describe("Home — outils", () => {
     render(<Home onOpenProject={vi.fn()} onOpenTool={onOpenTool} />);
     await act(async () => {});
 
-    for (const name of [/Video/, /Image/, /Subtitles/]) {
+    for (const name of [/Video/, /Subtitles/]) {
       const button = screen.getByRole("button", { name });
       expect(button).toBeDisabled();
       expect(button).toHaveTextContent("Coming soon");
       fireEvent.click(button);
     }
     expect(onOpenTool).not.toHaveBeenCalled();
+  });
+
+  it("Image ouvre l'outil image", async () => {
+    const onOpenTool = vi.fn();
+    render(<Home onOpenProject={vi.fn()} onOpenTool={onOpenTool} />);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByRole("button", { name: /Image/ }));
+
+    expect(onOpenTool).toHaveBeenCalledWith("image");
   });
 
   it("relit les projets récents chaque fois que l'accueil revient au premier plan", async () => {

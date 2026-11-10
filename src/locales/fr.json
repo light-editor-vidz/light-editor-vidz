@@ -19,7 +19,7 @@
       },
       "image": {
         "name": "Image",
-        "hint": ""
+        "hint": "Recadrer, pivoter, ajuster, filtrer"
       },
       "subtitles": {
         "name": "Sous-titres",
@@ -565,6 +565,345 @@
     "audio": "Audio",
     "close": "Fermer l'onglet",
     "closeNamed": "Fermer {{name}}",
-    "unsupportedFile": "Ce type de fichier ne peut pas être ouvert."
+    "unsupportedFile": "Ce type de fichier ne peut pas être ouvert.",
+    "image": "Image"
+  },
+  "imageTool": {
+    "toolbar": {
+      "crop": "Recadrage",
+      "rotate": "Rotation",
+      "flip": "Retournement",
+      "resize": "Taille",
+      "canvas": "Cadre",
+      "picker": "Pipette",
+      "adjust": "Réglages",
+      "filters": "Filtres",
+      "copy": "Copie",
+      "grid": "Grille",
+      "exif": "EXIF",
+      "export": "Export",
+      "inpaint": "Retirer"
+    },
+    "tool": {
+      "crop": "Recadrer",
+      "rotate": "Pivoter",
+      "flip": "Retourner",
+      "resize": "Redimensionner",
+      "canvas": "Agrandir le cadre",
+      "picker": "Choisir une couleur",
+      "inpaint": "Retirer un objet",
+      "adjust": "Régler",
+      "filters": "Filtres",
+      "copy": "Copier l’image",
+      "grid": "Afficher la grille",
+      "exif": "Afficher l’EXIF"
+    },
+    "topbar": {
+      "open": "Ouvrir une image",
+      "export": "Exporter"
+    },
+    "tooltip": {
+      "crop": "Recadrer",
+      "rotate": "Pivoter",
+      "flip": "Retourner",
+      "resize": "Redimensionner l'image",
+      "canvas": "Agrandir le cadre",
+      "picker": "Pipette à couleurs",
+      "adjust": "Corrections",
+      "filters": "Filtres",
+      "copy": "Copier dans le presse-papier",
+      "grid": "Afficher/masquer la grille",
+      "exif": "Métadonnées EXIF",
+      "export": "Exporter",
+      "inpaint": "Supprimer un élément"
+    },
+    "adj": {
+      "header": "Corrections",
+      "brightness-contrast": "Luminosité / Contraste",
+      "exposure": "Exposition",
+      "hue-saturation": "Teinte / Saturation",
+      "vibrance": "Vibrance",
+      "levels": "Niveaux",
+      "curves": "Courbes",
+      "white-balance": "Balance des blancs",
+      "sharpen": "Netteté",
+      "denoise": "Débruitage",
+      "brightness": "Luminosité",
+      "contrast": "Contraste",
+      "exposure-label": "Exposition",
+      "hue": "Teinte",
+      "saturation": "Saturation",
+      "lightness": "Luminosité",
+      "vibrance-label": "Vibrance",
+      "in-black": "Noir entrée",
+      "in-white": "Blanc entrée",
+      "gamma": "Gamma",
+      "out-black": "Noir sortie",
+      "out-white": "Blanc sortie",
+      "temperature": "Température",
+      "tint": "Teinte",
+      "amount": "Intensité",
+      "radius": "Rayon",
+      "threshold": "Seuil",
+      "strength": "Force",
+      "curves-hint": "▲ Déplacer les points · clic droit pour supprimer",
+      "reset": "Réinitialiser",
+      "reset-confirm": "Abandonner toutes les modifications et revenir à l’image d’origine ?"
+    },
+    "fil": {
+      "header": "Filtres",
+      "preset": {
+        "bw": "N&B",
+        "sepia": "Sépia",
+        "invert": "Négatif",
+        "lomo": "Lomo",
+        "vintage": "Vintage",
+        "cool": "Cool",
+        "warm": "Warm",
+        "fade": "Fade",
+        "drama": "Drama",
+        "cross": "Cross",
+        "sketch": "Sketch"
+      },
+      "sec": {
+        "bw-mixer": "Mélangeur N&B",
+        "vignette": "Vignette",
+        "grain": "Grain",
+        "pixelate": "Pixeliser",
+        "posterize": "Postérisé",
+        "blur": "Flou",
+        "sepia": "Sépia",
+        "lomo": "Lomo",
+        "vintage": "Vintage",
+        "coolwarm": "Cool / Warm",
+        "fade": "Fondu",
+        "drama": "Drama",
+        "cross": "Cross-process",
+        "duotone": "Duotone"
+      },
+      "red": "Rouge",
+      "green": "Vert",
+      "blue": "Bleu",
+      "strength": "Force",
+      "feather": "Douceur",
+      "intensity": "Intensité",
+      "size": "Taille",
+      "levels": "Niveaux",
+      "radius": "Rayon",
+      "angle": "Angle",
+      "distance": "Distance",
+      "samples": "Échantillons",
+      "monochrome": "Monochrome",
+      "blur": {
+        "gaussian": "Gaussien",
+        "motion": "Mouvement",
+        "radial": "Radial"
+      },
+      "duo": {
+        "gold-teal": "Or / Turquoise",
+        "purple-yellow": "Violet / Jaune",
+        "cyan-red": "Cyan / Rouge",
+        "navy-peach": "Marine / Pêche",
+        "forest-sun": "Forêt / Soleil",
+        "noir-blanc": "Noir / Blanc"
+      }
+    },
+    "hist": {
+      "header": "Historique",
+      "empty": "Aucune action",
+      "undo": "Annuler ({{mod}}+Z)",
+      "redo": "Rétablir ({{mod}}+Maj+Z)",
+      "open": "Ouverture",
+      "reset": {
+        "crop": "Recadrage réinitialisé",
+        "rotate": "Rotation réinitialisée",
+        "flip": "Retournement réinitialisé",
+        "resize": "Redimensionnement réinitialisé",
+        "canvas": "Cadre réinitialisé"
+      },
+      "crop": "Recadrage {{w}}×{{h}}",
+      "resize": "Redimensionnement {{w}}×{{h}}",
+      "canvas": "Canevas {{w}}×{{h}}",
+      "flip-h": "Retournement horizontal",
+      "flip-v": "Retournement vertical",
+      "rotate": "Rotation {{deg}}°",
+      "inpaint": "Suppression d’objet",
+      "cmd": {
+        "rotate": "Rotation",
+        "brightness-contrast": "Luminosité/Contraste",
+        "exposure": "Exposition",
+        "hue-saturation": "Teinte/Saturation",
+        "vibrance": "Vibrance",
+        "levels": "Niveaux",
+        "curves": "Courbes",
+        "white-balance": "Balance des blancs",
+        "sharpen": "Netteté",
+        "denoise": "Débruitage",
+        "grayscale": "Noir & blanc",
+        "sepia": "Sépia",
+        "invert": "Négatif",
+        "vignette": "Vignette",
+        "grain": "Grain",
+        "pixelate": "Pixeliser",
+        "posterize": "Postérisé",
+        "duotone": "Duotone",
+        "sketch": "Esquisse",
+        "lomo": "Lomo",
+        "vintage": "Vintage",
+        "cool": "Froid",
+        "warm": "Chaud",
+        "fade": "Fondu",
+        "drama": "Drama",
+        "cross-process": "Cross-process",
+        "blur-gaussian": "Flou gaussien",
+        "blur-motion": "Flou de mouvement",
+        "blur-radial": "Flou radial"
+      },
+      "jump": "Aller à cette étape"
+    },
+    "crop": {
+      "cancel": "Annuler",
+      "apply": "Appliquer",
+      "ratio": "Rapport",
+      "ratio-free": "Libre"
+    },
+    "flip": {
+      "horizontal": "Horizontal",
+      "vertical": "Vertical"
+    },
+    "eye": {
+      "title": "Pipette",
+      "hint": "Survoler l'image pour choisir · cliquer pour confirmer",
+      "copied": "{{label}} copié"
+    },
+    "rot": {
+      "ccw": "Pivoter 90° dans le sens inverse",
+      "cw": "Pivoter 90° dans le sens horaire",
+      "angle": "Angle"
+    },
+    "exp": {
+      "title": "Exporter l'image",
+      "format": "Format",
+      "quality": "Qualité : {{n}}%",
+      "cancel": "Annuler",
+      "export": "Exporter",
+      "exporting": "Export en cours…",
+      "lossless": "Le WebP est enregistré sans perte : la qualité ne s’applique pas.",
+      "transparency": "Les zones transparentes deviennent blanches en JPEG."
+    },
+    "rsz": {
+      "title": "Redimensionner l'image",
+      "original": "Original : {{w}} × {{h}} px",
+      "width": "Largeur",
+      "height": "Hauteur",
+      "locked": "Ratio verrouillé",
+      "free": "Libre",
+      "cancel": "Annuler",
+      "resizing": "Redimensionnement…",
+      "resize": "Redimensionner"
+    },
+    "cvs": {
+      "title": "Agrandir le cadre",
+      "hint": "Original : {{w}} × {{h}} px — la nouvelle taille doit être ≥ à l'originale",
+      "width": "Largeur",
+      "height": "Hauteur",
+      "unlock": "Déverrouiller le ratio",
+      "lock": "Verrouiller le ratio",
+      "anchor-label": "Ancrage",
+      "fill": "Remplissage",
+      "transparent": "Transparent",
+      "cancel": "Annuler",
+      "applying": "Application…",
+      "apply": "Appliquer",
+      "anchor": {
+        "top-left": "Haut gauche",
+        "top-center": "Haut centre",
+        "top-right": "Haut droite",
+        "middle-left": "Milieu gauche",
+        "center": "Centre",
+        "middle-right": "Milieu droite",
+        "bottom-left": "Bas gauche",
+        "bottom-center": "Bas centre",
+        "bottom-right": "Bas droite"
+      }
+    },
+    "exif": {
+      "loading": "Chargement…",
+      "empty": "Aucune donnée EXIF",
+      "lossless": "JPEG : suppression sans perte · Autres formats : réencodage",
+      "saving": "Enregistrement…",
+      "strip": "Enregistrer sans EXIF…"
+    },
+    "home": {
+      "drop": "Déposez une image ici",
+      "or": "ou",
+      "browse": "Parcourir les fichiers"
+    },
+    "canvas": {
+      "recent": "Récents",
+      "busy": "Traitement en cours…",
+      "recentClear": "Effacer",
+      "recentRemove": "Retirer de la liste"
+    },
+    "inp": {
+      "hint": "Peindre la zone à supprimer, puis cliquer Appliquer",
+      "brush": "Taille du pinceau",
+      "clear": "Effacer le masque",
+      "cancel": "Annuler",
+      "apply": "Appliquer",
+      "applying": "Remplissage…"
+    },
+    "reset": {
+      "dropped": "{{n}} étape(s) suivante(s) ne rentraient plus dans l’image et ont été abandonnées."
+    },
+    "err": {
+      "tab-not-found": "Cette image n’est plus ouverte.",
+      "no-image": "Aucune image chargée.",
+      "nothing-to-undo": "Rien à annuler.",
+      "nothing-to-redo": "Rien à rétablir.",
+      "crop-bounds": "La zone de recadrage dépasse l’image ({{w}}×{{h}}).",
+      "too-large": "L’image obtenue serait trop grande (30 000 px par côté et 200 Mpx au maximum).",
+      "mask-empty": "Peignez d’abord la zone à supprimer.",
+      "zero-size": "La largeur et la hauteur doivent valoir au moins 1 px.",
+      "canvas-smaller": "Le canevas ne peut pas être plus petit que l’image."
+    },
+    "open": {
+      "failed": "{{n}} fichier(s) n’ont pas pu être ouverts : {{list}}"
+    },
+    "a11y": {
+      "crop-selection": "Zone de recadrage",
+      "close-tab": "Fermer {{name}}",
+      "export-quality": "Qualité d’export",
+      "open-image": "Ouvrir une image",
+      "canvas": "Zone d’édition",
+      "zoom-level": "Niveau de zoom",
+      "zoom-presets": "Niveaux de zoom prédéfinis",
+      "dismiss-error": "Fermer l’erreur",
+      "zoom-out": "Zoom arrière",
+      "zoom-in": "Zoom avant",
+      "zoom-reset": "Réinitialiser le zoom",
+      "zoom-fit": "Ajuster à la fenêtre",
+      "rot-slider": "Curseur d’angle de rotation",
+      "rot-degrees": "Angle de rotation en degrés",
+      "copy": "Copier {{label}}",
+      "copy-hex": "Cliquer pour copier le HEX",
+      "undo": "Annuler",
+      "redo": "Rétablir",
+      "flip-h": "Retourner horizontalement",
+      "flip-v": "Retourner verticalement",
+      "preview": "Aperçu"
+    },
+    "zoom": {
+      "title-out": "Zoom arrière ({{mod}}+-)",
+      "title-in": "Zoom avant ({{mod}}+=)",
+      "title-reset": "Réinitialiser le zoom ({{mod}}+0)",
+      "fit": "Ajuster"
+    },
+    "close": {
+      "confirm-tab": "« {{name}} » a des modifications non exportées. La fermer quand même ?",
+      "confirm-many": "Certaines images ont des modifications non exportées. Les fermer quand même ?",
+      "confirm-app": "Certaines images ont des modifications non exportées. Quitter quand même ?",
+      "title": "Modifications non enregistrées"
+    }
   }
 }

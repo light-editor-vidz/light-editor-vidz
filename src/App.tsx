@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 import Home from "./components/Home";
 import Editor from "./components/Editor";
 import AudioTool from "./components/audiotool/AudioTool";
+import ImageTool from "./components/imagetool/ImageTool";
 import TabBar from "./components/TabBar";
 import { installCloseGuard } from "./lib/closeGuard";
 import { describeError } from "./lib/errors";
@@ -40,7 +41,9 @@ function App() {
       try {
         if (kind === "audio") {
           dispatch({ type: "openAudio", path });
-        } else if (kind === "video" || kind === "image") {
+        } else if (kind === "image") {
+          dispatch({ type: "openImage", path });
+        } else if (kind === "video") {
           const { dir, media } = await createProjectFromMedia(path, kind);
           dispatch({ type: "openProject", dir, media });
         } else {
@@ -52,6 +55,14 @@ function App() {
     },
     [t],
   );
+
+  // Ce que chaque onglet demande avant de se fermer (images modifiées et non exportées).
+  const closeGuards = useRef(new Map<string, () => Promise<boolean>>());
+  const closeTab = useCallback(async (id: string, intent?: "new") => {
+    const guard = closeGuards.current.get(id);
+    if (guard && !(await guard())) return;
+    dispatch({ type: "close", id, intent });
+  }, []);
 
   const openFile = useCallback(async () => {
     try {
@@ -90,7 +101,7 @@ function App() {
         tabs={state.tabs}
         active={state.active}
         onActivate={(id) => dispatch({ type: "activate", id })}
-        onClose={(id) => dispatch({ type: "close", id })}
+        onClose={(id) => void closeTab(id)}
       />
       {error && (
         <div className="app-error" role="alert">
@@ -108,6 +119,7 @@ function App() {
             onOpenProject={(dir) => dispatch({ type: "openProject", dir })}
             onOpenTool={(tool) => {
               if (tool === "audio") dispatch({ type: "openAudio", path: null });
+              if (tool === "image") dispatch({ type: "openImage", path: null });
             }}
           />
         </TabPanel>
@@ -122,10 +134,21 @@ function App() {
                 onBack={(intent) => dispatch({ type: "close", id: tab.id, intent })}
                 onOpenProject={(dir, notice) => dispatch({ type: "openProject", dir, notice })}
               />
+            ) : tab.kind === "image" ? (
+              <ImageTool
+                path={tab.path}
+                onOpenFile={() => void openFile()}
+                onOpenPath={(path) => dispatch({ type: "setTabPath", id: tab.id, path })}
+                onClose={() => dispatch({ type: "close", id: tab.id })}
+                registerCloseGuard={(guard) => {
+                  closeGuards.current.set(tab.id, guard);
+                  return () => void closeGuards.current.delete(tab.id);
+                }}
+              />
             ) : (
               <AudioTool
                 path={tab.path}
-                onOpen={(path) => dispatch({ type: "setAudioPath", id: tab.id, path })}
+                onOpen={(path) => dispatch({ type: "setTabPath", id: tab.id, path })}
                 onClose={() => dispatch({ type: "close", id: tab.id })}
               />
             )}

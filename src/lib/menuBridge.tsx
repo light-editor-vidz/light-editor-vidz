@@ -26,12 +26,21 @@ export interface MenuFlags {
   inEditor: boolean;
   /** Un onglet audio est affiché. */
   inAudio: boolean;
+  /** Un onglet image (avec une image ouverte) est affiché. */
+  inImage: boolean;
   canUndo: boolean;
   canRedo: boolean;
   hasSelection: boolean;
 }
 
-const NO_FLAGS: MenuFlags = { inEditor: false, inAudio: false, canUndo: false, canRedo: false, hasSelection: false };
+const NO_FLAGS: MenuFlags = {
+  inEditor: false,
+  inAudio: false,
+  inImage: false,
+  canUndo: false,
+  canRedo: false,
+  hasSelection: false,
+};
 
 interface Bridge {
   actions: React.MutableRefObject<MenuActions>;

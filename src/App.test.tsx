@@ -22,7 +22,7 @@ vi.mock("./components/Home", () => ({
     startNewProject,
   }: {
     onOpenProject: (dir: string) => void;
-    onOpenTool: (tool: "audio") => void;
+    onOpenTool: (tool: "audio" | "image") => void;
     startNewProject?: boolean;
   }) => (
     <div>
@@ -31,6 +31,9 @@ vi.mock("./components/Home", () => ({
       </button>
       <button type="button" onClick={() => onOpenTool("audio")}>
         tool-audio
+      </button>
+      <button type="button" onClick={() => onOpenTool("image")}>
+        tool-image
       </button>
     </div>
   ),
@@ -85,6 +88,33 @@ vi.mock("./components/Editor", () => ({
     );
   },
 }));
+vi.mock("./components/imagetool/ImageTool", () => ({
+  default: function ImageToolMock({
+    path,
+    onOpenFile,
+    onClose,
+    registerCloseGuard,
+  }: {
+    path: string | null;
+    onOpenFile: () => void;
+    onClose: () => void;
+    registerCloseGuard: (guard: () => Promise<boolean>) => () => void;
+  }) {
+    useEffect(() => registerCloseGuard(async () => imageGuard.allow), [registerCloseGuard]);
+    return (
+      <div>
+        <span>image:{path ?? "empty"}</span>
+        <button type="button" onClick={onOpenFile}>
+          open-file
+        </button>
+        <button type="button" onClick={onClose}>
+          close-image
+        </button>
+      </div>
+    );
+  },
+}));
+const imageGuard = vi.hoisted(() => ({ allow: true }));
 vi.mock("./components/audiotool/AudioTool", () => ({
   default: ({ path, onOpen, onClose }: { path: string | null; onOpen: (p: string) => void; onClose: () => void }) => (
     <div>
@@ -242,21 +272,41 @@ describe("App — ouvrir un fichier", () => {
     expect(screen.getAllByRole("tab")).toHaveLength(1);
   });
 
-  it.each([
-    ["video", "/m/clip.mp4"],
-    ["image", "/m/photo.png"],
-  ] as const)("une %s crée un projet qui la contient et l'ouvre", async (kind, path) => {
-    mockPick.mockResolvedValue({ path, kind });
+  it("une vidéo crée un projet qui la contient et l'ouvre", async () => {
+    mockPick.mockResolvedValue({ path: "/m/clip.mp4", kind: "video" });
     mockCreate.mockResolvedValue({
       dir: "/m/proj.lvproj",
-      media: { kind, src: "assets/x", name: path.split("/").pop() as string },
+      media: { kind: "video", src: "assets/x", name: "clip.mp4" },
     });
     render(<App />);
 
     await openFileFromMenu();
 
-    expect(mockCreate).toHaveBeenCalledWith(path, kind);
-    expect(screen.getByText(`editor:/m/proj.lvproj +${path.split("/").pop()}`)).toBeVisible();
+    expect(mockCreate).toHaveBeenCalledWith("/m/clip.mp4", "video");
+    expect(screen.getByText("editor:/m/proj.lvproj +clip.mp4")).toBeVisible();
+  });
+
+  it("une image s'ouvre dans la vue Image, sans créer de projet", async () => {
+    mockPick.mockResolvedValue({ path: "/m/photo.png", kind: "image" });
+    render(<App />);
+
+    await openFileFromMenu();
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(screen.getByText("image:/m/photo.png")).toBeVisible();
+    expect(tab("photo.png")).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("l'image choisie remplit la vue Image vide affichée", async () => {
+    mockPick.mockResolvedValue({ path: "/m/photo.png", kind: "image" });
+    render(<App />);
+    fireEvent.click(screen.getByText("tool-image"));
+    expect(screen.getByText("image:empty")).toBeVisible();
+
+    await openFileFromMenu();
+
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.getByText("image:/m/photo.png")).toBeVisible();
   });
 
   it("signale un type de fichier que l'application ne sait pas ouvrir", async () => {
@@ -305,5 +355,54 @@ describe("App — ouvrir un fichier", () => {
 
     expect(mockKind).not.toHaveBeenCalled();
     expect(screen.getAllByRole("tab")).toHaveLength(1);
+  });
+});
+
+describe("App — vue Image", () => {
+  it("le bouton Image de l'accueil ouvre une vue Image vide", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByText("tool-image"));
+
+    expect(screen.getByText("image:empty")).toBeVisible();
+    expect(tab("Image")).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("la croix d'un onglet image le ferme quand l'image n'a rien à perdre", async () => {
+    imageGuard.allow = true;
+    render(<App />);
+    fireEvent.click(screen.getByText("tool-image"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Close Image" }));
+    });
+
+    expect(screen.queryByText(/^image:/)).not.toBeInTheDocument();
+  });
+
+  it("garde l'onglet quand on renonce à perdre des modifications non exportées", async () => {
+    imageGuard.allow = false;
+    render(<App />);
+    fireEvent.click(screen.getByText("tool-image"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Close Image" }));
+    });
+
+    expect(screen.getByText("image:empty")).toBeVisible();
+    imageGuard.allow = true;
+  });
+
+  it("« Ouvrir une image » de la vue passe par le choix de fichier de la fenêtre", async () => {
+    mockPick.mockResolvedValue({ path: "/m/next.png", kind: "image" });
+    render(<App />);
+    fireEvent.click(screen.getByText("tool-image"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("open-file"));
+    });
+
+    expect(mockPick).toHaveBeenCalled();
+    expect(screen.getByText("image:/m/next.png")).toBeVisible();
   });
 });
