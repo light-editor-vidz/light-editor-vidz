@@ -119,6 +119,7 @@ update-desktop-database ~/.local/share/applications
 - [Node.js](https://nodejs.org) 20+
 - Nothing for ffmpeg: `npm run fetch:ffmpeg` downloads the pinned, checksum-verified build for your platform (run automatically by `tauri dev` / `tauri build`)
 - The [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/) for your OS
+- `cmake` and a C++ toolchain with libclang (`cmake libclang-dev` on Debian/Ubuntu, `brew install cmake` on macOS): whisper.cpp, the local subtitle engine, is compiled with the app
 
 ### Setup
 
@@ -154,9 +155,12 @@ npm run tauri dev
 ## Project structure
 
 ```
-crates/scene-core/   Rust: data model, animation/timeline resolution, frame rasterizer (export)
-src-tauri/           Tauri app: commands (project I/O, assets, export), ffmpeg orchestration
-src/                 React frontend: editor UI, i18n, pure logic in src/lib/*.ts
+crates/scene-core/   Rust: data model, animation/timeline resolution, frame rasterizer (export), video effects
+crates/audio-dsp/    Rust: audio processing graph and export (Audio view, audio-only export), path approval
+crates/video-export/ Rust: ffmpeg plan, subtitles (ASS), export queue, hardware encoders, previews (Video view)
+src-tauri/           Tauri app: commands, ffmpeg sidecar; src/imgz = image engine, src/subz = subtitle engine
+src/                 React frontend: editor UI, i18n, pure logic in src/lib/*.ts; tool views in
+                     src/components/{audiotool,imagetool,videotool}, subtitles in src/components/subtitles
 install.sh           one-line installer (Homebrew on macOS, deb/AppImage on Linux)
 ```
 
@@ -171,6 +175,8 @@ portable, no database.
 - Lengths such as stroke width, corner radius, border and blur are expressed in 1/1000 of the canvas width, so they look the same at any resolution (preview and export).
 - Text uses the bundled Manrope / JetBrains Mono fonts; any other font name must be installed on the system for the export to use it.
 - `ffmpeg` / `ffprobe` are bundled as sidecar binaries, about 170 MB each before compression.
+- Subtitle generation downloads its models on first use (Whisper base / small / medium: about 60 / 190 / 540 MB; NLLB-200 translation: about 900 MB) into the same folder as LightGenSubz, so a model already downloaded by that app is reused.
+- The apps this one absorbs (LightCutVidz, LightCutSoundz, LightCutImgz, LightGenSubz) are still published and keep working on their own; the editor does not replace or uninstall them.
 
 ---
 
