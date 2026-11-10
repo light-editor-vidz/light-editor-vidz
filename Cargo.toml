@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "crates/scene-core", "crates/audio-dsp"]
+members = ["src-tauri", "crates/scene-core", "crates/audio-dsp", "crates/video-export"]
 
 # Le décodage et le rééchantillonnage audio sont inutilisables sans optimisation (un MP3 de
 # 5 min met 15 s à se décoder) : les dépendances sont toujours optimisées, même en debug.
