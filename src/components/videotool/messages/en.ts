@@ -91,6 +91,7 @@ export const en = {
   tool_subtitles: "Subtitles",
   subtitles_hint: "Import an SRT file to burn subtitles into the video.",
   subtitles_import: "Import .srt file",
+  subtitles_generate: "Generate from the audio…",
   subtitles_remove: "Remove",
   subtitles_animation: "Animation",
   subtitles_anim_word_pop: "Word pop",

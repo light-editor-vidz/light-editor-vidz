@@ -43,6 +43,7 @@ import Controls from "./Controls";
 import CutTimeline from "./CutTimeline";
 import DropZone from "./DropZone";
 import ExportDialog from "./ExportDialog";
+import GenerateSubtitlesDialog from "../subtitles/GenerateSubtitlesDialog";
 import Spectrum from "./Spectrum";
 import "./audiotool.css";
 
@@ -112,6 +113,7 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
   const pendingCutStart = useRef<number | null>(null);
 
   const [exportOpen, setExportOpen] = useState(false);
+  const [subsOpen, setSubsOpen] = useState(false);
   const [format, setFormat] = useState<ExportFormat>("wav");
   const [wavDepth, setWavDepth] = useState<WavDepth>("float32");
   const [processing, setProcessing] = useState(false);
@@ -490,6 +492,9 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
           >
             {t("audioTool.header.open")}
           </button>
+          <button type="button" className="at-btn" onClick={() => setSubsOpen(true)}>
+            {t("subs.menu")}
+          </button>
           <button type="button" className="at-btn primary" onClick={openExport}>
             {t("audioTool.export.run")}
           </button>
@@ -546,6 +551,13 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
           onExport={() => void runExport()}
           onCancel={() => void audioCancel()}
           onClose={() => setExportOpen(false)}
+        />
+      )}
+      {subsOpen && (
+        <GenerateSubtitlesDialog
+          source={{ kind: "file", path: loaded.path }}
+          label={loaded.path}
+          onClose={() => setSubsOpen(false)}
         />
       )}
       {toast && <ToastView toast={toast} />}

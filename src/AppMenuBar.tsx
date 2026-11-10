@@ -85,6 +85,7 @@ export default function AppMenuBar() {
         enabled: inTab,
         action: call("openExport"),
       },
+      { kind: "item", text: t("subs.menu"), enabled: inEditor, action: call("generateSubtitles") },
       {
         kind: "item",
         text: t("topbar.closeTab"),

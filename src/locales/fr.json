@@ -20,10 +20,6 @@
       "image": {
         "name": "Image",
         "hint": "Recadrer, pivoter, ajuster, filtrer"
-      },
-      "subtitles": {
-        "name": "Sous-titres",
-        "hint": ""
       }
     }
   },
@@ -912,6 +908,48 @@
       "confirm-many": "Certaines images ont des modifications non exportées. Les fermer quand même ?",
       "confirm-app": "Certaines images ont des modifications non exportées. Quitter quand même ?",
       "title": "Modifications non enregistrées"
+    }
+  },
+  "subs": {
+    "title": "Générer des sous-titres",
+    "loading": "Chargement…",
+    "starting": "Démarrage…",
+    "engine": "Moteur de transcription",
+    "model": "Modèle Whisper",
+    "models": {
+      "base": "Base (rapide, 60 Mo)",
+      "small": "Small (équilibré, 190 Mo)",
+      "medium": "Medium (précis, 540 Mo)"
+    },
+    "spokenLanguage": "Langue parlée",
+    "auto": "Détection automatique",
+    "audioTrack": "Piste audio",
+    "translateTo": "Traduire en",
+    "noTranslation": "Pas de traduction",
+    "translationEngine": "Moteur de traduction",
+    "apiKey": "Clé d'API {{provider}}",
+    "keyStored": "Une clé est déjà enregistrée",
+    "generate": "Générer",
+    "cancel": "Annuler",
+    "projectHint": "L'audio du projet entier (toutes les scènes et les sons) est mixé puis transcrit.",
+    "resultCount_one": "{{count}} sous-titre généré",
+    "resultCount_other": "{{count}} sous-titres générés",
+    "addToProject": "Ajouter au projet en éléments texte",
+    "useInVideo": "Utiliser dans cette vidéo",
+    "saveFile": "Enregistrer dans un fichier",
+    "format": "Format",
+    "fileFilter": "Sous-titres",
+    "apply": "Appliquer",
+    "applied": "Terminé.",
+    "menu": "Générer des sous-titres…",
+    "added_one": "{{count}} sous-titre ajouté au projet",
+    "added_other": "{{count}} sous-titres ajoutés au projet",
+    "stage": {
+      "extract_audio": "Extraction de l'audio…",
+      "download_model": "Téléchargement du modèle…",
+      "transcribe": "Transcription…",
+      "translate": "Traduction…",
+      "write_subtitles": "Écriture des sous-titres…"
     }
   }
 }

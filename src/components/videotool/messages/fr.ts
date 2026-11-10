@@ -94,6 +94,7 @@ export const fr: Translations = {
   tool_subtitles: "Sous-titres",
   subtitles_hint: "Importez un fichier SRT pour incruster des sous-titres dans la vidéo.",
   subtitles_import: "Importer un fichier .srt",
+  subtitles_generate: "Générer à partir de l'audio…",
   subtitles_remove: "Retirer",
   subtitles_animation: "Animation",
   subtitles_anim_word_pop: "Mot par mot",

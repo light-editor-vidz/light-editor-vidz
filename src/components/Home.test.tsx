@@ -298,8 +298,8 @@ describe("Home — outils", () => {
     await act(async () => {});
 
     const tools = screen.getByRole("region", { name: "Tools" });
-    expect(within(tools).getAllByRole("button")).toHaveLength(4);
-    expect(tools.querySelectorAll("img")).toHaveLength(4);
+    expect(within(tools).getAllByRole("button")).toHaveLength(3);
+    expect(tools.querySelectorAll("img")).toHaveLength(3);
     expect(within(tools).getByRole("button", { name: /Audio/ })).toBeEnabled();
   });
 
@@ -311,20 +311,6 @@ describe("Home — outils", () => {
     fireEvent.click(screen.getByRole("button", { name: /Audio/ }));
 
     expect(onOpenTool).toHaveBeenCalledWith("audio");
-  });
-
-  it("les outils pas encore disponibles sont grisés, avec la mention « Coming soon »", async () => {
-    const onOpenTool = vi.fn();
-    render(<Home onOpenProject={vi.fn()} onOpenTool={onOpenTool} />);
-    await act(async () => {});
-
-    for (const name of [/Subtitles/]) {
-      const button = screen.getByRole("button", { name });
-      expect(button).toBeDisabled();
-      expect(button).toHaveTextContent("Coming soon");
-      fireEvent.click(button);
-    }
-    expect(onOpenTool).not.toHaveBeenCalled();
   });
 
   it("Vidéo ouvre l'outil vidéo", async () => {

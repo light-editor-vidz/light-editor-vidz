@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
+- Subtitle generation (from LightGenSubz), available where the media is: in the Video view (Subtitles panel, "Generate from the audio…"), in the Audio view (header button), on a video element or an audio track of a project (properties panel), and for the whole project (top bar or File menu) — the mix of every scene and sound is transcribed as one set. Transcription runs locally (whisper.cpp, models base / small / medium) or through Groq, OpenAI, Deepgram or AssemblyAI; translation runs locally (NLLB-200) or through DeepL, OpenAI, Google Translate or Azure Translator. In a project the result can be added as text elements, saved as an `.srt` / `.vtt` / `.ass` file, or both; in the Video view it can be used directly as the burned-in subtitles.
 - A Video button on the home screen opens the video view of LightCutVidz — trim, speed, crop, social formats, rotation, 20 colour filters, burned-in subtitles, stabilisation and export to MP4, MOV, WebM, AVI or GIF with an export queue — in the colours of the editor. File > Open file… opens a video there.
 - A video element of a project can have a colour filter and a crop, previewed live and applied at export.
 - An Image button on the home screen opens the image view of LightCutImgz — crop, rotate, flip, resize, canvas size, adjustments, filters, object removal, colour picker, EXIF, history and export — in the colours of the editor. File > Open file… opens an image there instead of creating a project.

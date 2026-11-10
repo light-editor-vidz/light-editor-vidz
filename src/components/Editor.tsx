@@ -72,6 +72,8 @@ import AudioPlayer from "./editor/AudioPlayer";
 import { useEditorShortcuts } from "./editor/useEditorShortcuts";
 import StatusBanner, { type Notice } from "./editor/StatusBanner";
 import type { LeftTab } from "./editor/types";
+import GenerateSubtitlesDialog, { type SubsSource } from "./subtitles/GenerateSubtitlesDialog";
+import { addCuesToProject, cuesOfAudioTrack, cuesOfVideoElement, type TimedCue } from "../lib/subs/place";
 import "./editor/editor.css";
 
 interface Props {
@@ -100,6 +102,9 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
   const [clipboard, setClipboard] = useState<Element[]>([]);
   const [timelineSearch, setTimelineSearch] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [subs, setSubs] = useState<{ source: SubsSource; label: string; map: (cues: TimedCue[]) => TimedCue[] } | null>(
+    null,
+  );
 
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
 
@@ -188,6 +193,43 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
   const canRedo = future.length > 0;
   const handleUndo = useCallback(() => dispatch({ type: "undo" }), []);
   const handleRedo = useCallback(() => dispatch({ type: "redo" }), []);
+
+  /** Subtitles of the whole project: its mix is already on the project timeline. */
+  function openSubsForProject() {
+    if (!project) return;
+    setSubs({ source: { kind: "project", projectDir, project }, label: project.name, map: (c) => c });
+  }
+
+  /** Subtitles of the selected video element or audio track. */
+  function openSubsForSelection() {
+    if (!project) return;
+    const track = findAudioTrack(project, selectedId);
+    if (track) {
+      setSubs({
+        source: { kind: "media", projectDir, src: track.src },
+        label: track.name,
+        map: (c) => cuesOfAudioTrack(c, track, project.duration),
+      });
+      return;
+    }
+    const el = findElement(project, selectedId);
+    const comp = el && project.compositions.find((c) => c.elements.some((x) => x.id === el.id));
+    if (el?.type === "video" && comp) {
+      setSubs({
+        source: { kind: "media", projectDir, src: el.src },
+        label: el.name,
+        map: (c) => cuesOfVideoElement(c, el, comp.start_time, comp.duration),
+      });
+    }
+  }
+
+  function placeSubs(cues: TimedCue[]) {
+    if (!project || !subs) return;
+    const mapped = subs.map(cues);
+    const { added } = addCuesToProject(project, mapped);
+    mutate((p) => addCuesToProject(p, mapped).project);
+    setNotice({ kind: "info", message: t("subs.added", { count: added }) });
+  }
 
   function handleSave() {
     void flush(true);
@@ -494,6 +536,7 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
     closeProject: () => void afterSave(() => onBack()),
     save: handleSave,
     openSettings: () => setShowSettings(true),
+    generateSubtitles: openSubsForProject,
     undo: handleUndo,
     redo: handleRedo,
     deleteSelected: handleDeleteSelected,
@@ -555,9 +598,18 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
         onRedo={handleRedo}
         canUndo={canUndo}
         canRedo={canRedo}
+        onGenerateSubtitles={openSubsForProject}
       />
       {banner && <StatusBanner notice={banner} onDismiss={saveError ? undefined : () => setNotice(null)} />}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {subs && (
+        <GenerateSubtitlesDialog
+          source={subs.source}
+          label={subs.label}
+          onClose={() => setSubs(null)}
+          onPlace={placeSubs}
+        />
+      )}
       <div className="editor-middle">
         <CategoryRail active={leftTab} onChange={setLeftTab} />
         <LibraryPanel
@@ -620,6 +672,7 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
           onDistribute={handleDistribute}
           onGroup={handleGroup}
           onUngroup={handleUngroup}
+          onGenerateSubtitles={openSubsForSelection}
         />
       </div>
       <Timeline

@@ -28,6 +28,8 @@ interface Props {
   onDistribute: (axis: "horizontal" | "vertical") => void;
   onGroup: () => void;
   onUngroup: () => void;
+  /** Generates subtitles from the selected video element or audio track. */
+  onGenerateSubtitles?: () => void;
 }
 
 export default function PropertiesPanel({
@@ -46,8 +48,16 @@ export default function PropertiesPanel({
   onDistribute,
   onGroup,
   onUngroup,
+  onGenerateSubtitles,
 }: Props) {
   const { t } = useTranslation();
+  const generateButton = onGenerateSubtitles ? (
+    <div className="properties-section">
+      <button type="button" className="btn-secondary" onClick={onGenerateSubtitles}>
+        {t("subs.menu")}
+      </button>
+    </div>
+  ) : null;
   const layers = (
     <LayersPanel
       elements={elements}
@@ -63,6 +73,7 @@ export default function PropertiesPanel({
       <aside className="editor-properties">
         <div className="properties-content">
           <AudioProperties track={audioTrack} onUpdate={onUpdateAudio} />
+          {generateButton}
           {layers}
         </div>
       </aside>
@@ -114,6 +125,7 @@ export default function PropertiesPanel({
               activeDuration={element.duration ?? activeCompositionDuration - element.start_time}
             />
           )}
+          {element.type === "video" && generateButton}
           {element.type === "shape" && <ShapeProperties element={element} onUpdate={onUpdate} />}
           {layers}
         </div>

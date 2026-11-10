@@ -20,10 +20,6 @@
       "image": {
         "name": "Image",
         "hint": "Crop, rotate, adjust, filter"
-      },
-      "subtitles": {
-        "name": "Subtitles",
-        "hint": ""
       }
     }
   },
@@ -912,6 +908,48 @@
       "confirm-many": "Some images have changes that were not exported. Close them anyway?",
       "confirm-app": "Some images have changes that were not exported. Quit anyway?",
       "title": "Unsaved changes"
+    }
+  },
+  "subs": {
+    "title": "Generate subtitles",
+    "loading": "Loading…",
+    "starting": "Starting…",
+    "engine": "Transcription engine",
+    "model": "Whisper model",
+    "models": {
+      "base": "Base (fast, 60 MB)",
+      "small": "Small (balanced, 190 MB)",
+      "medium": "Medium (accurate, 540 MB)"
+    },
+    "spokenLanguage": "Spoken language",
+    "auto": "Detect automatically",
+    "audioTrack": "Audio track",
+    "translateTo": "Translate to",
+    "noTranslation": "No translation",
+    "translationEngine": "Translation engine",
+    "apiKey": "{{provider}} API key",
+    "keyStored": "A key is already stored",
+    "generate": "Generate",
+    "cancel": "Cancel",
+    "projectHint": "The audio of the whole project (all scenes and sounds) is mixed and transcribed.",
+    "resultCount_one": "{{count}} subtitle generated",
+    "resultCount_other": "{{count}} subtitles generated",
+    "addToProject": "Add as text elements to the project",
+    "useInVideo": "Use in this video",
+    "saveFile": "Save as a file",
+    "format": "Format",
+    "fileFilter": "Subtitles",
+    "apply": "Apply",
+    "applied": "Done.",
+    "menu": "Generate subtitles…",
+    "added_one": "{{count}} subtitle added to the project",
+    "added_other": "{{count}} subtitles added to the project",
+    "stage": {
+      "extract_audio": "Extracting audio…",
+      "download_model": "Downloading the model…",
+      "transcribe": "Transcribing…",
+      "translate": "Translating…",
+      "write_subtitles": "Writing subtitles…"
     }
   }
 }

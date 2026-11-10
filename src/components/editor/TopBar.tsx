@@ -31,6 +31,8 @@ interface Props {
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  /** Generates the subtitles of the whole project. */
+  onGenerateSubtitles?: () => void;
 }
 
 export default function TopBar({
@@ -43,6 +45,7 @@ export default function TopBar({
   onRedo,
   canUndo,
   canRedo,
+  onGenerateSubtitles,
 }: Props) {
   const { t } = useTranslation();
   const [exporting, setExporting] = useState(false);
@@ -150,6 +153,11 @@ export default function TopBar({
         >
           <Redo2 size={15} />
         </button>
+        {onGenerateSubtitles && (
+          <button type="button" className="sb-ghost" onClick={onGenerateSubtitles} disabled={exporting}>
+            {t("subs.menu")}
+          </button>
+        )}
         {exporting && (
           <button type="button" className="sb-ghost" onClick={() => void cancelExport()}>
             {t("topbar.cancelExport")}

@@ -52,3 +52,17 @@ under the same MIT license. It uses [image](https://github.com/image-rs/image) a
 The video view (`crates/video-export`, `src/components/videotool`) is LightCutVidz rewritten for
 Tauri, by the same author and under the same MIT license. Its work is done by the FFmpeg above,
 including `vidstab` for stabilisation and `libass` for subtitles.
+
+## Subtitle generation (ex-LightGenSubz)
+
+Subtitle generation (`src-tauri/src/subz`, `src/components/subtitles`) is LightGenSubz ported into
+the editor, by the same author and under the same MIT license. It uses:
+
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) through `whisper-rs` (MIT, Unlicense) and
+  the OpenAI Whisper models converted to ggml (MIT), downloaded on first use;
+- the Silero voice-activity model (MIT) in its ggml form;
+- [NLLB-200](https://github.com/facebookresearch/fairseq/tree/nllb) distilled 600M, in the ONNX
+  conversion by Xenova (CC-BY-NC-4.0 — the model is downloaded by the user for personal, non-commercial
+  use and is not redistributed with the app), run with `ort` (MIT / Apache-2.0) and `tokenizers` (Apache-2.0);
+- the cloud APIs of Groq, OpenAI, Deepgram, AssemblyAI, DeepL, Google and Microsoft, only when the
+  user enters a key and chooses them.

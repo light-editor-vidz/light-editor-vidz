@@ -8,7 +8,7 @@ import NewProjectModal from "./NewProjectModal";
 import { useRegisterMenuActions, useTabActive } from "../lib/menuBridge";
 import "./Home.css";
 
-export type HomeTool = "audio" | "video" | "image" | "subtitles";
+export type HomeTool = "audio" | "video" | "image";
 
 /** Les outils proposés sur l'accueil : l'ancienne application dont ils reprennent l'écran. Seuls
  * ceux qui ont leur vue sont actifs ; les autres arrivent avec les prochaines étapes. */
@@ -16,7 +16,6 @@ const TOOLS: { id: HomeTool; icon: string; enabled: boolean }[] = [
   { id: "audio", icon: "/tools/soundz.png", enabled: true },
   { id: "video", icon: "/tools/vidz.png", enabled: true },
   { id: "image", icon: "/tools/imgz.png", enabled: true },
-  { id: "subtitles", icon: "/tools/subz.png", enabled: false },
 ];
 
 interface Props {

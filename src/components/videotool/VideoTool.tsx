@@ -23,6 +23,8 @@ import { DEFAULT_SUBTITLE_STYLE } from "./types";
 import type { CropRect, EditorState, SubtitleAnimation, SubtitleStyle, TrimSegment } from "./types";
 import type { StabilizeLevel } from "./hooks/useHistory";
 import { useT } from "./i18n";
+import GenerateSubtitlesDialog from "../subtitles/GenerateSubtitlesDialog";
+import { parseSrt } from "./utils/srt";
 import "./videotool.css";
 
 export type { CropRect, EditorState, SubtitleAnimation, SubtitleStyle, TrimSegment };
@@ -66,6 +68,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [showGenerate, setShowGenerate] = useState(false);
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const [filterFrameUrl, setFilterFrameUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState<{ msg: string; progress: number } | null>(null);
@@ -530,6 +533,18 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
             void getApi().clearRecent().then(refreshRecent);
           }}
         />
+        {showGenerate && videoPath && (
+          <GenerateSubtitlesDialog
+            source={{ kind: "file", path: videoPath }}
+            label={videoPath}
+            onClose={() => setShowGenerate(false)}
+            onUse={(srt) => {
+              const cues = parseSrt(srt);
+              if (cues.length > 0) setSubtitles("subtitles.srt", cues);
+            }}
+          />
+        )}
+
         {toast && <Toast key={toast} message={toast} onDone={onToastDone} />}
       </div>
     );
@@ -684,6 +699,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
                 onError={onSubtitlesError}
                 onAnimationChange={setSubtitlesAnimation}
                 onRemove={removeSubtitles}
+                onGenerate={videoPath ? () => setShowGenerate(true) : undefined}
               />
             </Suspense>
           )}

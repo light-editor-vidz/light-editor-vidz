@@ -242,3 +242,23 @@ describe("LayersPanel", () => {
     expect(onReorderLayer).not.toHaveBeenCalled();
   });
 });
+
+describe("PropertiesPanel — subtitles", () => {
+  it("offers to generate subtitles from a sound", () => {
+    const onGenerateSubtitles = vi.fn();
+    setup({ audioTrack: track(), onGenerateSubtitles });
+    fireEvent.click(screen.getByRole("button", { name: "Generate subtitles…" }));
+    expect(onGenerateSubtitles).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers it for a video element only, not for a shape", () => {
+    const onGenerateSubtitles = vi.fn();
+    const shape = element();
+    const { unmount } = setup({ element: shape, selectedIds: [shape.id], elements: [shape], onGenerateSubtitles });
+    expect(screen.queryByRole("button", { name: "Generate subtitles…" })).toBeNull();
+    unmount();
+    const video = element({ type: "video", src: "a.mp4", video_offset: 0, playback_speed: 1 } as Partial<Element>);
+    setup({ element: video, selectedIds: [video.id], elements: [video], onGenerateSubtitles });
+    expect(screen.getByRole("button", { name: "Generate subtitles…" })).toBeInTheDocument();
+  });
+});

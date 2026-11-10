@@ -16,6 +16,8 @@ interface Props {
   onError?: (reason: "empty" | "read") => void;
   onAnimationChange: (animation: SubtitleAnimation) => void;
   onRemove: () => void;
+  /** Opens the subtitle generation window for the opened video. */
+  onGenerate?: () => void;
 }
 
 // Only families that exist on macOS, Windows and (via fontconfig aliases or
@@ -46,6 +48,7 @@ export default function SubtitlesPanel({
   onError,
   onAnimationChange,
   onRemove,
+  onGenerate,
 }: Props) {
   const { t } = useT();
 
@@ -83,6 +86,11 @@ export default function SubtitlesPanel({
         <button className="btn-primary" onClick={handleImport}>
           {t.subtitles_import}
         </button>
+        {onGenerate && (
+          <button className="btn-secondary" onClick={onGenerate}>
+            {t.subtitles_generate}
+          </button>
+        )}
       </div>
     );
   }
@@ -104,6 +112,11 @@ export default function SubtitlesPanel({
           {t.subtitles_remove}
         </button>
       </div>
+      {onGenerate && (
+        <button className="btn-secondary" onClick={onGenerate}>
+          {t.subtitles_generate}
+        </button>
+      )}
 
       <div className="subtitles-section">
         <div className="subtitles-label">{t.subtitles_animation}</div>

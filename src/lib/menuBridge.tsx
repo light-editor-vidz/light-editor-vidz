@@ -13,6 +13,7 @@ export interface MenuActions {
   clearRecent?: () => void;
   save?: () => void;
   openExport?: () => void;
+  generateSubtitles?: () => void;
   openSettings?: () => void;
   undo?: () => void;
   redo?: () => void;

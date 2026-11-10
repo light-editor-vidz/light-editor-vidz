@@ -340,3 +340,12 @@ describe("TopBar — exporting", () => {
     expect(mockSave).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: "video.mp4" }));
   });
 });
+
+describe("TopBar — subtitles", () => {
+  it("offers the subtitles of the whole project", () => {
+    const onGenerateSubtitles = vi.fn();
+    setup({ onGenerateSubtitles });
+    fireEvent.click(screen.getByRole("button", { name: "Generate subtitles…" }));
+    expect(onGenerateSubtitles).toHaveBeenCalledTimes(1);
+  });
+});
