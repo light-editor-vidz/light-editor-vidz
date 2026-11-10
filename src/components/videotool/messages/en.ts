@@ -93,6 +93,8 @@ export const en = {
   subtitles_import: "Import .srt file",
   subtitles_generate: "Generate subtitles…",
   subtitles_generated: "Generated subtitles",
+  subtitles_texts: "Texts",
+  subtitles_edit: "Edit",
   subtitles_use: "Use",
   subtitles_discard: "Delete",
   subtitles_generated_count: "{n} subtitles",

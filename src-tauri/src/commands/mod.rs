@@ -4,6 +4,7 @@ pub mod error;
 pub mod export;
 pub mod launch;
 pub mod media_protocol;
+pub mod media_server;
 pub mod project;
 pub mod registry;
 pub mod release_notes;

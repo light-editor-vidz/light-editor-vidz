@@ -68,7 +68,7 @@ describe("VideoTool — opening a video", () => {
     expect(previewVideo).toHaveBeenCalledWith("/v/a.mp4", false);
   });
 
-  it("falls back to memory, then to a transcoded preview, when the video cannot be played", async () => {
+  it("falls back to local streaming, then to a transcoded preview, when the video cannot be played", async () => {
     const { previewVideo, container } = setup({ path: "/v/a.mp4" });
     await screen.findByText("a.mp4");
     const fail = () =>
@@ -78,7 +78,7 @@ describe("VideoTool — opening a video", () => {
     const src = () => container.querySelector("video")!.getAttribute("src");
 
     await fail();
-    expect(src()).toBe("blob:url:/v/a.mp4");
+    expect(src()).toBe("stream:url:/v/a.mp4");
     expect(previewVideo).toHaveBeenCalledTimes(1);
 
     await fail();
@@ -87,7 +87,7 @@ describe("VideoTool — opening a video", () => {
     expect(src()).toBe("url:/v/a.mp4");
 
     await fail();
-    expect(src()).toBe("blob:url:/v/a.mp4");
+    expect(src()).toBe("stream:url:/v/a.mp4");
 
     await fail();
     expect(previewVideo).toHaveBeenCalledTimes(2);

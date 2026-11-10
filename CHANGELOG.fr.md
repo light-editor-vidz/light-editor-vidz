@@ -21,7 +21,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ### Corrigé
 
-- Vue Vidéo : les vidéos se lisent sur Linux, où le WebView refuse les protocoles internes dans `<video>` ; une vidéo qu'il ne sait pas décoder est transcodée pour l'aperçu.
+- Vue Vidéo : les vidéos se lisent sur Linux, où le WebView refuse les protocoles internes dans `<video>`, grâce à un flux strictement local ; une vidéo qu'il ne sait pas décoder est transcodée pour l'aperçu.
 - Vue Vidéo : le bouton Générer des sous-titres ouvre sa fenêtre, Ctrl+Z / Ctrl+Y fonctionnent de nouveau et les vidéos ouvertes apparaissent dans les fichiers récents.
 - La génération de sous-titres utilise le ffmpeg embarqué au lieu d'en exiger un sur le système ; elle s'annule pendant le mixage d'un projet, et quitter pendant un traitement nettoie ce qu'il a créé.
 - Fenêtre de sous-titres : fermer la boîte d'enregistrement n'ajoute plus les sous-titres deux fois, la vue Audio peut enregistrer son résultat, la région Azure peut être saisie, une clé d'API enregistrée peut être oubliée, et les erreurs sans code sont lisibles.
@@ -31,6 +31,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 ### Modifié
 
 - Le `.deb` Linux installe `gstreamer1.0-libav` : le H.264 et l'AAC se prévisualisent sans rien installer d'autre.
+- Le texte des sous-titres générés se corrige juste après la génération et, dans la vue Vidéo, pendant leur utilisation.
 - Un média passé en ligne de commande s'ouvre dans son onglet ; un second lancement le confie à la fenêtre ouverte.
 - Le filtre de couleur « vignette » d'un élément vidéo est maintenant visible dans l'aperçu de l'éditeur.
 - Les erreurs du moteur de sous-titres (pas d'audio, clé d'API absente, réseau, …) sont traduites.

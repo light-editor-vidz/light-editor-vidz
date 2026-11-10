@@ -5,16 +5,6 @@
   margin: 0 0 8px;
   font-weight: 600;
 }
-.subs-cues {
-  margin: 0 0 12px;
-  padding-left: 18px;
-  max-height: 220px;
-  overflow: auto;
-  font-size: 13px;
-}
-.subs-cues li {
-  margin-bottom: 4px;
-}
 .subs-check {
   display: flex;
   align-items: center;
@@ -42,4 +32,68 @@
   font-size: 12px;
   text-decoration: underline;
   cursor: pointer;
+}
+
+.subs-cue-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+}
+
+.subs-cue {
+  display: flex;
+  gap: 8px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.subs-cue-index {
+  width: 20px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.subs-cue-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.subs-cue-time {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.subs-cue-text {
+  margin: 0;
+  white-space: pre-line;
+  font-size: 13px;
+}
+
+.subs-cue-edit {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.subs-edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
 }

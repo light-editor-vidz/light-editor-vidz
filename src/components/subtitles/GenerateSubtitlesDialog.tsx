@@ -24,6 +24,7 @@ import {
   setApiKey,
   setSubsSettings,
   translateSubs,
+  updateSubs,
   type SubsAudioTrack,
   type SubsFormat,
   type SubsLanguage,
@@ -31,6 +32,7 @@ import {
   type SubsSettings,
 } from "../../lib/subs/commands";
 import { parseSrt } from "../videotool/utils/srt";
+import CueEditor, { CueList } from "./CueEditor";
 import type { Project } from "../../bindings/Project";
 import type { TimedCue } from "../../lib/subs/place";
 import "../NewProjectModal.css";
@@ -74,6 +76,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
   const [save, setSave] = useState(!onPlace && !onUse);
   const [format, setFormat] = useState<SubsFormat>("srt");
   const [use, setUse] = useState(true);
+  const [editing, setEditing] = useState(false);
   const cancelled = useRef(false);
 
   const sttKey = settings ? STT_KEYS[settings.stt_engine] : null;
@@ -121,11 +124,11 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) onClose();
+      if (e.key === "Escape" && !busy && !editing) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [busy, onClose]);
+  }, [busy, editing, onClose]);
 
   const patch = (p: Partial<SubsSettings>) => setSettings((s) => (s ? { ...s, ...p } : s));
 
@@ -187,6 +190,18 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
 
   const cues = useMemo(() => (result ? parseSrt(result.srt_content) : []), [result]);
 
+  async function applyEdits(texts: string[]) {
+    if (!result) return;
+    setError(null);
+    try {
+      const edited = await updateSubs(result.srt_content, texts);
+      setResult({ ...result, srt_content: edited.srt_content });
+      setEditing(false);
+    } catch (e) {
+      setError(describeError(e));
+    }
+  }
+
   async function apply() {
     if (!result) return;
     setError(null);
@@ -242,13 +257,16 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
           ) : result ? (
             <>
               <p className="subs-summary">{t("subs.resultCount", { count: cues.length })}</p>
-              <ol className="subs-cues">
-                {cues.slice(0, 50).map((c) => (
-                  <li key={c.id}>
-                    <span className="mono">{c.start.toFixed(1)}s</span> {c.text}
-                  </li>
-                ))}
-              </ol>
+              {editing ? (
+                <CueEditor cues={cues} onApply={(texts) => void applyEdits(texts)} onCancel={() => setEditing(false)} />
+              ) : (
+                <>
+                  <CueList cues={cues} />
+                  <button type="button" className="subs-forget" onClick={() => setEditing(true)}>
+                    {t("subs.edit.start")}
+                  </button>
+                </>
+              )}
               {onPlace && (
                 <label className="subs-check">
                   <input type="checkbox" checked={place} onChange={(e) => setPlace(e.target.checked)} />
@@ -455,7 +473,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
                   type="button"
                   className="btn-primary"
                   onClick={apply}
-                  disabled={nothingChosen || cues.length === 0}
+                  disabled={nothingChosen || cues.length === 0 || editing}
                 >
                   {t("subs.apply")}
                 </button>

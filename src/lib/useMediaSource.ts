@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { streamUrl } from "./assetUrl";
 import { acquireMediaObjectUrl } from "./mediaCache";
 
 /**
  * Source d'un `<video>`/`<audio>` du projet. Par défaut, le média est lu en flux par le protocole
  * `lvmedia://` (requêtes `Range` : seuls les octets utiles sont lus, démarrage immédiat). Si la
- * webview refuse ce protocole (`onError`), on bascule sur l'URL `blob:` construite depuis les
- * octets bruts (`read_media_file`, partagée via `mediaCache`) — l'ancien comportement.
+ * webview refuse ce protocole (`onError`), on bascule sur le flux HTTP local (`media_server.rs`), ou
+ * à défaut sur l'URL `blob:` construite depuis les octets bruts (`read_media_file`, via `mediaCache`).
  */
 export function useMediaSource(projectDir: string, relativeSrc: string) {
   // Les états sont rattachés à la source qui les a produits : changer de source repart du flux
@@ -19,8 +20,15 @@ export function useMediaSource(projectDir: string, relativeSrc: string) {
   useEffect(() => {
     if (!useBlob) return;
     let cancelled = false;
-    const { promise, release } = acquireMediaObjectUrl(projectDir, relativeSrc);
-    promise
+    let release = () => {};
+    const fromMemory = () => {
+      const acquired = acquireMediaObjectUrl(projectDir, relativeSrc);
+      release = acquired.release;
+      return acquired.promise;
+    };
+    // Le flux HTTP local d'abord : une vidéo lue depuis un `blob:` se corrompt dans le WebView de Linux.
+    invoke<string | undefined>("project_stream_url", { projectDir, src: relativeSrc })
+      .then((url) => url || fromMemory(), fromMemory)
       .then((url) => {
         if (!cancelled) setBlob({ key, url });
       })

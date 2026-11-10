@@ -96,6 +96,8 @@ export const fr: Translations = {
   subtitles_import: "Importer un fichier .srt",
   subtitles_generate: "Générer des sous-titres…",
   subtitles_generated: "Sous-titres générés",
+  subtitles_texts: "Textes",
+  subtitles_edit: "Modifier",
   subtitles_use: "Utiliser",
   subtitles_discard: "Supprimer",
   subtitles_generated_count: "{n} sous-titres",

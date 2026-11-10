@@ -965,6 +965,15 @@
       "write_subtitles": "Writing subtitles…"
     },
     "azureRegion": "Azure Translator region",
-    "forgetKey": "Forget this key"
+    "forgetKey": "Forget this key",
+    "edit": {
+      "start": "Edit subtitles",
+      "apply": "Apply changes",
+      "discard": "Discard",
+      "cue": "Text of subtitle {{index}}",
+      "emptyWarning_one": "{{count}} empty subtitle will be removed.",
+      "emptyWarning_other": "{{count}} empty subtitles will be removed.",
+      "confirmRemove": "Remove and apply"
+    }
   }
 }

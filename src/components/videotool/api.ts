@@ -67,8 +67,8 @@ export interface ExportRequest {
 export interface VideoApi {
   getPathForFile: (file: File) => string;
   toFileUrl: (filePath: string) => Promise<string>;
-  /** Charge une URL interne en `blob:` : le WebView de Linux refuse les protocoles internes dans `<video>`. */
-  toBlobUrl: (url: string) => Promise<string>;
+  /** La même vidéo par HTTP local : le WebView de Linux refuse les protocoles internes dans `<video>`. */
+  toStreamUrl: (url: string) => Promise<string>;
   openVideo: () => Promise<string | null>;
   saveVideo: (defaultName?: string, format?: string) => Promise<string | null>;
   cancelFfmpeg: () => Promise<void>;
@@ -116,21 +116,21 @@ const progressListeners = new Set<(pct: number) => void>();
 /** Convertit un fichier local en URL lisible par `<video>` (protocole `asset:`), après l'avoir autorisé. */
 async function fileUrl(path: string): Promise<string> {
   await invoke("audio_allow_asset", { path });
-  return convertFileSrc(path);
+  return assetUrl(path);
 }
 
-/** Au-delà, la vidéo n'est pas chargée en mémoire : l'aperçu transcodé, plus léger, prend le relais. */
-const MAX_BLOB_BYTES = 2 * 1024 ** 3;
+/** Le fichier local derrière chaque URL `asset:` donnée au lecteur. */
+const localPaths = new Map<string, string>();
+const assetUrl = (path: string) => {
+  const url = convertFileSrc(path);
+  localPaths.set(url, path);
+  return url;
+};
 
 const tauriApi: VideoApi = {
   getPathForFile: () => "",
   toFileUrl: fileUrl,
-  toBlobUrl: async (url) => {
-    const response = await fetch(url);
-    if (Number(response.headers.get("content-length") ?? 0) > MAX_BLOB_BYTES) throw new Error("File too large");
-    const blob = await response.blob();
-    return URL.createObjectURL(blob.type ? blob : new Blob([blob], { type: "video/mp4" }));
-  },
+  toStreamUrl: (url) => invoke<string>("video_stream_url", { path: localPaths.get(url) ?? url }),
   openVideo: () => invoke<string | null>("video_pick_file"),
   saveVideo: async (defaultName, format) => {
     const choice = await invoke<{ path: string; confirm_overwrite: boolean } | null>("video_pick_output", {
@@ -172,7 +172,7 @@ const tauriApi: VideoApi = {
       path: filePath,
       force,
     });
-    return convertFileSrc(preview.path);
+    return assetUrl(preview.path);
   },
   openSubtitleFile: async () => {
     const r = await invoke<{ path: string; content: string } | null>("video_pick_subtitles");

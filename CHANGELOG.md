@@ -21,7 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
-- Video view: videos now play on Linux, where the webview refuses internal protocols in `<video>`; a video it cannot decode is transcoded for the preview.
+- Video view: videos now play on Linux, where the webview refuses internal protocols in `<video>`, through a local-only stream; a video it cannot decode is transcoded for the preview.
 - Video view: the Generate subtitles button opens its window, Ctrl+Z / Ctrl+Y work again, and opened videos appear in the recent files.
 - Subtitle generation uses the ffmpeg shipped with the app instead of requiring a system one; it can be cancelled while a project is being mixed, and quitting during a run cleans up.
 - Subtitle window: closing the save dialog no longer adds the subtitles twice, the Audio view can save its result, the Azure region can be entered, a stored API key can be forgotten, and errors without a code are readable.
@@ -31,6 +31,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - The Linux `.deb` installs `gstreamer1.0-libav`, so H.264 and AAC can be previewed without installing anything else.
+- The text of generated subtitles can be corrected right after generation and, in the Video view, while they are in use.
 - A media file given on the command line opens in its tab; a second launch hands it to the open window.
 - The vignette colour filter of a video element is now previewed in the editor.
 - Errors of the subtitle engine (no audio, missing API key, network, …) are translated.

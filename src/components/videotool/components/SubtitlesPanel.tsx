@@ -1,8 +1,10 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { getApi } from "../api";
 import type { SubtitlesState, SubtitleStyle, SubtitleAnimation } from "../types";
 import { parseSrt } from "../utils/srt";
 import { useT } from "../i18n";
+import CueEditor, { CueList } from "../../subtitles/CueEditor";
+import "../../subtitles/subtitles.css";
 import "./SubtitlesPanel.css";
 
 export interface GeneratedSubtitles {
@@ -26,6 +28,8 @@ interface Props {
   generated?: GeneratedSubtitles[];
   onUseGenerated?: (item: GeneratedSubtitles) => void;
   onDiscardGenerated?: (id: number) => void;
+  /** Corrected texts of the subtitles in use (timings unchanged; an empty text removes its cue). */
+  onEditTexts?: (texts: string[]) => void;
 }
 
 // Only families that exist on macOS, Windows and (via fontconfig aliases or
@@ -59,8 +63,11 @@ export default function SubtitlesPanel({
   generated = [],
   onUseGenerated,
   onDiscardGenerated,
+  onEditTexts,
 }: Props) {
   const { t } = useT();
+  // The cues being edited: anything that replaces them (undo, another set) ends the edit.
+  const [editingCues, setEditingCues] = useState<ReturnType<typeof parseSrt> | null>(null);
 
   const ANIMATIONS: { id: SubtitleAnimation; label: string; desc: string }[] = [
     { id: "word-pop", label: t.subtitles_anim_word_pop, desc: t.subtitles_anim_word_pop_desc },
@@ -142,6 +149,29 @@ export default function SubtitlesPanel({
       </div>
 
       {generatedList}
+
+      {onEditTexts && (
+        <div className="subtitles-section">
+          <div className="subtitles-label">{t.subtitles_texts}</div>
+          {editingCues === subtitles.cues ? (
+            <CueEditor
+              cues={subtitles.cues}
+              onApply={(texts) => {
+                onEditTexts(texts);
+                setEditingCues(null);
+              }}
+              onCancel={() => setEditingCues(null)}
+            />
+          ) : (
+            <>
+              <CueList cues={subtitles.cues} />
+              <button className="btn-secondary" onClick={() => setEditingCues(subtitles.cues)}>
+                {t.subtitles_edit}
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="subtitles-section">
         <div className="subtitles-label">{t.subtitles_animation}</div>

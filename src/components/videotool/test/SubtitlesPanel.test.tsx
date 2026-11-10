@@ -274,3 +274,30 @@ describe("SubtitlesPanel — generated subtitles", () => {
     expect(screen.getByText("Generated subtitles")).toBeInTheDocument();
   });
 });
+
+describe("SubtitlesPanel — correcting the subtitles in use", () => {
+  it("edits the text and hands the result back", () => {
+    const onEditTexts = vi.fn();
+    renderWithI18n(<SubtitlesPanel {...makeProps({ subtitles: loaded, onEditTexts })} />);
+    expect(screen.getByText("hello world")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByLabelText("Text of subtitle 1"), { target: { value: "bonjour" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply changes" }));
+    expect(onEditTexts).toHaveBeenCalledWith(["bonjour"]);
+  });
+
+  it("closes the edit when other subtitles replace these", () => {
+    const props = makeProps({ subtitles: loaded, onEditTexts: vi.fn() });
+    const { rerender } = renderWithI18n(<SubtitlesPanel {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByLabelText("Text of subtitle 1")).toBeInTheDocument();
+    const other = { ...loaded, cues: [{ id: 9, start: 0, end: 1, text: "other" }] };
+    rerender(
+      <LangProvider>
+        <SubtitlesPanel {...props} subtitles={other} />
+      </LangProvider>,
+    );
+    expect(screen.queryByLabelText("Text of subtitle 1")).toBeNull();
+    expect(screen.getByText("other")).toBeInTheDocument();
+  });
+});

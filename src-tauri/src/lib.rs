@@ -32,6 +32,7 @@ pub fn run() {
             Ok(())
         })
         .manage(commands::launch::PendingOpen::default())
+        .manage(commands::media_server::MediaServer::start())
         .manage(commands::export::ExportControl::default())
         .manage(audio_dsp::approval::Approved::default())
         .manage(audio_dsp::pipeline::DecodeCache::default())
@@ -98,6 +99,8 @@ pub fn run() {
             commands::export::export_project_audio,
             commands::export::cancel_export,
             commands::launch::take_pending_files,
+            commands::media_server::video_stream_url,
+            commands::media_server::project_stream_url,
             commands::audio_tool::pick_media_file,
             commands::audio_tool::media_kind,
             commands::audio_tool::audio_pick_file,

@@ -19,7 +19,7 @@ Object.defineProperty(window.HTMLMediaElement.prototype, "load", { configurable:
 window.electronAPI = {
   getPathForFile: () => "",
   toFileUrl: async (filePath: string) => `lcv-file://local${filePath}`,
-  toBlobUrl: async (url: string) => `blob:${url}`,
+  toStreamUrl: async (url: string) => `stream:${url}`,
   openVideo: async () => null,
   saveVideo: async () => null,
   cancelFfmpeg: async () => {},

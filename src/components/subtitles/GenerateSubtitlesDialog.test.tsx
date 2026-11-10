@@ -19,6 +19,7 @@ vi.mock("../../lib/subs/commands", async (orig) => ({
   generateForMedia: vi.fn(),
   generateForProject: vi.fn(),
   translateSubs: vi.fn(),
+  updateSubs: vi.fn(),
   saveSubs: vi.fn(),
 }));
 
@@ -164,5 +165,24 @@ describe("GenerateSubtitlesDialog", () => {
     render(<GenerateSubtitlesDialog source={{ kind: "file", path: "/v/a.mp4" }} label="a" onClose={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Forget this key" }));
     await waitFor(() => expect(subs.deleteApiKey).toHaveBeenCalledWith("groq_api_key"));
+  });
+
+  it("lets the subtitles be corrected before they are used", async () => {
+    const corrected = SRT.replace("World", "Monde");
+    vi.mocked(subs.updateSubs).mockResolvedValue({ srt_content: corrected });
+    const onUse = vi.fn();
+    render(
+      <GenerateSubtitlesDialog source={{ kind: "file", path: "/v/a.mp4" }} label="a" onClose={vi.fn()} onUse={onUse} />,
+    );
+    await generate();
+    await screen.findByText("2 subtitles generated");
+    fireEvent.click(screen.getByRole("button", { name: "Edit subtitles" }));
+    expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Text of subtitle 2"), { target: { value: "Monde" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply changes" }));
+    await waitFor(() => expect(subs.updateSubs).toHaveBeenCalledWith(SRT, ["Hello", "Monde"]));
+    expect(await screen.findByText("Monde")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(onUse).toHaveBeenCalledWith(corrected));
   });
 });

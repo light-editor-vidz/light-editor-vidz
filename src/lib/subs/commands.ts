@@ -97,6 +97,10 @@ export const translateSubs = (
   targetLang: string,
 ): Promise<SubsOutput> => invoke("translate_subtitles", { srtPath, srtContent, sourceLang, targetLang });
 
+/** Remet les textes corrigés sur les répliques ; les temps ne changent pas, rien n'est écrit. */
+export const updateSubs = (srtContent: string, texts: string[]): Promise<{ srt_content: string }> =>
+  invoke("update_subtitles", { srtContent, texts });
+
 export type SubsFormat = "srt" | "vtt" | "ass";
 
 /** « Enregistrer sous » : renvoie les chemins écrits, ou `null` si le dialogue est fermé. */

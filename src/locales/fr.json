@@ -965,6 +965,15 @@
       "write_subtitles": "Écriture des sous-titres…"
     },
     "azureRegion": "Région Azure Translator",
-    "forgetKey": "Oublier cette clé"
+    "forgetKey": "Oublier cette clé",
+    "edit": {
+      "start": "Modifier les sous-titres",
+      "apply": "Appliquer les modifications",
+      "discard": "Annuler",
+      "cue": "Texte du sous-titre {{index}}",
+      "emptyWarning_one": "{{count}} sous-titre vide sera retiré.",
+      "emptyWarning_other": "{{count}} sous-titres vides seront retirés.",
+      "confirmRemove": "Les retirer et appliquer"
+    }
   }
 }

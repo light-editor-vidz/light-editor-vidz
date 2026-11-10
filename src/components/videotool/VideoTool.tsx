@@ -162,6 +162,15 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
       })),
     [set],
   );
+  const editSubtitleTexts = useCallback(
+    (texts: string[]) =>
+      set((p) => {
+        if (!p.subtitles) return p;
+        const cues = p.subtitles.cues.map((c, i) => ({ ...c, text: texts[i] })).filter((c) => c.text.trim());
+        return { ...p, subtitles: cues.length > 0 ? { ...p.subtitles, cues } : null };
+      }),
+    [set],
+  );
   const removeSubtitles = useCallback(() => set((p) => ({ ...p, subtitles: null })), [set]);
 
   // Panel toggles — switching panels is a single state update
@@ -496,31 +505,28 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
   useEffect(() => {
     if (!videoPath && !loading) refreshRecent();
   }, [videoPath, loading, refreshRecent]);
-  // Quand le lecteur refuse la vidéo, on essaie dans l'ordre : la charger en `blob:` (le WebView de
-  // Linux refuse les protocoles internes dans `<video>`), puis un aperçu transcodé, chargé de même
-  // (le WebView peut aussi ne pas avoir le codec d'un fichier qui semblait lisible).
+  // Quand le lecteur refuse la vidéo, on essaie dans l'ordre : la même par HTTP local (le WebView
+  // de Linux refuse les protocoles internes dans `<video>`), puis un aperçu transcodé, servi de
+  // même (le WebView peut aussi ne pas avoir le codec d'un fichier qui semblait lisible).
+  const streamedUrl = useRef<string | null>(null);
   const onVideoError = useCallback(async () => {
     if (!videoPath) return;
-    if (videoUrl && !videoUrl.startsWith("blob:")) {
+    if (videoUrl && videoUrl !== streamedUrl.current) {
       const id = loadId.current;
       try {
-        const blobUrl = await getApi().toBlobUrl(videoUrl);
-        if (id === loadId.current) setVideoUrl(blobUrl);
-        else URL.revokeObjectURL(blobUrl);
+        const url = await getApi().toStreamUrl(videoUrl);
+        if (id === loadId.current) {
+          streamedUrl.current = url;
+          setVideoUrl(url);
+        }
         return;
       } catch (err) {
-        console.error("Loading the video in memory failed:", err);
+        console.error("Streaming the video failed:", err);
       }
     }
     if (forcedPath.current !== videoPath) void loadVideo(videoPath, true);
     else setToast(t.error_video_unreadable);
   }, [t, videoPath, videoUrl, loadVideo]);
-  useEffect(
-    () => () => {
-      if (videoUrl?.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
-    },
-    [videoUrl],
-  );
   const onSubtitlesError = useCallback(
     (reason: "empty" | "read") => setToast(reason === "empty" ? t.subtitles_empty : t.subtitles_error),
     [t],
@@ -740,6 +746,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
                 onError={onSubtitlesError}
                 onAnimationChange={setSubtitlesAnimation}
                 onRemove={removeSubtitles}
+                onEditTexts={editSubtitleTexts}
                 generated={generated}
                 onUseGenerated={(g) => setSubtitles(g.label, g.cues)}
                 onDiscardGenerated={(id) => setGenerated((list) => list.filter((x) => x.id !== id))}
