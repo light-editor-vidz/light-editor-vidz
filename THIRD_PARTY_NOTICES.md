@@ -46,3 +46,9 @@ under the same MIT license. It uses [image](https://github.com/image-rs/image) a
 [imageproc](https://github.com/image-rs/imageproc) (MIT), [kamadak-exif](https://github.com/kamadak/exif-rs)
 (BSD-2-Clause), [img-parts](https://github.com/paolobarbolini/img-parts) (MIT / Apache-2.0) and
 [Tailwind CSS](https://tailwindcss.com) (MIT) for the styling.
+
+## Video view (ex-LightCutVidz)
+
+The video view (`crates/video-export`, `src/components/videotool`) is LightCutVidz rewritten for
+Tauri, by the same author and under the same MIT license. Its work is done by the FFmpeg above,
+including `vidstab` for stabilisation and `libass` for subtitles.

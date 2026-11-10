@@ -82,6 +82,7 @@ impl VideoStream {
         fps: u32,
         start_idx: u64,
         out_size: (u32, u32),
+        pre_filter: &str,
     ) -> Result<Self, String> {
         let (w, h) = out_size;
         let frame = Pixmap::new(w.max(1), h.max(1)).ok_or("invalid video frame size")?;
@@ -95,7 +96,13 @@ impl VideoStream {
                 "-an",
                 "-vf",
                 &format!(
-                    "fps={},scale={}:{}:flags=bilinear",
+                    "{}fps={},scale={}:{}:flags=bilinear",
+                    // Recadrage et filtre de couleur de l'élément, avant la mise à l'échelle.
+                    if pre_filter.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{pre_filter},")
+                    },
                     fps.max(1),
                     w.max(1),
                     h.max(1)

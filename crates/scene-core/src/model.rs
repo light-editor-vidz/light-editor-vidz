@@ -147,6 +147,12 @@ pub struct VideoElement {
     /// `false` fige sur la dernière frame. `serde(default)` : même raison que `muted`.
     #[serde(default)]
     pub loop_video: bool,
+    /// Identifiant d'un filtre de couleur (`video_fx::filters`) ; `None` = aucun.
+    #[serde(default)]
+    pub color_filter: Option<String>,
+    /// Zone de l'image source conservée ; `None` = toute l'image.
+    #[serde(default)]
+    pub crop: Option<crate::video_fx::VideoCrop>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

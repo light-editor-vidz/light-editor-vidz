@@ -1,4 +1,4 @@
-import filters from "../../../../crates/video-export/src/filters.json";
+import filters from "../../../../crates/scene-core/src/video_fx_filters.json";
 
 export interface FilterDefinition {
   id: string;

@@ -11,6 +11,7 @@ import { BlendModeField } from "./BlendModeField";
 import { ImagePanFields } from "./ImagePanFields";
 import { PositionFields } from "./PositionFields";
 import { AnimationFields } from "./AnimationFields";
+import { VideoEffectsFields } from "./VideoEffectsFields";
 
 export function MediaProperties({
   element,
@@ -50,6 +51,7 @@ export function MediaProperties({
 
       {element.type === "video" && (
         <>
+          <VideoEffectsFields element={element} onUpdate={onUpdate} />
           <div className="properties-section">
             <span className="properties-label">{t("properties.videoTrim")}</span>
             <div className="properties-row">

@@ -9,6 +9,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ### Ajouté
 
+- Un bouton Vidéo sur l'accueil ouvre la vue vidéo de LightCutVidz — coupe, vitesse, recadrage, formats réseaux sociaux, rotation, 20 filtres de couleur, sous-titres gravés, stabilisation et export en MP4, MOV, WebM, AVI ou GIF avec file d'exports — aux couleurs de l'éditeur. Fichier > Ouvrir un fichier… y ouvre une vidéo.
+- Un élément vidéo d'un projet peut avoir un filtre de couleur et un recadrage, visibles en direct et appliqués à l'export.
 - Un bouton Image sur l'accueil ouvre la vue image de LightCutImgz — recadrage, rotation, symétrie, redimensionnement, taille du canvas, ajustements, filtres, retouche d'objet, pipette, EXIF, historique et export — aux couleurs de l'éditeur. Fichier > Ouvrir un fichier… y ouvre une image au lieu de créer un projet.
 - Onglets : l'accueil, chaque projet ouvert et chaque fichier audio ouvert ont leur propre onglet.
 - Un bouton Audio sur l'accueil ouvre la vue audio de LightCutSoundz — forme d'onde avec coupes, fondus, normalisation, vitesse, filtres, aperçu en direct, annuler / rétablir et export en WAV, MP3, FLAC, OGG ou M4A — aux couleurs de l'éditeur.

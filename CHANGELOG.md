@@ -9,6 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
+- A Video button on the home screen opens the video view of LightCutVidz — trim, speed, crop, social formats, rotation, 20 colour filters, burned-in subtitles, stabilisation and export to MP4, MOV, WebM, AVI or GIF with an export queue — in the colours of the editor. File > Open file… opens a video there.
+- A video element of a project can have a colour filter and a crop, previewed live and applied at export.
 - An Image button on the home screen opens the image view of LightCutImgz — crop, rotate, flip, resize, canvas size, adjustments, filters, object removal, colour picker, EXIF, history and export — in the colours of the editor. File > Open file… opens an image there instead of creating a project.
 - Tabs: the home screen, each open project and each open audio file have their own tab.
 - An Audio button on the home screen opens the audio view of LightCutSoundz — waveform with cuts, fades, normalisation, speed, filters, live preview, undo / redo and export to WAV, MP3, FLAC, OGG or M4A — in the colours of the editor.

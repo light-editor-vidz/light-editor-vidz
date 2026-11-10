@@ -787,6 +787,8 @@ mod tests {
                     muted: false,
                     playback_speed: 1.0,
                     loop_video: false,
+                    color_filter: None,
+                    crop: None,
                 })],
                 transition_in: None,
                 transition_out: None,

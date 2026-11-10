@@ -26,6 +26,7 @@ use crate::model::{
 };
 use crate::timeline::{is_element_active, resolve_active_compositions};
 use crate::video::{probe_video, VideoProbe, VideoStream};
+use crate::video_fx::{effective_size, element_filter_chain, VideoCrop};
 use cosmic_text::{
     Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache, Weight,
 };
@@ -313,6 +314,22 @@ fn load_gif(path: &Path) -> Option<Sprite> {
     })
 }
 
+/// Recadrage et filtre de couleur d'un élément vidéo, tels que ffmpeg les applique au décodage.
+struct VideoFx {
+    crop: Option<VideoCrop>,
+    chain: String,
+}
+
+impl VideoFx {
+    fn of(el: &crate::model::VideoElement) -> Self {
+        let crop = el.crop.map(VideoCrop::clamped);
+        Self {
+            crop,
+            chain: element_filter_chain(crop, el.color_filter.as_deref()),
+        }
+    }
+}
+
 /// Décodeur de vidéo en cours pour un élément (voir `FrameRenderer::video_frame_at`).
 struct ActiveVideo {
     stream: VideoStream,
@@ -548,6 +565,7 @@ impl FrameRenderer {
         loop_video: bool,
         video_offset: f64,
         target_scale: f32,
+        fx: &VideoFx,
     ) -> Option<(&Pixmap, (u32, u32))> {
         let source = self.media_path(project_dir, relative_src);
         let probe = match self.probes.get(relative_src) {
@@ -576,11 +594,12 @@ impl FrameRenderer {
         if reopen {
             self.videos.remove(key);
             let scale = target_scale.clamp(0.05, 1.0);
+            let (full_w, full_h) = effective_size((probe.width, probe.height), fx.crop);
             let out_size = (
-                ((probe.width as f32 * scale).ceil() as u32).max(2),
-                ((probe.height as f32 * scale).ceil() as u32).max(2),
+                ((full_w as f32 * scale).ceil() as u32).max(2),
+                ((full_h as f32 * scale).ceil() as u32).max(2),
             );
-            match VideoStream::open(&source, fps, idx, out_size) {
+            match VideoStream::open(&source, fps, idx, out_size, &fx.chain) {
                 Ok(stream) => {
                     self.videos.insert(
                         key.to_string(),
@@ -599,7 +618,7 @@ impl FrameRenderer {
         let active = self.videos.get_mut(key)?;
         active.last_used = self.frame_counter;
         let pixmap = active.stream.frame_at(idx)?;
-        Some((pixmap, (probe.width, probe.height)))
+        Some((pixmap, effective_size((probe.width, probe.height), fx.crop)))
     }
 
     pub fn render_frame(&mut self, project: &Project, project_dir: &Path, t: f64) -> Pixmap {
@@ -838,11 +857,12 @@ impl FrameRenderer {
                         let s = fit_scale(video_el.fit_mode, inner, orig, 1.0);
                         (s.0.max(s.1) * 2.0).min(1.0)
                     };
+                    let fx = VideoFx::of(video_el);
                     let probe_size = self
                         .probes
                         .get(&video_el.src)
                         .and_then(|p| p.as_ref())
-                        .map(|p| (p.width, p.height));
+                        .map(|p| effective_size((p.width, p.height), fx.crop));
                     let target_scale = probe_size.map(frame_scale).unwrap_or(1.0);
                     let frame = self.video_frame_at(
                         &key,
@@ -853,6 +873,7 @@ impl FrameRenderer {
                         video_el.loop_video,
                         video_el.video_offset,
                         target_scale,
+                        &fx,
                     );
                     if let Some((pixmap, orig)) = frame {
                         draw_bitmap(
@@ -1795,6 +1816,8 @@ mod tests {
             muted: false,
             playback_speed: 1.0,
             loop_video: false,
+            color_filter: None,
+            crop: None,
         }
     }
 
@@ -2485,6 +2508,84 @@ mod tests {
             "pixel attendu rouge, obtenu {pixel:?}"
         );
         assert!(renderer.missing_media.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_colour_filter_changes_the_rendered_video() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("videofilter");
+        make_test_video(&dir, "red", "64x64", 1);
+        let mut el = video("v1", "video.mp4");
+        el.color_filter = Some("invert".into());
+        let project = project_with(100, 100, 1.0, vec![Element::Video(el)]);
+        let mut renderer = FrameRenderer::new();
+        let pixel = renderer
+            .render_frame(&project, &dir, 0.3)
+            .pixel(50, 50)
+            .unwrap();
+        // Le rouge inversé est cyan.
+        assert!(
+            pixel.red() < 100 && pixel.green() > 150 && pixel.blue() > 150,
+            "pixel attendu cyan, obtenu {pixel:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_crop_keeps_only_the_chosen_part_of_the_video() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("videocrop");
+        // Une vidéo dont la moitié gauche est rouge et la droite bleue.
+        let path = dir.join("video.mp4");
+        let status = std::process::Command::new(crate::ffmpeg_path::ffmpeg_binary())
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=64x64:d=1",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
+            .arg("color=c=blue:s=64x64:d=1")
+            .args([
+                "-filter_complex",
+                "[0][1]hstack",
+                "-r",
+                "10",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(&path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("ffmpeg");
+        assert!(status.success());
+        let mut el = video("v1", "video.mp4");
+        // La moitié droite seulement : le plein cadre doit être bleu.
+        el.crop = Some(VideoCrop {
+            x: 0.5,
+            y: 0.0,
+            w: 0.5,
+            h: 1.0,
+        });
+        let project = project_with(100, 100, 1.0, vec![Element::Video(el)]);
+        let mut renderer = FrameRenderer::new();
+        let frame = renderer.render_frame(&project, &dir, 0.3);
+        for (x, y) in [(5, 50), (50, 50), (95, 50)] {
+            let p = frame.pixel(x, y).unwrap();
+            assert!(
+                p.blue() > 150 && p.red() < 100,
+                "({x},{y}) attendu bleu, obtenu {p:?}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

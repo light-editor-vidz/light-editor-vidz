@@ -1,3 +1,4 @@
+import { videoEffectsStyle } from "../../lib/videoFx";
 import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import type { Element } from "../../bindings/Element";
@@ -298,6 +299,7 @@ export const VideoElementView = memo(function VideoElementView({
         src={mediaSrc ?? undefined}
         style={{
           ...mediaFit(element.fit_mode),
+          ...videoEffectsStyle(element),
           pointerEvents: "none",
           transform: panTransform || undefined,
         }}

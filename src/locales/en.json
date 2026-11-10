@@ -325,7 +325,14 @@
     "fitStretch": "Stretch",
     "fitLargest": "Contain (whole image)",
     "fitWidth": "Fit width",
-    "fitHeight": "Fit height"
+    "fitHeight": "Fit height",
+    "videoFilter": "Colour filter",
+    "videoCrop": "Crop (% of the image)",
+    "videoCropX": "X",
+    "videoCropY": "Y",
+    "videoCropW": "W",
+    "videoCropH": "H",
+    "videoCropReset": "Reset"
   },
   "canvas": {
     "videoDecodeError": "This video cannot be played (unsupported format/codec)",

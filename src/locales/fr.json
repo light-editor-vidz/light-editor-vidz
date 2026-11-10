@@ -325,7 +325,14 @@
     "fitStretch": "Étirer",
     "fitLargest": "Contenir (image entière)",
     "fitWidth": "Ajuster à la largeur",
-    "fitHeight": "Ajuster à la hauteur"
+    "fitHeight": "Ajuster à la hauteur",
+    "videoFilter": "Filtre de couleur",
+    "videoCrop": "Recadrage (% de l'image)",
+    "videoCropX": "X",
+    "videoCropY": "Y",
+    "videoCropW": "L",
+    "videoCropH": "H",
+    "videoCropReset": "Réinitialiser"
   },
   "canvas": {
     "videoDecodeError": "Cette vidéo ne peut pas être lue (format/codec non supporté)",

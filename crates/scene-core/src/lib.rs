@@ -12,3 +12,4 @@ pub mod project;
 pub mod raster;
 pub mod timeline;
 pub mod video;
+pub mod video_fx;

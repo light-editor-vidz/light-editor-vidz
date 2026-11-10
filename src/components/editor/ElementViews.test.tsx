@@ -600,3 +600,28 @@ describe("Image/Video — modes d'ajustement", () => {
     expect((container.firstElementChild as HTMLElement).style.background).toContain("rgb(1, 2, 3)");
   });
 });
+
+describe("VideoElementView — effets", () => {
+  async function drawn(over: Partial<VideoEl>) {
+    const view = render(
+      <VideoElementView element={video(over)} projectDir="/p" localTime={0} playing={false} panTransform="" />,
+    );
+    await act(async () => {});
+    return view.container.querySelector("video") as HTMLVideoElement;
+  }
+
+  it("applique le filtre de couleur choisi à l'aperçu", async () => {
+    expect((await drawn({ color_filter: "grayscale" })).style.filter).toBe("grayscale(100%)");
+  });
+
+  it("recadre l'aperçu sur la zone choisie, que l'ajustement applique ensuite", async () => {
+    const node = await drawn({ crop: { x: 0.25, y: 0.1, w: 0.5, h: 0.8 } });
+    expect(node.getAttribute("style")).toContain("object-view-box: inset(10% 25% 10% 25%)");
+  });
+
+  it("sans effet, la vidéo n'est ni filtrée ni recadrée", async () => {
+    const node = await drawn({ color_filter: null, crop: null });
+    expect(node.style.filter).toBe("");
+    expect(node.getAttribute("style") ?? "").not.toContain("object-view-box");
+  });
+});
