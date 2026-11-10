@@ -254,3 +254,23 @@ describe("SubtitlesPanel — fonts", () => {
       expect(fonts).not.toContain(missing);
   });
 });
+
+describe("SubtitlesPanel — generated subtitles", () => {
+  const generated = [{ id: 7, label: "#1", cues: loaded.cues }];
+
+  it("lists the generated subtitles, to use or delete", () => {
+    const onUseGenerated = vi.fn();
+    const onDiscardGenerated = vi.fn();
+    renderWithI18n(<SubtitlesPanel {...makeProps({ generated, onUseGenerated, onDiscardGenerated })} />);
+    expect(screen.getByText(/#1 · 1 subtitles/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use" }));
+    expect(onUseGenerated).toHaveBeenCalledWith(generated[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(onDiscardGenerated).toHaveBeenCalledWith(7);
+  });
+
+  it("keeps the list next to the loaded subtitles", () => {
+    renderWithI18n(<SubtitlesPanel {...makeProps({ subtitles: loaded, generated })} />);
+    expect(screen.getByText("Generated subtitles")).toBeInTheDocument();
+  });
+});

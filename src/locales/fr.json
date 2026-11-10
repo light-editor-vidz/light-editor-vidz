@@ -935,7 +935,7 @@
     "resultCount_one": "{{count}} sous-titre généré",
     "resultCount_other": "{{count}} sous-titres générés",
     "addToProject": "Ajouter au projet en éléments texte",
-    "useInVideo": "Utiliser dans cette vidéo",
+    "useInVideo": "Ajouter à la liste du panneau Sous-titres",
     "saveFile": "Enregistrer dans un fichier",
     "format": "Format",
     "fileFilter": "Sous-titres",

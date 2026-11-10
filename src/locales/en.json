@@ -935,7 +935,7 @@
     "resultCount_one": "{{count}} subtitle generated",
     "resultCount_other": "{{count}} subtitles generated",
     "addToProject": "Add as text elements to the project",
-    "useInVideo": "Use in this video",
+    "useInVideo": "Add to the list of the Subtitles panel",
     "saveFile": "Save as a file",
     "format": "Format",
     "fileFilter": "Subtitles",

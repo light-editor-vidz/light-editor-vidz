@@ -5,6 +5,12 @@ import { parseSrt } from "../utils/srt";
 import { useT } from "../i18n";
 import "./SubtitlesPanel.css";
 
+export interface GeneratedSubtitles {
+  id: number;
+  label: string;
+  cues: ReturnType<typeof parseSrt>;
+}
+
 interface Props {
   subtitles: SubtitlesState | null;
   onImport: (fileName: string, cues: ReturnType<typeof parseSrt>) => void;
@@ -16,8 +22,10 @@ interface Props {
   onError?: (reason: "empty" | "read") => void;
   onAnimationChange: (animation: SubtitleAnimation) => void;
   onRemove: () => void;
-  /** Opens the subtitle generation window for the opened video. */
-  onGenerate?: () => void;
+  /** Subtitles generated for this video, offered as a list to pick from. */
+  generated?: GeneratedSubtitles[];
+  onUseGenerated?: (item: GeneratedSubtitles) => void;
+  onDiscardGenerated?: (id: number) => void;
 }
 
 // Only families that exist on macOS, Windows and (via fontconfig aliases or
@@ -48,7 +56,9 @@ export default function SubtitlesPanel({
   onError,
   onAnimationChange,
   onRemove,
-  onGenerate,
+  generated = [],
+  onUseGenerated,
+  onDiscardGenerated,
 }: Props) {
   const { t } = useT();
 
@@ -79,6 +89,28 @@ export default function SubtitlesPanel({
     }
   }, [onImport, onError]);
 
+  const generatedList =
+    generated.length > 0 ? (
+      <div className="subtitles-section">
+        <div className="subtitles-label">{t.subtitles_generated}</div>
+        <ul className="subtitles-generated">
+          {generated.map((g) => (
+            <li key={g.id}>
+              <span className="subtitles-generated-name">
+                {g.label} · {t.subtitles_generated_count.replace("{n}", String(g.cues.length))}
+              </span>
+              <button className="btn-secondary" onClick={() => onUseGenerated?.(g)}>
+                {t.subtitles_use}
+              </button>
+              <button className="btn-ghost" onClick={() => onDiscardGenerated?.(g.id)}>
+                {t.subtitles_discard}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    ) : null;
+
   if (!subtitles) {
     return (
       <div className="subtitles-panel">
@@ -86,11 +118,7 @@ export default function SubtitlesPanel({
         <button className="btn-primary" onClick={handleImport}>
           {t.subtitles_import}
         </button>
-        {onGenerate && (
-          <button className="btn-secondary" onClick={onGenerate}>
-            {t.subtitles_generate}
-          </button>
-        )}
+        {generatedList}
       </div>
     );
   }
@@ -112,11 +140,8 @@ export default function SubtitlesPanel({
           {t.subtitles_remove}
         </button>
       </div>
-      {onGenerate && (
-        <button className="btn-secondary" onClick={onGenerate}>
-          {t.subtitles_generate}
-        </button>
-      )}
+
+      {generatedList}
 
       <div className="subtitles-section">
         <div className="subtitles-label">{t.subtitles_animation}</div>

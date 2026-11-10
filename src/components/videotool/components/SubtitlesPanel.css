@@ -158,3 +158,27 @@
   background: var(--select-bg);
   color: var(--text-primary);
 }
+
+.vt-root .subtitles-generated {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vt-root .subtitles-generated li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vt-root .subtitles-generated-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

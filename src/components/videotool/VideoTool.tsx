@@ -36,6 +36,7 @@ const Filters = lazy(() => import("./components/Filters"));
 const GeometrySettings = lazy(() => import("./components/GeometrySettings"));
 const CropOverlay = lazy(() => import("./components/CropOverlay"));
 const SubtitlesPanel = lazy(() => import("./components/SubtitlesPanel"));
+import type { GeneratedSubtitles } from "./components/SubtitlesPanel";
 
 type ActivePanel = "crop" | "filters" | "geometry" | "subtitles" | null;
 
@@ -69,6 +70,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
   const [isPlaying, setIsPlaying] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
+  const [generated, setGenerated] = useState<GeneratedSubtitles[]>([]);
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const [filterFrameUrl, setFilterFrameUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState<{ msg: string; progress: number } | null>(null);
@@ -222,6 +224,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
       setActivePanel(null);
       reset();
       setVideoPath(filePath);
+      setGenerated([]);
       setVideoUrl(url);
       setDuration(0);
       setVideoSize(null);
@@ -540,7 +543,9 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
             onClose={() => setShowGenerate(false)}
             onUse={(srt) => {
               const cues = parseSrt(srt);
-              if (cues.length > 0) setSubtitles("subtitles.srt", cues);
+              if (cues.length === 0) return;
+              setGenerated((list) => [...list, { id: Date.now(), label: `#${list.length + 1}`, cues }]);
+              setActivePanel("subtitles");
             }}
           />
         )}
@@ -579,6 +584,9 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
             </button>
             <button className="btn-ghost" onClick={onOpenFile}>
               {t.app_open_video}
+            </button>
+            <button className="btn-ghost" onClick={() => setShowGenerate(true)}>
+              {t.subtitles_generate}
             </button>
             <button className="btn-primary" onClick={openExport}>
               {t.app_export}
@@ -699,7 +707,9 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
                 onError={onSubtitlesError}
                 onAnimationChange={setSubtitlesAnimation}
                 onRemove={removeSubtitles}
-                onGenerate={videoPath ? () => setShowGenerate(true) : undefined}
+                generated={generated}
+                onUseGenerated={(g) => setSubtitles(g.label, g.cues)}
+                onDiscardGenerated={(id) => setGenerated((list) => list.filter((x) => x.id !== id))}
               />
             </Suspense>
           )}
