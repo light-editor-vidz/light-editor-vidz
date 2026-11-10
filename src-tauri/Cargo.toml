@@ -40,12 +40,24 @@ rayon = "1"
 uuid = { version = "1", features = ["v4"] }
 kamadak-exif = "0.6"
 img-parts = "0.4"
+# Génération de sous-titres (ex-LightGenSubz)
+whisper-rs = "0.16"
+sha2 = "0.11"
+futures-util = "0.3"
+hound = "3"
+dirs = "7"
+ort = "=2.0.0-rc.15"
+tokenizers = "0.23"
+zeroize = "1"
+tempfile = "3"
+# Le trousseau de sous-titres est en v4 ; celui des clés d'assets reste en v3.
+keyring4 = { package = "keyring", version = "4" }
 # Recherche/téléchargement d'assets libres de droit (Pexels, Pixabay, Freesound, Openverse).
 # rustls plutôt qu'openssl : pas de dépendance système supplémentaire au build.
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "blocking", "multipart", "query", "form"] }
 futures = "0.3"
 # Écriture asynchrone des téléchargements (déjà une dépendance transitive de reqwest/tauri).
-tokio = { version = "1", features = ["fs", "io-util"] }
+tokio = { version = "1", features = ["fs", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "apple-native", "windows-native"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -54,3 +66,8 @@ gtk = "0.18"
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
 tempfile = "3"
+
+# Sans Metal, whisper.cpp ne tourne que sur le CPU, même sur Apple Silicon.
+[target.'cfg(target_os = "macos")'.dependencies.whisper-rs]
+version = "0.16"
+features = ["metal"]

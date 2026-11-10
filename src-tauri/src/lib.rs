@@ -3,6 +3,7 @@ mod export;
 mod imgz;
 #[cfg(target_os = "linux")]
 mod menu_style;
+mod subz;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -107,6 +108,21 @@ pub fn run() {
             commands::video_tool::video_queue_clear_finished,
             commands::video_tool::video_recent_list,
             commands::video_tool::video_recent_forget,
+            commands::subs_tool::subs_audio_tracks,
+            commands::subs_tool::subs_media_tracks,
+            commands::subs_tool::subs_generate_file,
+            commands::subs_tool::subs_generate_media,
+            commands::subs_tool::subs_generate_project,
+            subz::commands::cancel_pipeline,
+            subz::commands::translate_subtitles,
+            subz::commands::list_languages,
+            subz::commands::get_settings,
+            subz::commands::set_settings,
+            subz::commands::set_api_key,
+            subz::commands::delete_api_key,
+            subz::commands::has_api_key,
+            subz::commands::save_subtitle_as,
+            subz::commands::update_subtitles,
             imgz::commands::open::open_images,
             imgz::commands::open::open_images_by_paths,
             imgz::commands::exif::get_exif,
