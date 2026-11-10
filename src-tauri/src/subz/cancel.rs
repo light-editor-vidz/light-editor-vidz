@@ -24,7 +24,6 @@ impl Drop for Busy {
     }
 }
 
-#[cfg(test)]
 pub fn is_busy() -> bool {
     RUNNING.load(Ordering::SeqCst) > 0
 }
@@ -36,6 +35,11 @@ pub fn reset() {
 
 pub fn request() {
     CANCELLED.store(true, Ordering::SeqCst);
+}
+
+/// The flag itself, for work done outside the pipeline (the mix of a whole project).
+pub fn flag() -> &'static AtomicBool {
+    &CANCELLED
 }
 
 pub fn is_cancelled() -> bool {

@@ -11,6 +11,7 @@ vi.mock("../../lib/subs/commands", async (orig) => ({
   listSubsLanguages: vi.fn(),
   hasApiKey: vi.fn(),
   setApiKey: vi.fn(),
+  deleteApiKey: vi.fn(),
   cancelSubs: vi.fn(),
   audioTracksOfFile: vi.fn(),
   audioTracksOfMedia: vi.fn(),
@@ -54,7 +55,6 @@ describe("GenerateSubtitlesDialog", () => {
     await generate();
     expect(await screen.findByText("2 subtitles generated")).toBeInTheDocument();
     expect(subs.generateForFile).toHaveBeenCalledWith("/v/a.mp4", null);
-    fireEvent.click(screen.getByLabelText(/Save as a file/));
     fireEvent.change(screen.getByLabelText("Format"), { target: { value: "vtt" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(subs.saveSubs).toHaveBeenCalledWith("/v/a.srt", "Subtitles", "vtt", SRT));
@@ -119,5 +119,50 @@ describe("GenerateSubtitlesDialog", () => {
     await screen.findByText("2 subtitles generated");
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     expect(onUse).toHaveBeenCalledWith(SRT);
+  });
+
+  it("does not add the subtitles twice when the save dialog is closed", async () => {
+    vi.mocked(subs.generateForMedia).mockResolvedValue({ srt_path: "/p/a.srt", srt_content: SRT, language: "en" });
+    vi.mocked(subs.saveSubs).mockResolvedValueOnce(null).mockResolvedValueOnce(["/p/a.srt"]);
+    const onPlace = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <GenerateSubtitlesDialog
+        source={{ kind: "media", projectDir: "/p", src: "a.mp4" }}
+        label="a"
+        onClose={onClose}
+        onPlace={onPlace}
+      />,
+    );
+    await generate();
+    await screen.findByText("2 subtitles generated");
+    fireEvent.click(screen.getByLabelText(/Save as a file/));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(subs.saveSubs).toHaveBeenCalledTimes(1));
+    expect(onPlace).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(onPlace).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks for the Azure region before translating with Azure", async () => {
+    vi.mocked(subs.getSubsSettings).mockResolvedValue({ ...settings, translation_engine: "azure" });
+    vi.mocked(subs.hasApiKey).mockResolvedValue(true);
+    render(<GenerateSubtitlesDialog source={{ kind: "file", path: "/v/a.mp4" }} label="a" onClose={vi.fn()} />);
+    fireEvent.change(await screen.findByLabelText("Translate to"), { target: { value: "fr" } });
+    const button = screen.getByRole("button", { name: "Generate" });
+    await waitFor(() => expect(screen.getByLabelText("Azure Translator region")).toBeInTheDocument());
+    expect(button).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Azure Translator region"), { target: { value: "westeurope" } });
+    expect(button).toBeEnabled();
+  });
+
+  it("can forget a stored API key", async () => {
+    vi.mocked(subs.getSubsSettings).mockResolvedValue({ ...settings, stt_engine: "groq" });
+    vi.mocked(subs.hasApiKey).mockResolvedValue(true);
+    render(<GenerateSubtitlesDialog source={{ kind: "file", path: "/v/a.mp4" }} label="a" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Forget this key" }));
+    await waitFor(() => expect(subs.deleteApiKey).toHaveBeenCalledWith("groq_api_key"));
   });
 });

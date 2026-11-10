@@ -33,3 +33,13 @@
 .subs-progress progress {
   width: 100%;
 }
+.subs-forget {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}

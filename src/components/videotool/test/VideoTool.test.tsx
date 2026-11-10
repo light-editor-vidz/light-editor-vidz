@@ -2,6 +2,7 @@ import "./setup";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import VideoTool from "../VideoTool";
 import { inertBridge, TabActiveProvider } from "../../../lib/menuBridge";
 import { runBeforeExit } from "../../../lib/lifecycle";
@@ -67,21 +68,65 @@ describe("VideoTool — opening a video", () => {
     expect(previewVideo).toHaveBeenCalledWith("/v/a.mp4", false);
   });
 
-  it("retries once with a transcoded preview when the video cannot be played", async () => {
+  it("falls back to memory, then to a transcoded preview, when the video cannot be played", async () => {
     const { previewVideo, container } = setup({ path: "/v/a.mp4" });
     await screen.findByText("a.mp4");
-    const video = container.querySelector("video")!;
+    const fail = () =>
+      act(async () => {
+        fireEvent.error(container.querySelector("video")!);
+      });
+    const src = () => container.querySelector("video")!.getAttribute("src");
 
-    await act(async () => {
-      fireEvent.error(video);
-    });
+    await fail();
+    expect(src()).toBe("blob:url:/v/a.mp4");
+    expect(previewVideo).toHaveBeenCalledTimes(1);
+
+    await fail();
     expect(previewVideo).toHaveBeenLastCalledWith("/v/a.mp4", true);
+    await screen.findByText("a.mp4");
+    expect(src()).toBe("url:/v/a.mp4");
 
-    await act(async () => {
-      fireEvent.error(container.querySelector("video")!);
-    });
+    await fail();
+    expect(src()).toBe("blob:url:/v/a.mp4");
+
+    await fail();
     expect(previewVideo).toHaveBeenCalledTimes(2);
     expect(await screen.findByText(/cannot be played/)).toBeInTheDocument();
+  });
+
+  it("opens the subtitle window from the button next to Export", async () => {
+    vi.mocked(invoke).mockImplementation((async (cmd: string) =>
+      cmd === "get_settings"
+        ? {
+            stt_engine: "local",
+            translation_engine: "local",
+            azure_translator_region: "",
+            language: "en",
+            whisper_model: "base",
+            stt_language: "auto",
+          }
+        : cmd === "has_api_key"
+          ? false
+          : []) as never);
+    setup({ path: "/v/a.mp4" });
+    await screen.findByText("a.mp4");
+    fireEvent.click(screen.getByRole("button", { name: "Generate subtitles…" }));
+    expect(await screen.findByRole("dialog", { name: "Generate subtitles" })).toBeInTheDocument();
+  });
+
+  it("undoes and redoes from the keyboard, the suite menu has no accelerator for it", async () => {
+    setup({ path: "/v/a.mp4" });
+    await screen.findByText("a.mp4");
+    const undo = () => screen.getAllByRole("button").find((b) => b.title.startsWith("Undo"))!;
+    expect(undo()).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "2x" }));
+    await waitFor(() => expect(undo()).toBeEnabled());
+
+    fireEvent.keyDown(window, { key: "z", code: "KeyZ", ctrlKey: true });
+    await waitFor(() => expect(undo()).toBeDisabled());
+
+    fireEvent.keyDown(window, { key: "y", code: "KeyY", ctrlKey: true });
+    await waitFor(() => expect(undo()).toBeEnabled());
   });
 
   it("shows the video editor once the preview is ready", async () => {

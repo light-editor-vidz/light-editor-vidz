@@ -7,6 +7,7 @@ import { suiteMessages } from "./suite/messages";
 import { useMenuBridge } from "./lib/menuBridge";
 import { listRecentProjects, removeRecentProject, type RecentProject } from "./lib/commands";
 import ShortcutsModal from "./components/ShortcutsModal";
+import { GRID_SIZES } from "./components/imagetool/lib/prefs";
 
 /** The menu bar (File, Edit, View, Help), always there, on the home screen and in the editor. The
  * screen in front registers what its entries do (`useRegisterMenuActions`). */
@@ -40,7 +41,8 @@ export default function AppMenuBar() {
   }, [refreshRecents, flags.inEditor]);
 
   // Calls go through `actions`: the screen's latest functions, whenever it is clicked.
-  const call = (name: Exclude<keyof typeof actions.current, "openRecent">) => () => actions.current[name]?.();
+  const call = (name: Exclude<keyof typeof actions.current, "openRecent" | "setImageGrid">) => () =>
+    actions.current[name]?.();
   const { inEditor, inAudio, inImage, inVideo, canUndo, canRedo, hasSelection } = flags;
   /** Un projet ou un fichier audio est affiché : l'export et la fermeture de l'onglet ont un sens. */
   const inTab = inEditor || inAudio || inImage || inVideo;
@@ -115,9 +117,20 @@ export default function AppMenuBar() {
       { kind: "separator" },
       { kind: "item", text: t("topbar.delete"), enabled: hasSelection, action: call("deleteSelected") },
       { kind: "item", text: t("topbar.duplicate"), enabled: hasSelection, action: call("duplicateSelected") },
+      { kind: "separator" },
+      {
+        kind: "submenu",
+        text: t("topbar.gridSize"),
+        enabled: inImage,
+        items: GRID_SIZES.map((size): MenuSpec => ({
+          kind: "item",
+          text: `${size} px`,
+          action: () => actions.current.setImageGrid?.(size),
+        })),
+      },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, canUndo, canRedo, hasSelection],
+    [t, canUndo, canRedo, hasSelection, inImage],
   );
 
   const helpExtra = useMemo<MenuSpec[]>(

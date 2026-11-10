@@ -13,6 +13,7 @@ import {
   audioTracksOfFile,
   audioTracksOfMedia,
   cancelSubs,
+  deleteApiKey,
   generateForFile,
   generateForMedia,
   generateForProject,
@@ -69,10 +70,10 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SubsOutput | null>(null);
   const [place, setPlace] = useState(true);
-  const [save, setSave] = useState(false);
+  // Sans projet ni vidéo où déposer le résultat (vue Audio), le fichier est la seule issue.
+  const [save, setSave] = useState(!onPlace && !onUse);
   const [format, setFormat] = useState<SubsFormat>("srt");
   const [use, setUse] = useState(true);
-  const [done, setDone] = useState<string | null>(null);
   const cancelled = useRef(false);
 
   const sttKey = settings ? STT_KEYS[settings.stt_engine] : null;
@@ -134,12 +135,24 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
     }
     return null;
   }, [sttKey, trKey, keys, typedKeys]);
+  const missingRegion =
+    !!target && settings?.translation_engine === "azure" && !settings.azure_translator_region.trim();
+
+  async function forgetKey(name: string) {
+    setError(null);
+    try {
+      await deleteApiKey(name);
+      setTypedKeys((s) => ({ ...s, [name]: "" }));
+      await refreshKeys();
+    } catch (e) {
+      setError(describeError(e));
+    }
+  }
 
   async function generate() {
     if (!settings) return;
     setError(null);
     setResult(null);
-    setDone(null);
     setProgress(null);
     cancelled.current = false;
     setBusy(true);
@@ -178,13 +191,14 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
     if (!result) return;
     setError(null);
     try {
-      if (onPlace && place) onPlace(cues.map(({ start, end, text }) => ({ start, end, text })));
-      if (onUse && use) onUse(result.srt_content);
+      // The save comes first: closing its dialog keeps this window open, and "Apply" must then
+      // not add the subtitles a second time.
       if (save) {
         const written = await saveSubs(result.srt_path, t("subs.fileFilter"), format, result.srt_content);
-        if (!written) return; // dialog closed: stay open
+        if (!written) return;
       }
-      setDone(t("subs.applied"));
+      if (onPlace && place) onPlace(cues.map(({ start, end, text }) => ({ start, end, text })));
+      if (onUse && use) onUse(result.srt_content);
       onClose();
     } catch (e) {
       setError(describeError(e));
@@ -399,14 +413,31 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
                         value={typedKeys[k[0]] ?? ""}
                         onChange={(e) => setTypedKeys((s) => ({ ...s, [k[0]]: e.target.value }))}
                       />
+                      {keys[k[0]] && (
+                        <button type="button" className="subs-forget" onClick={() => void forgetKey(k[0])}>
+                          {t("subs.forgetKey")}
+                        </button>
+                      )}
                     </div>
                   ),
+              )}
+              {target && settings.translation_engine === "azure" && (
+                <div className="field-group">
+                  <label className="field-label" htmlFor="subs-azure-region">
+                    {t("subs.azureRegion")}
+                  </label>
+                  <input
+                    id="subs-azure-region"
+                    className="field-input"
+                    value={settings.azure_translator_region}
+                    onChange={(e) => patch({ azure_translator_region: e.target.value })}
+                  />
+                </div>
               )}
               {source.kind === "project" && <p className="modal-hint">{t("subs.projectHint")}</p>}
             </>
           )}
           {error && <p className="modal-error">{error}</p>}
-          {done && <p className="modal-hint">{done}</p>}
         </div>
 
         <div className="modal-footer">
@@ -429,7 +460,12 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
                   {t("subs.apply")}
                 </button>
               ) : (
-                <button type="button" className="btn-primary" onClick={generate} disabled={!settings || !!missingKey}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={generate}
+                  disabled={!settings || !!missingKey || missingRegion}
+                >
                   {t("subs.generate")}
                 </button>
               )}

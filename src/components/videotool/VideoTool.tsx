@@ -363,7 +363,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
   const FRAME = 1 / 30; // the real frame rate is not known to the renderer
 
   useEffect(() => {
-    if (!videoPath || showExport || !tabActive) return;
+    if (!videoPath || showExport || showGenerate || !tabActive) return;
     const isTextual = (el: EventTarget | null) => {
       const node = el as HTMLElement | null;
       if (!node) return false;
@@ -380,6 +380,16 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat && e.code === "Space") return;
+      // Ctrl+Z n'est pas un raccourci du menu de la suite : chaque écran le gère lui-même.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !isTextual(e.target)) {
+        const key = e.key.toLowerCase();
+        if (key === "z" || key === "y") {
+          e.preventDefault();
+          if (key === "z" && !e.shiftKey) undoOrTextUndo();
+          else redoOrTextRedo();
+          return;
+        }
+      }
       if (isTextual(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
       const onRange = (e.target as HTMLElement | null)?.tagName === "INPUT"; // arrows belong to a focused slider
       switch (e.code) {
@@ -430,7 +440,17 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [videoPath, showExport, tabActive, handlePlayPause, seekVirtual, FRAME]);
+  }, [
+    videoPath,
+    showExport,
+    showGenerate,
+    tabActive,
+    handlePlayPause,
+    seekVirtual,
+    FRAME,
+    undoOrTextUndo,
+    redoOrTextRedo,
+  ]);
 
   const openExport = useCallback(() => setShowExport(true), []);
 
@@ -476,11 +496,31 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
   useEffect(() => {
     if (!videoPath && !loading) refreshRecent();
   }, [videoPath, loading, refreshRecent]);
-  // The webview may lack the codec of a file that looked playable: transcode a preview once.
-  const onVideoError = useCallback(() => {
-    if (videoPath && forcedPath.current !== videoPath) void loadVideo(videoPath, true);
+  // Quand le lecteur refuse la vidéo, on essaie dans l'ordre : la charger en `blob:` (le WebView de
+  // Linux refuse les protocoles internes dans `<video>`), puis un aperçu transcodé, chargé de même
+  // (le WebView peut aussi ne pas avoir le codec d'un fichier qui semblait lisible).
+  const onVideoError = useCallback(async () => {
+    if (!videoPath) return;
+    if (videoUrl && !videoUrl.startsWith("blob:")) {
+      const id = loadId.current;
+      try {
+        const blobUrl = await getApi().toBlobUrl(videoUrl);
+        if (id === loadId.current) setVideoUrl(blobUrl);
+        else URL.revokeObjectURL(blobUrl);
+        return;
+      } catch (err) {
+        console.error("Loading the video in memory failed:", err);
+      }
+    }
+    if (forcedPath.current !== videoPath) void loadVideo(videoPath, true);
     else setToast(t.error_video_unreadable);
-  }, [t, videoPath, loadVideo]);
+  }, [t, videoPath, videoUrl, loadVideo]);
+  useEffect(
+    () => () => {
+      if (videoUrl?.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
+    },
+    [videoUrl],
+  );
   const onSubtitlesError = useCallback(
     (reason: "empty" | "read") => setToast(reason === "empty" ? t.subtitles_empty : t.subtitles_error),
     [t],
@@ -543,20 +583,6 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
             void getApi().clearRecent().then(refreshRecent);
           }}
         />
-        {showGenerate && videoPath && (
-          <GenerateSubtitlesDialog
-            source={{ kind: "file", path: videoPath }}
-            label={videoPath}
-            onClose={() => setShowGenerate(false)}
-            onUse={(srt) => {
-              const cues = parseSrt(srt);
-              if (cues.length === 0) return;
-              setGenerated((list) => [...list, { id: Date.now(), label: `#${list.length + 1}`, cues }]);
-              setActivePanel("subtitles");
-            }}
-          />
-        )}
-
         {toast && <Toast key={toast} message={toast} onDone={onToastDone} />}
       </div>
     );
@@ -747,6 +773,20 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
           <Suspense fallback={null}>
             <ExportModal state={editorState} onClose={closeExport} onQueued={onExportQueued} />
           </Suspense>
+        )}
+
+        {showGenerate && videoPath && (
+          <GenerateSubtitlesDialog
+            source={{ kind: "file", path: videoPath }}
+            label={videoPath}
+            onClose={() => setShowGenerate(false)}
+            onUse={(srt) => {
+              const cues = parseSrt(srt);
+              if (cues.length === 0) return;
+              setGenerated((list) => [...list, { id: Date.now(), label: `#${list.length + 1}`, cues }]);
+              setActivePanel("subtitles");
+            }}
+          />
         )}
 
         {toast && <Toast key={toast} message={toast} onDone={onToastDone} />}

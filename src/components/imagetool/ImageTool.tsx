@@ -31,7 +31,7 @@ import { translateError } from "./lib/errors";
 import { MOD } from "./lib/platform";
 import { closeTab as closeBackendTab } from "./lib/tauri";
 import type { ExifField, ResetTool } from "./lib/tauri";
-import { loadPrefs } from "./lib/prefs";
+import { loadPrefs, savePrefs } from "./lib/prefs";
 import { addRecentFile, clearRecentFiles, getRecentFiles, removeRecentFile } from "./lib/recentFiles";
 import type { CropRect, MaskBox, PickedColor } from "./types";
 import "./imagetool.css";
@@ -159,7 +159,7 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
   const [exifLoading, setExifLoading] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
   const [showFlipBar, setShowFlipBar] = useState(false);
-  const [prefs] = useState(() => loadPrefs());
+  const [prefs, setPrefs] = useState(() => loadPrefs());
   const [recentFiles, setRecentFiles] = useState<string[]>(() => getRecentFiles());
   const [pickedColor, setPickedColor] = useState<PickedColor | null>(null);
   const [pickedColorResult, setPickedColorResult] = useState<PickedColor | null>(null);
@@ -259,7 +259,14 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
   useRegisterMenuActions({
     undo: handleUndo,
     redo: handleRedo,
-    openExport: () => setExportOpen(true),
+    openExport: () => {
+      if (image) setExportOpen(true);
+    },
+    setImageGrid: (size: number) => {
+      const updated = { ...prefs, gridSize: size };
+      savePrefs(updated);
+      setPrefs(updated);
+    },
     closeProject: () => void confirmClose().then((ok) => ok && onClose()),
   });
   useEffect(() => {

@@ -47,40 +47,14 @@ pub const FFMPEG_CLOUD_ARGS: [&str; 8] = [
 /// Length of one request to a size-limited cloud engine. 20 minutes ≈ 4.8 MB of MP3.
 pub const CLOUD_CHUNK_SECS: f64 = 20.0 * 60.0;
 
-/// Folders where Homebrew and friends put ffmpeg. A GUI app launched from the Finder
-/// or Spotlight does not inherit the shell's `PATH`, so they are searched explicitly.
-const EXTRA_BIN_DIRS: [&str; 4] = [
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    "/opt/local/bin",
-    "/usr/bin",
-];
-
-/// Absolute path of ffmpeg: on the `PATH` first, then in the usual install folders.
-/// Falls back to the bare name, so the launch error stays explicit.
+/// The ffmpeg shipped with the app (`scene_core::ffmpeg_path`), or the one the environment names.
 pub fn ffmpeg_path() -> PathBuf {
-    find_in(
-        "ffmpeg",
-        std::env::var_os("PATH")
-            .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
-            .unwrap_or_default()
-            .into_iter()
-            .chain(EXTRA_BIN_DIRS.iter().map(PathBuf::from)),
-    )
-    .unwrap_or_else(|| PathBuf::from("ffmpeg"))
+    PathBuf::from(scene_core::ffmpeg_path::ffmpeg_binary())
 }
 
-/// ffprobe sits next to ffmpeg in every distribution.
+/// The ffprobe shipped with the app.
 pub fn ffprobe_path() -> PathBuf {
-    find_in(
-        "ffprobe",
-        std::env::var_os("PATH")
-            .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
-            .unwrap_or_default()
-            .into_iter()
-            .chain(EXTRA_BIN_DIRS.iter().map(PathBuf::from)),
-    )
-    .unwrap_or_else(|| PathBuf::from("ffprobe"))
+    PathBuf::from(scene_core::ffmpeg_path::ffprobe_binary())
 }
 
 /// One audio stream of a media file, as the user can tell them apart.
@@ -163,12 +137,6 @@ pub fn list_audio_tracks(input: &Path) -> Result<Vec<AudioTrack>> {
         return Ok(Vec::new());
     }
     parse_probe(&String::from_utf8_lossy(&output.stdout))
-}
-
-pub fn find_in(name: &str, dirs: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
-    dirs.into_iter()
-        .map(|dir| dir.join(name))
-        .find(|candidate| candidate.is_file())
 }
 
 /// The input as ffmpeg must read it: `file:` stops a name such as `http://…` or `-x` from
@@ -427,7 +395,6 @@ pub fn cut_slice(audio: &Path, start: f64, len: f64, out: &Path) -> Result<()> {
 
 /// Deletes the temporary folders a crash or a forced quit left behind: nothing running
 /// owns a folder that is more than `max_age` old.
-#[cfg(test)]
 pub fn remove_stale_temp_dirs(cache_dir: &Path, max_age: Duration) -> usize {
     let Ok(entries) = std::fs::read_dir(cache_dir) else {
         return 0;
@@ -616,30 +583,6 @@ mod tests {
         let bytes = CLOUD_CHUNK_SECS * 4000.0;
 
         assert!(bytes < 25.0 * 1024.0 * 1024.0 / 4.0);
-    }
-
-    #[test]
-    fn a_binary_is_found_in_the_first_folder_that_has_it() {
-        let a = tempfile::tempdir().unwrap();
-        let b = tempfile::tempdir().unwrap();
-        std::fs::write(b.path().join("ffmpeg"), b"").unwrap();
-
-        let found = find_in("ffmpeg", [a.path().to_path_buf(), b.path().to_path_buf()]);
-
-        assert_eq!(found, Some(b.path().join("ffmpeg")));
-    }
-
-    #[test]
-    fn a_binary_absent_everywhere_is_not_found() {
-        let a = tempfile::tempdir().unwrap();
-
-        assert_eq!(find_in("ffmpeg", [a.path().to_path_buf()]), None);
-    }
-
-    #[test]
-    fn the_homebrew_folders_are_searched() {
-        assert!(EXTRA_BIN_DIRS.contains(&"/opt/homebrew/bin"));
-        assert!(EXTRA_BIN_DIRS.contains(&"/usr/local/bin"));
     }
 
     #[test]

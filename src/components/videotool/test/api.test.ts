@@ -151,9 +151,17 @@ describe("video API — a dialog export waits for its job", () => {
     const progress: number[] = [];
     api.onProgress((p) => progress.push(p));
     const done = api.exportVideo({ inputPath: "/i", outputPath: "/videos/out.mp4" } as never);
-    await vi.waitFor(() => expect(handlers["video-queue"]).toBeDefined());
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("video_queue_list"));
     return { api, done, progress };
   }
+
+  it("does not wait forever for a job that ended before it was watched", async () => {
+    mockInvoke.mockImplementation((async (cmd: string) =>
+      cmd === "video_queue_add" ? 7 : [job({ status: "error", error: "bad filter" })]) as never);
+    await expect(realApi().exportVideo({ inputPath: "/i", outputPath: "/o.mp4" } as never)).rejects.toThrow(
+      "bad filter",
+    );
+  });
 
   it("resolves when the job is done, reporting its progress on the way", async () => {
     const { done, progress } = await start();

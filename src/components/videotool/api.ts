@@ -67,6 +67,8 @@ export interface ExportRequest {
 export interface VideoApi {
   getPathForFile: (file: File) => string;
   toFileUrl: (filePath: string) => Promise<string>;
+  /** Charge une URL interne en `blob:` : le WebView de Linux refuse les protocoles internes dans `<video>`. */
+  toBlobUrl: (url: string) => Promise<string>;
   openVideo: () => Promise<string | null>;
   saveVideo: (defaultName?: string, format?: string) => Promise<string | null>;
   cancelFfmpeg: () => Promise<void>;
@@ -117,9 +119,18 @@ async function fileUrl(path: string): Promise<string> {
   return convertFileSrc(path);
 }
 
+/** Au-delà, la vidéo n'est pas chargée en mémoire : l'aperçu transcodé, plus léger, prend le relais. */
+const MAX_BLOB_BYTES = 2 * 1024 ** 3;
+
 const tauriApi: VideoApi = {
   getPathForFile: () => "",
   toFileUrl: fileUrl,
+  toBlobUrl: async (url) => {
+    const response = await fetch(url);
+    if (Number(response.headers.get("content-length") ?? 0) > MAX_BLOB_BYTES) throw new Error("File too large");
+    const blob = await response.blob();
+    return URL.createObjectURL(blob.type ? blob : new Blob([blob], { type: "video/mp4" }));
+  },
   openVideo: () => invoke<string | null>("video_pick_file"),
   saveVideo: async (defaultName, format) => {
     const choice = await invoke<{ path: string; confirm_overwrite: boolean } | null>("video_pick_output", {
@@ -171,14 +182,24 @@ const tauriApi: VideoApi = {
   // La fenêtre d'export attend la fin de son travail : il passe par la file, dont les
   // instantanés disent où il en est.
   exportVideo: async (options) => {
-    const id = await invoke<number>("video_queue_add", { options });
+    // Écouter d'abord, puis relire la file : un travail vite terminé ne laisse pas la fenêtre en attente.
+    let onJobs: (jobs: QueueJob[]) => void = () => {};
+    const off = await listen<QueueJob[]>("video-queue", (e) => onJobs(e.payload));
+    let id: number;
+    try {
+      id = await invoke<number>("video_queue_add", { options });
+    } catch (e) {
+      off();
+      throw e;
+    }
     dialogJobs.add(id);
     return new Promise((resolve, reject) => {
       const done = () => {
+        onJobs = () => {};
         off();
         dialogJobs.delete(id);
       };
-      const off = subscribe<QueueJob[]>("video-queue", (jobs) => {
+      onJobs = (jobs) => {
         const job = jobs.find((j) => j.id === id);
         if (!job) return;
         progressListeners.forEach((l) => l(job.progress));
@@ -192,7 +213,10 @@ const tauriApi: VideoApi = {
           done();
           reject(new Error("cancelled"));
         }
-      });
+      };
+      invoke<QueueJob[]>("video_queue_list")
+        .then((jobs) => onJobs(jobs))
+        .catch(() => {});
     });
   },
   onProgress: (callback) => {

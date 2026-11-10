@@ -71,7 +71,15 @@ describe("AppMenuBar", () => {
     await mount();
 
     const edit = lastMenu().find((m) => m.text === "Edit")!;
-    expect(edit.items.map((i) => i.text ?? i.item)).toEqual(["Undo", "Redo", "Separator", "Delete", "Duplicate"]);
+    expect(edit.items.map((i) => i.text ?? i.item)).toEqual([
+      "Undo",
+      "Redo",
+      "Separator",
+      "Delete",
+      "Duplicate",
+      "Separator",
+      "Grid size",
+    ]);
     expect(edit.items.every((i) => !("accelerator" in i) || i.accelerator === undefined)).toBe(true);
   });
 

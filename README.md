@@ -175,6 +175,7 @@ portable, no database.
 - Lengths such as stroke width, corner radius, border and blur are expressed in 1/1000 of the canvas width, so they look the same at any resolution (preview and export).
 - Text uses the bundled Manrope / JetBrains Mono fonts; any other font name must be installed on the system for the export to use it.
 - `ffmpeg` / `ffprobe` are bundled as sidecar binaries, about 170 MB each before compression.
+- On Linux the preview goes through the system GStreamer. The `.deb` installs `gstreamer1.0-libav` for H.264 and AAC; with the AppImage or the `.rpm`, a system without it transcodes videos for the Video view, cannot preview them inside a project, and has no AAC preview in the Audio view (exports are not affected).
 - Subtitle generation downloads its models on first use (Whisper base / small / medium: about 60 / 190 / 540 MB; NLLB-200 translation: about 900 MB) into the same folder as LightGenSubz, so a model already downloaded by that app is reused.
 - The apps this one absorbs (LightCutVidz, LightCutSoundz, LightCutImgz, LightGenSubz) are still published and keep working on their own; the editor does not replace or uninstall them.
 

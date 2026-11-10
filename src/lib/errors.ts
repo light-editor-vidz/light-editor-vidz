@@ -13,6 +13,7 @@ const KNOWN_ERRORS: [prefix: string, key: string][] = [
   ["Unsupported ", "errors.unsupportedFile"],
   ["Failed to launch ffmpeg", "errors.ffmpegMissing"],
   ["The project has no scenes to export", "errors.noScenes"],
+  ["The project has no audio to export", "errors.noProjectAudio"],
   ["An export is already running", "errors.exportRunning"],
   ["File too large", "errors.fileTooLarge"],
   ["Only https downloads are allowed", "errors.httpsOnly"],
@@ -51,7 +52,9 @@ export function describeError(error: unknown): string {
     if (error.code === "unknown") return error.message;
     return i18n.t(keyForCode(error.code), { detail: error.detail ?? error.message, defaultValue: error.message });
   }
-  const raw = error instanceof Error ? error.message : String(error);
+  // Le moteur de sous-titres renvoie `{ code: null, message }` quand l'erreur n'a pas de code.
+  const message = (error as { message?: unknown } | null)?.message;
+  const raw = typeof message === "string" ? message : String(error);
   for (const [prefix, key] of KNOWN_ERRORS) {
     if (raw.startsWith(prefix)) {
       const detail = raw.slice(prefix.length).replace(/^[:\s]+/, "");

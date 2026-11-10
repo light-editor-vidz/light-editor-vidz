@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 import Home from "./components/Home";
@@ -11,7 +12,7 @@ import TabBar from "./components/TabBar";
 import { installCloseGuard } from "./lib/closeGuard";
 import { describeError } from "./lib/errors";
 import { TabActiveProvider, useRegisterMenuActions } from "./lib/menuBridge";
-import { mediaKind, pickMediaFile, type PickedFile } from "./lib/openMedia";
+import { mediaKind, pickMediaFile, takePendingFiles, type PickedFile } from "./lib/openMedia";
 import { HOME, initialTabs, tabsReducer } from "./lib/tabs";
 
 function TabPanel({ active, children }: { active: boolean; children: React.ReactNode }) {
@@ -75,6 +76,20 @@ function App() {
 
   // « Fichier > Ouvrir un fichier… » est à l'écoute quel que soit l'onglet affiché.
   useRegisterMenuActions({ openFile: () => void openFile() });
+
+  // Un fichier passé au lancement (« Ouvrir avec… ») s'ouvre comme s'il avait été choisi.
+  useEffect(() => {
+    const openAll = async (paths: string[]) => {
+      for (const path of paths) await openPicked({ path, kind: await mediaKind(path) });
+    };
+    takePendingFiles()
+      .then(openAll)
+      .catch(() => {});
+    const un = listen<string[]>("open-files", (e) => void openAll(e.payload)).catch(() => undefined);
+    return () => {
+      void un.then((off) => off?.());
+    };
+  }, [openPicked]);
 
   // Un fichier déposé sur la fenêtre s'ouvre comme s'il avait été choisi dans le dialogue.
   useEffect(() => {

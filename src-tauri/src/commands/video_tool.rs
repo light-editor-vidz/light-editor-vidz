@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_dialog::DialogExt;
 use video_export::export::export_video;
-use video_export::ffmpeg::{FfError, MediaInfo, ProcessRunner, Runner};
+use video_export::ffmpeg::{FfError, ProcessRunner, Runner};
 use video_export::filters::ColorFilter;
 use video_export::plan::{
     ensure_extension, validate_export_options, ExportOptions, RawExportOptions,
@@ -241,23 +241,6 @@ pub async fn video_pick_output<R: Runtime>(
     }))
 }
 
-#[tauri::command]
-pub async fn video_probe<R: Runtime>(
-    app: AppHandle<R>,
-    approved: State<'_, Approved>,
-    path: String,
-) -> Result<MediaInfo, CmdError> {
-    approved.check_input(&path).map_err(CmdError::from)?;
-    let info = {
-        let p = path.clone();
-        blocking(move || ProcessRunner::system(Arc::new(AtomicBool::new(false))).probe(&p)).await?
-    };
-    if let Some(file) = recent_file(&app) {
-        recent::record(&file, &path);
-    }
-    Ok(info)
-}
-
 /// Le fichier à mettre dans `<video>` : la source telle quelle quand le WebView sait la lire,
 /// sinon un WebM VP9 transcodé (`force` : l'aperçu direct vient d'échouer). Progression sur
 /// `video-preview-progress`.
@@ -270,6 +253,9 @@ pub async fn video_preview<R: Runtime>(
     force: Option<bool>,
 ) -> Result<Preview, CmdError> {
     approved.check_input(&path).map_err(CmdError::from)?;
+    if let Some(file) = recent_file(&app) {
+        recent::record(&file, &path);
+    }
     // Un transcodage précédent encore en cours écrirait un fichier que personne ne supprimera.
     state
         .preview_cancel

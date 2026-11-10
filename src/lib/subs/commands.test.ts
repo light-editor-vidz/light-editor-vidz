@@ -7,6 +7,11 @@ describe("subtitle errors", () => {
     expect(describeError({ code: "network_unreachable", message: "x" })).toMatch(/network/i);
   });
 
+  it("shows the message of an error without a code", () => {
+    expect(describeError({ code: null, message: "Something odd" })).toBe("Something odd");
+    expect(describeError({ code: null, message: "The project has no audio to export." })).toMatch(/no sound/);
+  });
+
   it("keeps the engine's message for an unknown code", () => {
     expect(describeError({ code: "brand_new", message: "Something odd" })).toBe("Something odd");
   });

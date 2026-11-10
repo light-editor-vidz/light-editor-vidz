@@ -4,14 +4,14 @@
 
 use crate::commands::registry::OpenProjects;
 use crate::export::{export_audio, AudioFormat};
-use crate::subz::errors::CommandError;
+use crate::subz::cancel;
+use crate::subz::errors::{coded, CommandError};
 use crate::subz::paths;
 use crate::subz::pipeline::audio_extract::{self, AudioTrack};
 use crate::subz::pipeline::{self, PipelineOutput};
 use audio_dsp::approval::Approved;
 use scene_core::model::Project;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use tauri::{AppHandle, State};
 
 fn refuse(message: impl Into<String>) -> CommandError {
@@ -132,6 +132,9 @@ pub async fn subs_generate_project(
     project: Project,
 ) -> Result<PipelineOutput, CommandError> {
     let dir = projects.require(&project_dir).map_err(refuse)?;
+    // Annuler ou quitter pendant le mix l'arrête aussi.
+    cancel::reset();
+    let _busy = cancel::Busy::enter();
     let mix = mix_path();
     let (mix_out, mix_project, mix_dir) = (mix.clone(), project.clone(), dir.clone());
     // Le mix passe par la même chaîne que l'export audio : durée du projet, volumes, fondus.
@@ -141,12 +144,16 @@ pub async fn subs_generate_project(
             &mix_dir,
             &mix_out,
             AudioFormat::Wav16,
-            &AtomicBool::new(false),
+            cancel::flag(),
             |_| {},
         )
     })
     .await
     .map_err(|e| refuse(e.to_string()))?;
+    if cancel::is_cancelled() {
+        let _ = std::fs::remove_file(&mix);
+        return Err(CommandError::from(coded("cancelled", "cancelled")));
+    }
     if let Err(e) = mixed {
         let _ = std::fs::remove_file(&mix);
         return Err(refuse(e));

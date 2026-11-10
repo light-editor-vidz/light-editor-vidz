@@ -310,7 +310,7 @@ describe("TopBar — exporting", () => {
 
     expect(onNotice).toHaveBeenLastCalledWith({
       kind: "error",
-      message: "Export failed: The project has no audio to export.",
+      message: "Export failed: This project has no sound to transcribe or export.",
     });
   });
 

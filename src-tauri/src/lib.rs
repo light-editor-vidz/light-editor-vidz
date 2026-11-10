@@ -5,20 +5,33 @@ mod imgz;
 mod menu_style;
 mod subz;
 
+const STALE_AUDIO_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
+/// Le temps laissé à une génération de sous-titres pour s'arrêter proprement à la fermeture.
+const QUIT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "linux")]
     menu_style::unhinted_text();
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            commands::launch::on_second_launch(app, &args, &cwd);
+        }))
         .setup(|app| {
             {
                 use tauri::Manager;
                 app.manage(commands::video_tool::VideoState::new(app.handle().clone()));
+                commands::launch::on_first_launch(app.handle());
+                // L'audio temporaire laissé par un plantage ou un arrêt forcé.
+                if let Ok(cache) = app.path().app_cache_dir() {
+                    subz::pipeline::audio_extract::remove_stale_temp_dirs(&cache, STALE_AUDIO_AGE);
+                }
             }
             #[cfg(target_os = "linux")]
             menu_style::style_menu_bar();
             Ok(())
         })
+        .manage(commands::launch::PendingOpen::default())
         .manage(commands::export::ExportControl::default())
         .manage(audio_dsp::approval::Approved::default())
         .manage(audio_dsp::pipeline::DecodeCache::default())
@@ -84,6 +97,7 @@ pub fn run() {
             commands::export::export_project,
             commands::export::export_project_audio,
             commands::export::cancel_export,
+            commands::launch::take_pending_files,
             commands::audio_tool::pick_media_file,
             commands::audio_tool::media_kind,
             commands::audio_tool::audio_pick_file,
@@ -97,7 +111,6 @@ pub fn run() {
             commands::video_tool::video_pick_file,
             commands::video_tool::video_pick_subtitles,
             commands::video_tool::video_pick_output,
-            commands::video_tool::video_probe,
             commands::video_tool::video_preview,
             commands::video_tool::video_cancel_preview,
             commands::video_tool::video_filters,
@@ -149,6 +162,26 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            // Quitter pendant une génération : on l'arrête et on attend qu'elle supprime son audio
+            // temporaire et termine ffmpeg. Une seule fois, pour que la sortie finale passe.
+            static QUITTING: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+                if subz::cancel::is_busy()
+                    && !QUITTING.swap(true, std::sync::atomic::Ordering::SeqCst)
+                {
+                    api.prevent_exit();
+                    subz::cancel::request();
+                    let handle = app.clone();
+                    std::thread::spawn(move || {
+                        let deadline = std::time::Instant::now() + QUIT_GRACE;
+                        while subz::cancel::is_busy() && std::time::Instant::now() < deadline {
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
+                        handle.exit(0);
+                    });
+                }
+            }
             // Les exports en cours sont arrêtés et l'aperçu transcodé supprimé à la sortie.
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager;

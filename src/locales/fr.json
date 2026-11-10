@@ -92,7 +92,8 @@
     "clearRecent": "Effacer les récents",
     "openFile": "Ouvrir un fichier…",
     "openProjectFolder": "Ouvrir un dossier de projet…",
-    "closeTab": "Fermer l'onglet"
+    "closeTab": "Fermer l'onglet",
+    "gridSize": "Taille de la grille"
   },
   "update": {
     "checkForUpdates": "Rechercher une mise à jour",
@@ -452,7 +453,8 @@
     "pathNotAllowed": "Ce fichier n'a pas été choisi depuis l'app : rouvrez-le par une fenêtre de sélection ou en le déposant.",
     "sourceLangRequired": "Choisissez la langue parlée à traduire.",
     "unknownKey": "Clé d'API inconnue.",
-    "unsupportedLanguage": "Cette langue n'est pas prise en charge."
+    "unsupportedLanguage": "Cette langue n'est pas prise en charge.",
+    "noProjectAudio": "Ce projet n'a aucun son à transcrire ou à exporter."
   },
   "about": {
     "tagline": "Composez des scènes avec vidéo, texte, images, son et formes, puis exportez-les en MP4."
@@ -952,7 +954,6 @@
     "format": "Format",
     "fileFilter": "Sous-titres",
     "apply": "Appliquer",
-    "applied": "Terminé.",
     "menu": "Générer des sous-titres…",
     "added_one": "{{count}} sous-titre ajouté au projet",
     "added_other": "{{count}} sous-titres ajoutés au projet",
@@ -962,6 +963,8 @@
       "transcribe": "Transcription…",
       "translate": "Traduction…",
       "write_subtitles": "Écriture des sous-titres…"
-    }
+    },
+    "azureRegion": "Région Azure Translator",
+    "forgetKey": "Oublier cette clé"
   }
 }

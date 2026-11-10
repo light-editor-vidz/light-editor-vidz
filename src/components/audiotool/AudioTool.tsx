@@ -412,7 +412,7 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
   useEffect(() => {
     if (!tabActive || !loaded) return;
     const onKey = (e: KeyboardEvent) => {
-      if (exportOpen) return;
+      if (exportOpen || subsOpen) return;
       if (e.code === "Space" && !spaceBelongsTo(e.target)) {
         e.preventDefault();
         if (!e.repeat) togglePlay();
@@ -435,7 +435,7 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tabActive, loaded, exportOpen, selectedCut, togglePlay, setCuts, handleUndo, handleRedo]);
+  }, [tabActive, loaded, exportOpen, subsOpen, selectedCut, togglePlay, setCuts, handleUndo, handleRedo]);
 
   // ─── Rendu ────────────────────────────────────────────────────────────────
 

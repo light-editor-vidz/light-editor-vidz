@@ -76,6 +76,7 @@ export const setSubsSettings = (settings: SubsSettings): Promise<void> => invoke
 export const listSubsLanguages = (): Promise<SubsLanguage[]> => invoke("list_languages");
 export const hasApiKey = (keyName: string): Promise<boolean> => invoke("has_api_key", { keyName });
 export const setApiKey = (keyName: string, value: string): Promise<void> => invoke("set_api_key", { keyName, value });
+export const deleteApiKey = (keyName: string): Promise<void> => invoke("delete_api_key", { keyName });
 export const cancelSubs = (): Promise<void> => invoke("cancel_pipeline");
 
 export const audioTracksOfFile = (path: string): Promise<SubsAudioTrack[]> => invoke("subs_audio_tracks", { path });

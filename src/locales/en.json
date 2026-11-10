@@ -92,7 +92,8 @@
     "clearRecent": "Clear recent",
     "openFile": "Open file…",
     "openProjectFolder": "Open project folder…",
-    "closeTab": "Close tab"
+    "closeTab": "Close tab",
+    "gridSize": "Grid size"
   },
   "update": {
     "checkForUpdates": "Check for updates",
@@ -452,7 +453,8 @@
     "pathNotAllowed": "This file was not chosen from the app: open it again from a dialog or by dropping it.",
     "sourceLangRequired": "Choose the spoken language to translate.",
     "unknownKey": "Unknown API key.",
-    "unsupportedLanguage": "This language is not supported."
+    "unsupportedLanguage": "This language is not supported.",
+    "noProjectAudio": "This project has no sound to transcribe or export."
   },
   "about": {
     "tagline": "Compose scenes with video, text, images, sound and shapes, and export them to MP4."
@@ -952,7 +954,6 @@
     "format": "Format",
     "fileFilter": "Subtitles",
     "apply": "Apply",
-    "applied": "Done.",
     "menu": "Generate subtitles…",
     "added_one": "{{count}} subtitle added to the project",
     "added_other": "{{count}} subtitles added to the project",
@@ -962,6 +963,8 @@
       "transcribe": "Transcribing…",
       "translate": "Translating…",
       "write_subtitles": "Writing subtitles…"
-    }
+    },
+    "azureRegion": "Azure Translator region",
+    "forgetKey": "Forget this key"
   }
 }

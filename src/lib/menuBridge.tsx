@@ -14,6 +14,7 @@ export interface MenuActions {
   save?: () => void;
   openExport?: () => void;
   generateSubtitles?: () => void;
+  setImageGrid?: (size: number) => void;
   openSettings?: () => void;
   undo?: () => void;
   redo?: () => void;

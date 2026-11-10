@@ -51,6 +51,7 @@ tokenizers = "0.23"
 zeroize = "1"
 tempfile = "3"
 # Le trousseau de sous-titres est en v4 ; celui des clés d'assets reste en v3.
+tauri-plugin-single-instance = "2"
 keyring4 = { package = "keyring", version = "4" }
 # Recherche/téléchargement d'assets libres de droit (Pexels, Pixabay, Freesound, Openverse).
 # rustls plutôt qu'openssl : pas de dépendance système supplémentaire au build.

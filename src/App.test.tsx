@@ -54,6 +54,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 vi.mock("./lib/openMedia", () => ({
   pickMediaFile: vi.fn(),
   mediaKind: vi.fn(),
+  takePendingFiles: vi.fn(async () => []),
 }));
 const editorMounts = vi.hoisted(() => ({ count: 0 }));
 vi.mock("./components/Editor", () => ({

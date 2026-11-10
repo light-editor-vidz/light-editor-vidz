@@ -19,8 +19,19 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Pistes audio : les fondus suivent une courbe linéaire ou à puissance constante, la vitesse va de 0,25× à 4× (la hauteur du son est conservée), et on peut appliquer un filtre passe-bas, passe-haut (12 à 48 dB/octave) ou passe-bande.
 - Export audio seul : le mix de toutes les pistes et du son de vos vidéos, en WAV (16 bits, 24 bits ou 32 bits flottants), MP3, FLAC, OGG Vorbis ou M4A.
 
+### Corrigé
+
+- Vue Vidéo : les vidéos se lisent sur Linux, où le WebView refuse les protocoles internes dans `<video>` ; une vidéo qu'il ne sait pas décoder est transcodée pour l'aperçu.
+- Vue Vidéo : le bouton Générer des sous-titres ouvre sa fenêtre, Ctrl+Z / Ctrl+Y fonctionnent de nouveau et les vidéos ouvertes apparaissent dans les fichiers récents.
+- La génération de sous-titres utilise le ffmpeg embarqué au lieu d'en exiger un sur le système ; elle s'annule pendant le mixage d'un projet, et quitter pendant un traitement nettoie ce qu'il a créé.
+- Fenêtre de sous-titres : fermer la boîte d'enregistrement n'ajoute plus les sous-titres deux fois, la vue Audio peut enregistrer son résultat, la région Azure peut être saisie, une clé d'API enregistrée peut être oubliée, et les erreurs sans code sont lisibles.
+- Vue Image : la copie dans le presse-papiers fonctionne de nouveau et la taille de la grille est de retour (menu Édition).
+- La fenêtre d'export vidéo n'attend plus indéfiniment un travail qui se termine aussitôt.
+
 ### Modifié
 
+- Le `.deb` Linux installe `gstreamer1.0-libav` : le H.264 et l'AAC se prévisualisent sans rien installer d'autre.
+- Un média passé en ligne de commande s'ouvre dans son onglet ; un second lancement le confie à la fenêtre ouverte.
 - Le filtre de couleur « vignette » d'un élément vidéo est maintenant visible dans l'aperçu de l'éditeur.
 - Les erreurs du moteur de sous-titres (pas d'audio, clé d'API absente, réseau, …) sont traduites.
 - La vue Vidéo réessaie avec un aperçu transcodé quand le système ne sait pas décoder une vidéo d'abord jugée lisible.

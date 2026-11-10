@@ -19,8 +19,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Audio tracks: fades can follow a linear or an equal-power curve, the speed goes from 0.25× to 4× (the pitch is kept), and a low-pass, high-pass (12 to 48 dB/octave) or band-pass filter can be applied.
 - Audio-only export: the mix of every track and of the sound of your videos, as WAV (16-bit, 24-bit or 32-bit float), MP3, FLAC, OGG Vorbis or M4A.
 
+### Fixed
+
+- Video view: videos now play on Linux, where the webview refuses internal protocols in `<video>`; a video it cannot decode is transcoded for the preview.
+- Video view: the Generate subtitles button opens its window, Ctrl+Z / Ctrl+Y work again, and opened videos appear in the recent files.
+- Subtitle generation uses the ffmpeg shipped with the app instead of requiring a system one; it can be cancelled while a project is being mixed, and quitting during a run cleans up.
+- Subtitle window: closing the save dialog no longer adds the subtitles twice, the Audio view can save its result, the Azure region can be entered, a stored API key can be forgotten, and errors without a code are readable.
+- Image view: copy to clipboard works again, and the grid size is back (Edit menu).
+- Video export window no longer waits forever for a job that ends immediately.
+
 ### Changed
 
+- The Linux `.deb` installs `gstreamer1.0-libav`, so H.264 and AAC can be previewed without installing anything else.
+- A media file given on the command line opens in its tab; a second launch hands it to the open window.
 - The vignette colour filter of a video element is now previewed in the editor.
 - Errors of the subtitle engine (no audio, missing API key, network, …) are translated.
 - The Video view retries with a transcoded preview when the system cannot decode a video it first thought playable.
