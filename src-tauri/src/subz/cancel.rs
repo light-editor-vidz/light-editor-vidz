@@ -24,6 +24,7 @@ impl Drop for Busy {
     }
 }
 
+#[cfg(test)]
 pub fn is_busy() -> bool {
     RUNNING.load(Ordering::SeqCst) > 0
 }

@@ -145,7 +145,7 @@ where
         .par_chunks_mut(w * 4)
         .enumerate()
         .for_each(|(y, row)| {
-            for (x, px) in row.chunks_exact_mut(4).enumerate() {
+            for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 f(x as u32, y as u32, px);
             }
         });

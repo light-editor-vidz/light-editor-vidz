@@ -427,6 +427,7 @@ pub fn cut_slice(audio: &Path, start: f64, len: f64, out: &Path) -> Result<()> {
 
 /// Deletes the temporary folders a crash or a forced quit left behind: nothing running
 /// owns a folder that is more than `max_age` old.
+#[cfg(test)]
 pub fn remove_stale_temp_dirs(cache_dir: &Path, max_age: Duration) -> usize {
     let Ok(entries) = std::fs::read_dir(cache_dir) else {
         return 0;

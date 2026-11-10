@@ -21,6 +21,9 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ### Modifié
 
+- Le filtre de couleur « vignette » d'un élément vidéo est maintenant visible dans l'aperçu de l'éditeur.
+- Les erreurs du moteur de sous-titres (pas d'audio, clé d'API absente, réseau, …) sont traduites.
+- La vue Vidéo réessaie avec un aperçu transcodé quand le système ne sait pas décoder une vidéo d'abord jugée lisible.
 - ffmpeg et ffprobe sont désormais livrés avec l'application : rien à installer, sur toutes les plateformes.
 - Les versions sont compilées pour Linux x86_64, Linux arm64 et macOS Apple Silicon (les Mac Intel ne sont plus pris en charge).
 

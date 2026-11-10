@@ -1,4 +1,4 @@
-import { videoEffectsStyle } from "../../lib/videoFx";
+import { VIGNETTE_GRADIENT, videoEffectsStyle } from "../../lib/videoFx";
 import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import type { Element } from "../../bindings/Element";
@@ -317,6 +317,12 @@ export const VideoElementView = memo(function VideoElementView({
         }}
         onLoadedData={() => setError(null)}
       />
+      {element.color_filter === "vignette" && (
+        <div
+          className="video-vignette"
+          style={{ position: "absolute", inset: 0, pointerEvents: "none", background: VIGNETTE_GRADIENT }}
+        />
+      )}
       {error && (
         <div className="video-error-overlay">
           <span>{t("canvas.videoDecodeError")}</span>

@@ -109,6 +109,7 @@ pub fn write_image_with_icc(
     std::fs::write(path, bytes).map_err(|e| e.to_string())
 }
 
+#[cfg(test)]
 pub fn write_image(
     img: &DynamicImage,
     path: &Path,

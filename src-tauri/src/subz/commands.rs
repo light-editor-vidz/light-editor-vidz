@@ -7,63 +7,9 @@ use crate::subz::cancel;
 use crate::subz::config::{self, Settings};
 use crate::subz::errors::CommandError;
 use crate::subz::paths;
-use crate::subz::pipeline::audio_extract::{self, AudioTrack};
 use crate::subz::pipeline::subtitle_writer;
 use crate::subz::pipeline::translate::languages::LANGUAGES;
-use crate::subz::pipeline::{self, PipelineOutput, TranslationOutput};
-
-const MEDIA_EXTENSIONS: &[&str] = &[
-    "mp4", "mkv", "mov", "avi", "webm", "mp3", "wav", "m4a", "flac", "ogg",
-];
-
-/// File dialogs match extensions case-sensitively on Linux (GTK): `IMG_0001.MOV` would
-/// be hidden by a lower-case-only filter, so both spellings are listed.
-pub fn filter_extensions(extensions: &[&str]) -> Vec<String> {
-    extensions
-        .iter()
-        .flat_map(|e| [e.to_string(), e.to_uppercase()])
-        .collect()
-}
-
-#[tauri::command]
-pub async fn pick_file(app: AppHandle, filter_name: String) -> Option<String> {
-    let extensions = filter_extensions(MEDIA_EXTENSIONS);
-    let refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .file()
-        .add_filter(filter_name, &refs)
-        .pick_file(move |file_path| {
-            let _ = tx.send(file_path);
-        });
-    let path = rx.await.ok().flatten().and_then(|f| f.into_path().ok())?;
-    // From now on the webview may ask for this file, and only for files given this way.
-    paths::allow_input(&path);
-    Some(paths::to_webview(&path))
-}
-
-/// The audio tracks of a media file (several for a multi-language film).
-#[tauri::command]
-pub async fn list_audio_tracks(path: String) -> Result<Vec<AudioTrack>, CommandError> {
-    let path = paths::from_webview(&path);
-    if !paths::is_allowed_input(&path) {
-        return Ok(Vec::new());
-    }
-    let tracks =
-        tauri::async_runtime::spawn_blocking(move || audio_extract::list_audio_tracks(&path))
-            .await
-            .map_err(|e| CommandError::from(e.to_string()))??;
-    Ok(tracks)
-}
-
-#[tauri::command]
-pub async fn run_pipeline(
-    app: AppHandle,
-    input_path: String,
-    audio_track: Option<u32>,
-) -> Result<PipelineOutput, CommandError> {
-    Ok(pipeline::run(app, input_path, audio_track).await?)
-}
+use crate::subz::pipeline::{self, TranslationOutput};
 
 #[tauri::command]
 pub fn cancel_pipeline() {
@@ -251,47 +197,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_media_filter_covers_video_and_audio() {
-        for ext in ["mp4", "mkv", "mov", "webm"] {
-            assert!(
-                MEDIA_EXTENSIONS.contains(&ext),
-                "missing video extension: {ext}"
-            );
-        }
-        for ext in ["mp3", "wav", "m4a", "flac", "ogg"] {
-            assert!(
-                MEDIA_EXTENSIONS.contains(&ext),
-                "missing audio extension: {ext}"
-            );
-        }
-    }
-
-    #[test]
-    fn the_media_filter_has_no_duplicate() {
-        let unique: std::collections::HashSet<_> = MEDIA_EXTENSIONS.iter().collect();
-
-        assert_eq!(unique.len(), MEDIA_EXTENSIONS.len());
-    }
-
-    #[test]
-    fn the_extensions_are_lower_case_and_dotless() {
-        for ext in MEDIA_EXTENSIONS {
-            assert!(!ext.starts_with('.'), "{ext} must not carry a dot");
-            assert_eq!(*ext, ext.to_lowercase(), "{ext} must be lower case");
-        }
-    }
-
-    #[test]
-    fn the_dialog_filter_lists_both_spellings_of_every_extension() {
-        let all = filter_extensions(&["mov", "mp4"]);
-
-        for expected in ["mov", "MOV", "mp4", "MP4"] {
-            assert!(all.contains(&expected.to_string()), "{expected}");
-        }
-        assert_eq!(all.len(), 4);
-    }
-
-    #[test]
     fn the_language_list_is_exposed_as_is() {
         assert_eq!(list_languages().len(), LANGUAGES.len());
         assert!(!list_languages().is_empty());
@@ -354,16 +259,6 @@ mod tests {
 
         assert!(out.srt_content.contains("Edited"));
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), before);
-    }
-
-    #[test]
-    fn only_files_the_user_chose_have_their_tracks_listed() {
-        let tracks = tauri::async_runtime::block_on(list_audio_tracks(
-            "http://example.com/x.mp4".to_string(),
-        ))
-        .unwrap();
-
-        assert!(tracks.is_empty());
     }
 
     #[test]

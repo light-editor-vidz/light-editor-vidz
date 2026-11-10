@@ -440,7 +440,19 @@
     "httpsOnly": "Only https downloads are allowed.",
     "downloadFailed": "Download failed: {{detail}}",
     "writeExport": "Could not write the exported video: {{detail}}",
-    "copyFile": "Could not copy the file: {{detail}}"
+    "copyFile": "Could not copy the file: {{detail}}",
+    "apiKeyMissing": "No API key is stored for this service.",
+    "azureRegionMissing": "Enter the region of your Azure Translator resource.",
+    "cancelled": "Cancelled.",
+    "downloadCorrupt": "The downloaded model is damaged: try again.",
+    "fileNotFound": "File not found.",
+    "networkUnreachable": "The network is unreachable: check your connection.",
+    "noAudio": "This media has no audio to transcribe.",
+    "noCues": "No speech was found.",
+    "pathNotAllowed": "This file was not chosen from the app: open it again from a dialog or by dropping it.",
+    "sourceLangRequired": "Choose the spoken language to translate.",
+    "unknownKey": "Unknown API key.",
+    "unsupportedLanguage": "This language is not supported."
   },
   "about": {
     "tagline": "Compose scenes with video, text, images, sound and shapes, and export them to MP4."

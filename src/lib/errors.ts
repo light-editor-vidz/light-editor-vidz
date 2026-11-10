@@ -49,7 +49,7 @@ export function isExportCancelled(error: unknown): boolean {
 export function describeError(error: unknown): string {
   if (isCommandError(error)) {
     if (error.code === "unknown") return error.message;
-    return i18n.t(keyForCode(error.code), { detail: error.detail, defaultValue: error.message });
+    return i18n.t(keyForCode(error.code), { detail: error.detail ?? error.message, defaultValue: error.message });
   }
   const raw = error instanceof Error ? error.message : String(error);
   for (const [prefix, key] of KNOWN_ERRORS) {

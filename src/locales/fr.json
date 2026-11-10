@@ -440,7 +440,19 @@
     "httpsOnly": "Seuls les téléchargements https sont autorisés.",
     "downloadFailed": "Téléchargement impossible : {{detail}}",
     "writeExport": "Écriture de la vidéo exportée impossible : {{detail}}",
-    "copyFile": "Copie du fichier impossible : {{detail}}"
+    "copyFile": "Copie du fichier impossible : {{detail}}",
+    "apiKeyMissing": "Aucune clé d'API n'est enregistrée pour ce service.",
+    "azureRegionMissing": "Saisissez la région de votre ressource Azure Translator.",
+    "cancelled": "Annulé.",
+    "downloadCorrupt": "Le modèle téléchargé est endommagé : réessayez.",
+    "fileNotFound": "Fichier introuvable.",
+    "networkUnreachable": "Le réseau est inaccessible : vérifiez votre connexion.",
+    "noAudio": "Ce média n'a pas d'audio à transcrire.",
+    "noCues": "Aucune parole détectée.",
+    "pathNotAllowed": "Ce fichier n'a pas été choisi depuis l'app : rouvrez-le par une fenêtre de sélection ou en le déposant.",
+    "sourceLangRequired": "Choisissez la langue parlée à traduire.",
+    "unknownKey": "Clé d'API inconnue.",
+    "unsupportedLanguage": "Cette langue n'est pas prise en charge."
   },
   "about": {
     "tagline": "Composez des scènes avec vidéo, texte, images, son et formes, puis exportez-les en MP4."

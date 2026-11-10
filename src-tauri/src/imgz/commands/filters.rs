@@ -1,7 +1,9 @@
 use image::{DynamicImage, ImageBuffer, Rgba};
 
+#[cfg(test)]
+use super::imaging::clamp_u8;
+pub use super::imaging::lerp;
 use super::imaging::{blur_rgba, by_depth, is_8bit, par_pixels, Sample};
-pub use super::imaging::{clamp_u8, lerp};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

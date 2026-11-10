@@ -1,6 +1,7 @@
 use image::{DynamicImage, ImageBuffer, Rgba};
 
-pub use super::imaging::clamp_u8;
+#[cfg(test)]
+use super::imaging::clamp_u8;
 use super::imaging::{apply_lut, blur_rgba, build_lut, by_depth, par_pixels, Sample};
 
 // ── colour-space helpers ──────────────────────────────────────────────────────

@@ -21,6 +21,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 
+- The vignette colour filter of a video element is now previewed in the editor.
+- Errors of the subtitle engine (no audio, missing API key, network, …) are translated.
+- The Video view retries with a transcoded preview when the system cannot decode a video it first thought playable.
 - ffmpeg and ffprobe now ship inside the app: nothing to install, on any platform.
 - Releases are built for Linux x86_64, Linux arm64 and macOS Apple Silicon (Intel Macs are no longer supported).
 

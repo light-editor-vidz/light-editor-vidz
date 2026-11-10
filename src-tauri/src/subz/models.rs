@@ -79,20 +79,6 @@ pub fn local_path(model: &ModelInfo) -> Result<PathBuf> {
     Ok(models_dir()?.join(model.filename))
 }
 
-/// Removes what version 1.0 left in the models folder: a `.sha256` next to each model,
-/// computed from the download itself and never read. Returns how many were removed.
-pub fn remove_legacy_files() -> usize {
-    let Ok(dir) = models_dir() else { return 0 };
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return 0;
-    };
-    entries
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "sha256"))
-        .filter(|e| std::fs::remove_file(e.path()).is_ok())
-        .count()
-}
-
 /// Downloads the model if it is not already present (and intact), reporting progress.
 pub async fn ensure_model_downloaded(
     model: &ModelInfo,

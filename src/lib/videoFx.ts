@@ -51,3 +51,7 @@ export function videoEffectsStyle(element: { color_filter?: string | null; crop?
   if (box) style.objectViewBox = box;
   return style;
 }
+
+/** Un filtre CSS ne peut pas assombrir les coins : la vignette s'aperçoit par un dégradé posé sur l'image. */
+export const VIGNETTE_GRADIENT =
+  "radial-gradient(ellipse closest-side at 50% 50%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.75) 135%)";

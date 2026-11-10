@@ -69,6 +69,7 @@ pub fn snapshot(state: &AppState, tab_id: &str) -> Result<Snapshot, String> {
 /// L'aperçu est encodé **avant** l'empilement : une erreur d'encodage ne laisse donc jamais
 /// dans l'historique une étape que l'interface n'a pas reçue. Cette variante ne tient pas de
 /// journal : les commandes de production passent par [`apply_step`].
+#[cfg(test)]
 pub fn apply_op<F>(state: &AppState, tab_id: &str, op: F) -> Result<ImageMeta, String>
 where
     F: FnOnce(&DynamicImage) -> Result<DynamicImage, String>,
@@ -79,6 +80,7 @@ where
 /// Comme [`apply_op`], mais avec `replace` le calcul repart de l'image **précédant** la
 /// dernière étape, qui est remplacée : c'est ce qui permet de reprendre un curseur de
 /// réglage sans empiler les effets les uns sur les autres.
+#[cfg(test)]
 pub fn apply_op_with<F>(
     state: &AppState,
     tab_id: &str,

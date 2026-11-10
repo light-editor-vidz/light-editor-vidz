@@ -619,6 +619,13 @@ describe("VideoElementView — effets", () => {
     expect(node.getAttribute("style")).toContain("object-view-box: inset(10% 25% 10% 25%)");
   });
 
+  it("aperçoit la vignette par un dégradé, qu'un filtre CSS ne sait pas rendre", async () => {
+    const node = await drawn({ color_filter: "vignette" });
+    expect(node.parentElement?.querySelector(".video-vignette")).not.toBeNull();
+    const plain = await drawn({ color_filter: "grayscale" });
+    expect(plain.parentElement?.querySelector(".video-vignette")).toBeNull();
+  });
+
   it("sans effet, la vidéo n'est ni filtrée ni recadrée", async () => {
     const node = await drawn({ color_filter: null, crop: null });
     expect(node.style.filter).toBe("");

@@ -69,6 +69,7 @@ pub fn encode_preview(img: &DynamicImage) -> Result<String, String> {
     Ok(format!("data:image/png;base64,{b64}"))
 }
 
+#[cfg(test)]
 pub fn build_meta(
     img: &DynamicImage,
     format: &str,
