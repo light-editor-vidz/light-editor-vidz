@@ -34,6 +34,9 @@ import type { ExifField, ResetTool } from "./lib/tauri";
 import { loadPrefs, savePrefs } from "./lib/prefs";
 import { addRecentFile, clearRecentFiles, getRecentFiles, removeRecentFile } from "./lib/recentFiles";
 import type { CropRect, MaskBox, PickedColor } from "./types";
+import AddToProjects from "../AddToProjects";
+import { addOutputToProjects } from "../../lib/subs/commands";
+import i18n from "i18next";
 import "./imagetool.css";
 
 const ZOOM_STEP = 1.25;
@@ -160,6 +163,7 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
   const [showGrid, setShowGrid] = useState(false);
   const [showFlipBar, setShowFlipBar] = useState(false);
   const [prefs, setPrefs] = useState(() => loadPrefs());
+  const [projects, setProjects] = useState<string[]>([]);
   const [recentFiles, setRecentFiles] = useState<string[]>(() => getRecentFiles());
   const [pickedColor, setPickedColor] = useState<PickedColor | null>(null);
   const [pickedColorResult, setPickedColorResult] = useState<PickedColor | null>(null);
@@ -771,9 +775,22 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
         isLoading={isLoading}
         defaultFormat={prefs.defaultExportFormat}
         defaultQuality={prefs.defaultJpegQuality}
+        extra={<AddToProjects selected={projects} onChange={setProjects} />}
         onExport={async (format, quality) => {
-          await handleExport(format, quality);
+          const output = await handleExport(format, quality);
           setExportOpen(false);
+          if (output && projects.length > 0) {
+            try {
+              const report = await addOutputToProjects(output, projects, null);
+              setNotice(
+                report.errors.length > 0
+                  ? { message: i18n.t("subs.addToProjectFailed", { error: report.errors[0] }), type: "error" }
+                  : { message: i18n.t("subs.addedToProjects", { count: report.added }), type: "success" },
+              );
+            } catch (e) {
+              setNotice({ message: String(e), type: "error" });
+            }
+          }
         }}
         onClose={() => setExportOpen(false)}
       />

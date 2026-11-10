@@ -12,6 +12,7 @@ import {
   type ReframeMode,
   type PresetId,
 } from "../utils/presets";
+import AddToProjects from "../../AddToProjects";
 import "./ExportModal.css";
 
 interface Props {
@@ -19,6 +20,8 @@ interface Props {
   onClose: () => void;
   /** Called after the export was added to the queue (the dialog then closes). */
   onQueued?: () => void;
+  /** Le sous-titre qui accompagnera la vidéo dans les projets choisis. */
+  associatedSrt?: () => string | null;
 }
 
 type Format = "mp4" | "mov" | "webm" | "avi" | "gif";
@@ -72,8 +75,9 @@ function loadPrefs(): Prefs {
   }
 }
 
-export default function ExportModal({ state, onClose, onQueued }: Props) {
+export default function ExportModal({ state, onClose, onQueued, associatedSrt }: Props) {
   const { t, lang } = useT();
+  const [projects, setProjects] = useState<string[]>([]);
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
   const { format, quality, resolution, gifWidth, gifFps } = prefs;
   const update = (patch: Partial<Prefs>) =>
@@ -198,6 +202,15 @@ export default function ExportModal({ state, onClose, onQueued }: Props) {
 
     const savePath = await getApi().saveVideo(`${baseName}_edit.${format}`, format);
     if (!savePath) return;
+
+    if (projects.length > 0) {
+      try {
+        await getApi().addAfterExport(savePath, projects, associatedSrt?.() ?? null);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : String(err));
+        return;
+      }
+    }
 
     if (mode === "queue") {
       try {
@@ -496,6 +509,8 @@ export default function ExportModal({ state, onClose, onQueued }: Props) {
             {t.export_saved} <strong>{outputPath}</strong>
           </div>
         )}
+
+        <AddToProjects selected={projects} onChange={setProjects} />
 
         {nothingToExport && <div className="export-error">{t.export_nothing}</div>}
 

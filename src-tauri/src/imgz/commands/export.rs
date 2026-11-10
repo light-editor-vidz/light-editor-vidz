@@ -123,10 +123,11 @@ pub fn write_image(
 pub async fn export_image(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    approved: State<'_, audio_dsp::approval::Approved>,
     tab_id: String,
     format: String,
     quality: Option<u8>,
-) -> Result<bool, String> {
+) -> Result<Option<String>, String> {
     let img_format = format_from_str(&format)?;
     let ext = extension_for(img_format);
 
@@ -151,7 +152,7 @@ pub async fn export_image(
         .blocking_save_file();
 
     let Some(path) = path else {
-        return Ok(false);
+        return Ok(None);
     };
 
     let path_buf = path.into_path().map_err(|e| e.to_string())?;
@@ -168,7 +169,9 @@ pub async fn export_image(
     };
 
     write_image_with_icc(&img, &path_buf, img_format, quality, icc.as_deref())?;
-    Ok(true)
+    // L'image exportée peut ensuite rejoindre des projets : c'est bien une sortie choisie ici.
+    approved.allow_output(&path_buf);
+    Ok(Some(path_buf.to_string_lossy().into_owned()))
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 import { describeError } from "../lib/errors";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Project } from "../bindings/Project";
@@ -73,7 +73,10 @@ import { useEditorShortcuts } from "./editor/useEditorShortcuts";
 import StatusBanner, { type Notice } from "./editor/StatusBanner";
 import type { LeftTab } from "./editor/types";
 import GenerateSubtitlesDialog, { type SubsSource } from "./subtitles/GenerateSubtitlesDialog";
-import { addCuesToProject, cuesOfAudioTrack, cuesOfVideoElement, type TimedCue } from "../lib/subs/place";
+import { addCuesToProject, type TimedCue } from "../lib/subs/place";
+import { attachLinked, cuesToSrt, expandLinkedSubtitles, srtToLinked, syncLinkedCues } from "../lib/subs/linked";
+import { projectMediaSubtitle, setProjectMediaSubtitle } from "../lib/subs/commands";
+import type { LinkedCue } from "../bindings/LinkedCue";
 import "./editor/editor.css";
 
 interface Props {
@@ -102,9 +105,12 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
   const [clipboard, setClipboard] = useState<Element[]>([]);
   const [timelineSearch, setTimelineSearch] = useState("");
   const [showSettings, setShowSettings] = useState(false);
-  const [subs, setSubs] = useState<{ source: SubsSource; label: string; map: (cues: TimedCue[]) => TimedCue[] } | null>(
-    null,
-  );
+  const [subs, setSubs] = useState<{
+    source: SubsSource;
+    label: string;
+    /** Le média d'origine (absent pour le projet entier). */
+    owner?: { id: string; src: string };
+  } | null>(null);
 
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
 
@@ -197,38 +203,57 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
   /** Subtitles of the whole project: its mix is already on the project timeline. */
   function openSubsForProject() {
     if (!project) return;
-    setSubs({ source: { kind: "project", projectDir, project }, label: project.name, map: (c) => c });
+    setSubs({ source: { kind: "project", projectDir, project }, label: project.name });
   }
 
   /** Subtitles of the selected video element or audio track. */
   function openSubsForSelection() {
-    if (!project) return;
-    const track = findAudioTrack(project, selectedId);
-    if (track) {
-      setSubs({
-        source: { kind: "media", projectDir, src: track.src },
-        label: track.name,
-        map: (c) => cuesOfAudioTrack(c, track, project.duration),
-      });
-      return;
-    }
-    const el = findElement(project, selectedId);
-    const comp = el && project.compositions.find((c) => c.elements.some((x) => x.id === el.id));
-    if (el?.type === "video" && comp) {
-      setSubs({
-        source: { kind: "media", projectDir, src: el.src },
-        label: el.name,
-        map: (c) => cuesOfVideoElement(c, el, comp.start_time, comp.duration),
-      });
-    }
+    if (!project || !selectedId) return;
+    const media = findAudioTrack(project, selectedId) ?? findElement(project, selectedId);
+    if (!media || !("src" in media) || ("type" in media && media.type !== "video")) return;
+    setSubs({
+      source: { kind: "media", projectDir, src: media.src },
+      label: media.name,
+      owner: { id: media.id, src: media.src },
+    });
   }
 
   function placeSubs(cues: TimedCue[]) {
-    if (!project || !subs) return;
-    const mapped = subs.map(cues);
-    const { added } = addCuesToProject(project, mapped);
-    mutate((p) => addCuesToProject(p, mapped).project);
+    if (!project) return;
+    const { added } = addCuesToProject(project, cues);
+    mutate((p) => addCuesToProject(p, cues).project);
     setNotice({ kind: "info", message: t("subs.added", { count: added }) });
+  }
+
+  /** Le sous-titre généré suit le média : à côté du fichier, et actif sur l'élément d'origine. */
+  function associateSubs(srt: string) {
+    const owner = subs?.owner;
+    const linked = srtToLinked(srt, true);
+    if (!owner || !linked) return;
+    mutate((p) => attachLinked(p, owner.id, owner.src, linked));
+    setProjectMediaSubtitle(projectDir, owner.src, srt).catch((e) =>
+      setNotice({ kind: "error", message: describeError(e) }),
+    );
+  }
+
+  /** Les textes corrigés valent pour toutes les utilisations de ce média. */
+  function editLinkedCues(src: string, cues: LinkedCue[]) {
+    mutate((p) => syncLinkedCues(p, src, cues));
+    setProjectMediaSubtitle(projectDir, src, cuesToSrt(cues)).catch((e) =>
+      setNotice({ kind: "error", message: describeError(e) }),
+    );
+  }
+
+  /** Un média qui a un sous-titre l'apporte avec lui, activé ou non selon la médiathèque. */
+  async function linkedFor(src: string, enabled: boolean) {
+    const srt = await projectMediaSubtitle(projectDir, src).catch(() => null);
+    return srt ? srtToLinked(srt, enabled) : null;
+  }
+
+  async function addVideo(src: string, name: string, subtitlesOn?: boolean) {
+    const element = createVideoElement(src, name);
+    const subtitles = subtitlesOn === undefined ? null : await linkedFor(src, subtitlesOn);
+    addAndSelect(subtitles && element.type === "video" ? { ...element, subtitles } : element);
   }
 
   function handleSave() {
@@ -309,10 +334,11 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
     setSelectedIds([element.id]);
   }
 
-  function addAndSelectAudio(relativeSrc: string, name: string) {
+  async function addAndSelectAudio(relativeSrc: string, name: string, subtitlesOn?: boolean) {
+    const subtitles = subtitlesOn === undefined ? null : await linkedFor(relativeSrc, subtitlesOn);
     // Piste globale au projet (non rattachée à une scène), posée au début de la timeline et
     // jouant jusqu'à la fin du projet par défaut.
-    const track = createAudioTrack(relativeSrc, name);
+    const track = { ...createAudioTrack(relativeSrc, name), subtitles };
     mutate((p) => addAudioTrackToProject(p, track));
     setSelectedIds([track.id]);
   }
@@ -526,6 +552,8 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
   });
 
   const dirty = project !== null && project !== savedProject;
+  // Ce que le canvas affiche : le projet, plus les sous-titres activés de ses médias.
+  const shownProject = useMemo(() => (project ? expandLinkedSubtitles(project) : null), [project]);
 
   // The menu bar acts on this editor while it is open.
   useRegisterMenuActions({
@@ -607,7 +635,8 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
           source={subs.source}
           label={subs.label}
           onClose={() => setSubs(null)}
-          onPlace={placeSubs}
+          onPlace={subs.owner ? undefined : placeSubs}
+          onAssociate={subs.owner ? associateSubs : undefined}
         />
       )}
       <div className="editor-middle">
@@ -620,15 +649,15 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
           onAddSubtitle={() => addAndSelect(createSubtitleElement())}
           onAddStyledText={(preset: TextStylePreset) => addAndSelect(createStyledTextElement(preset))}
           onAddImage={(src, name) => addAndSelect(createImageElement(src, name))}
-          onAddVideo={(src, name) => addAndSelect(createVideoElement(src, name))}
-          onAddAudio={addAndSelectAudio}
+          onAddVideo={(src, name, subtitlesOn) => void addVideo(src, name, subtitlesOn)}
+          onAddAudio={(src, name, subtitlesOn) => void addAndSelectAudio(src, name, subtitlesOn)}
           onAddShape={(shapeType: ShapeType) => addAndSelect(createShapeElement(shapeType))}
           onOpenSettings={() => setShowSettings(true)}
         />
         <CanvasStage
-          project={project}
+          project={shownProject ?? project}
           projectDir={projectDir}
-          composition={activeComposition}
+          composition={shownProject?.compositions.find((c) => c.id === activeComposition.id) ?? activeComposition}
           clock={clock}
           playing={playing}
           onTogglePlay={() => setPlaying((p) => !p)}
@@ -673,6 +702,7 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
           onGroup={handleGroup}
           onUngroup={handleUngroup}
           onGenerateSubtitles={openSubsForSelection}
+          onEditLinkedCues={editLinkedCues}
         />
       </div>
       <Timeline

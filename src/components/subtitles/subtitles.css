@@ -97,3 +97,33 @@
   gap: 8px;
   margin-bottom: 8px;
 }
+
+.add-to-projects-list {
+  max-height: 130px;
+  overflow-y: auto;
+  padding-left: 22px;
+}
+
+.library-cc {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  z-index: 2;
+  padding: 1px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.library-cc.on {
+  color: #fff;
+  background: var(--accent);
+}
+
+.library-audio-item .library-cc {
+  position: static;
+}

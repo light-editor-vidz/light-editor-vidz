@@ -8,7 +8,7 @@ import "../../subtitles/subtitles.css";
 import "./SubtitlesPanel.css";
 
 export interface GeneratedSubtitles {
-  id: number;
+  id: string;
   label: string;
   cues: ReturnType<typeof parseSrt>;
 }
@@ -27,7 +27,7 @@ interface Props {
   /** Subtitles generated for this video, offered as a list to pick from. */
   generated?: GeneratedSubtitles[];
   onUseGenerated?: (item: GeneratedSubtitles) => void;
-  onDiscardGenerated?: (id: number) => void;
+  onDiscardGenerated?: (id: string) => void;
   /** Corrected texts of the subtitles in use (timings unchanged; an empty text removes its cue). */
   onEditTexts?: (texts: string[]) => void;
 }

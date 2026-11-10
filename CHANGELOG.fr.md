@@ -31,6 +31,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 ### Modifié
 
 - Le `.deb` Linux installe `gstreamer1.0-libav` : le H.264 et l'AAC se prévisualisent sans rien installer d'autre.
+- Les exports des vues Vidéo, Audio et Image peuvent être ajoutés à un ou plusieurs projets et apparaissent dans leur médiathèque.
+- Les sous-titres générés sont associés automatiquement à leur vidéo ou à leur son. Dans un projet, ils s'activent à l'ajout du média ou depuis ses propriétés, suivent le média quand il est déplacé, coupé ou accéléré, et ont leur propre taille et position.
 - Le texte des sous-titres générés se corrige juste après la génération et, dans la vue Vidéo, pendant leur utilisation.
 - Un média passé en ligne de commande s'ouvre dans son onglet ; un second lancement le confie à la fenêtre ouverte.
 - Le filtre de couleur « vignette » d'un élément vidéo est maintenant visible dans l'aperçu de l'éditeur.

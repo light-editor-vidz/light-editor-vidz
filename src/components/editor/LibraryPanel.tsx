@@ -1,3 +1,5 @@
+import { listen } from "@tauri-apps/api/event";
+import "../subtitles/subtitles.css";
 import { describeError } from "../../lib/errors";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -46,8 +48,8 @@ interface Props {
   onAddSubtitle: () => void;
   onAddStyledText: (preset: TextStylePreset) => void;
   onAddImage: (relativeSrc: string, name: string) => void;
-  onAddVideo: (relativeSrc: string, name: string) => void;
-  onAddAudio: (relativeSrc: string, name: string) => void;
+  onAddVideo: (relativeSrc: string, name: string, subtitlesOn?: boolean) => void;
+  onAddAudio: (relativeSrc: string, name: string, subtitlesOn?: boolean) => void;
   onAddShape: (shapeType: ShapeType) => void;
   /** Ouvre les réglages (clés API des moteurs d'assets libres). */
   onOpenSettings: () => void;
@@ -417,7 +419,7 @@ function MediaLibrary({
   kind: AssetKind;
   projectDir: string;
   project: Project;
-  onAdd: (relativeSrc: string, name: string) => void;
+  onAdd: (relativeSrc: string, name: string, subtitlesOn?: boolean) => void;
   search: string;
   onOpenSettings: () => void;
 }) {
@@ -432,6 +434,39 @@ function MediaLibrary({
   }
 
   useEffect(refresh, [projectDir, kind]);
+  // Un export depuis une autre vue peut déposer ici un nouveau média.
+  useEffect(() => {
+    const un = listen("project-assets-changed", refresh).catch(() => undefined);
+    return () => {
+      void un.then((off) => off?.());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectDir, kind]);
+
+  // Les médias dont le sous-titre ne doit pas s'activer à l'ajout.
+  const [subtitlesOff, setSubtitlesOff] = useState<string[]>([]);
+  const add = (a: AssetInfo) => {
+    if (a.has_subtitles) onAdd(a.relative_path, a.filename, !subtitlesOff.includes(a.relative_path));
+    else onAdd(a.relative_path, a.filename);
+  };
+  const ccButton = (a: AssetInfo) =>
+    a.has_subtitles && (
+      <button
+        type="button"
+        className={`library-cc${subtitlesOff.includes(a.relative_path) ? "" : " on"}`}
+        title={t("library.subtitlesToggle")}
+        aria-label={t("library.subtitlesToggle")}
+        aria-pressed={!subtitlesOff.includes(a.relative_path)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setSubtitlesOff((off) =>
+            off.includes(a.relative_path) ? off.filter((p) => p !== a.relative_path) : [...off, a.relative_path],
+          );
+        }}
+      >
+        CC
+      </button>
+    );
 
   const assets = allAssets.filter((a) => a.filename.toLowerCase().includes(search.toLowerCase()));
 
@@ -449,7 +484,8 @@ function MediaLibrary({
       const relativeSrc = await importAsset(projectDir, kind, path);
       refresh();
       const name = relativeSrc.split("/").pop() ?? relativeSrc;
-      onAdd(relativeSrc, name);
+      // Un fichier pour lequel des sous-titres ont été générés les apporte avec lui.
+      onAdd(relativeSrc, name, kind === "image" ? undefined : true);
     } catch (e) {
       setError(describeError(e));
     }
@@ -483,13 +519,10 @@ function MediaLibrary({
         {error && <p className="library-error">{error}</p>}
         <div className="library-audio-list">
           {assets.map((a) => (
-            <div
-              key={a.relative_path}
-              className="library-audio-item"
-              onClick={() => onAdd(a.relative_path, a.filename)}
-            >
+            <div key={a.relative_path} className="library-audio-item" onClick={() => add(a)}>
               <Mic size={15} color="var(--color-audio)" />
               <span className="mono">{a.filename}</span>
+              {ccButton(a)}
               <DeleteAssetButton onClick={() => void handleDelete(a)} />
             </div>
           ))}
@@ -517,9 +550,10 @@ function MediaLibrary({
             key={a.relative_path}
             className="library-media-tile"
             style={{ aspectRatio: kind === "video" ? "16/10" : "1" }}
-            onClick={() => onAdd(a.relative_path, a.filename)}
+            onClick={() => add(a)}
             title={a.filename}
           >
+            {ccButton(a)}
             {kind === "image" ? (
               <img src={assetUrl(projectDir, a.relative_path)} alt={a.filename} loading="lazy" decoding="async" />
             ) : (

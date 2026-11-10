@@ -206,6 +206,17 @@ describe("LibraryPanel — local media", () => {
     expect(await screen.findByText(/no such project/)).toBeInTheDocument();
   });
 
+  it("adds a media with its subtitle on, or off when CC is switched off", async () => {
+    mockList.mockResolvedValue([asset({ has_subtitles: true })]);
+    const { onAddVideo } = await setup({ active: "video" });
+    const tile = qa(".library-media-tile")[0];
+    fireEvent.click(tile);
+    expect(onAddVideo).toHaveBeenLastCalledWith("assets/video/clip.mp4", "clip.mp4", true);
+    fireEvent.click(screen.getByRole("button", { name: "Subtitles on when added" }));
+    fireEvent.click(tile);
+    expect(onAddVideo).toHaveBeenLastCalledWith("assets/video/clip.mp4", "clip.mp4", false);
+  });
+
   it("imports a file and adds it to the scene", async () => {
     mockOpen.mockResolvedValue("/home/me/new.mp4");
     const { onAddVideo } = await setup({ active: "video" });
@@ -220,7 +231,7 @@ describe("LibraryPanel — local media", () => {
       }),
     );
     expect(mockImport).toHaveBeenCalledWith("/p", "video", "/home/me/new.mp4");
-    expect(onAddVideo).toHaveBeenCalledWith("assets/video/new.mp4", "new.mp4");
+    expect(onAddVideo).toHaveBeenCalledWith("assets/video/new.mp4", "new.mp4", true);
     // The listing is refreshed so the new file shows up in the grid.
     expect(mockList).toHaveBeenCalledTimes(2);
   });
@@ -297,7 +308,7 @@ describe("LibraryPanel — local audio", () => {
         filters: [{ name: "Audio", extensions: ["mp3", "wav", "ogg", "m4a", "aac", "flac", "opus"] }],
       }),
     );
-    expect(onAddAudio).toHaveBeenCalledWith("assets/audio/song.mp3", "song.mp3");
+    expect(onAddAudio).toHaveBeenCalledWith("assets/audio/song.mp3", "song.mp3", true);
   });
 });
 

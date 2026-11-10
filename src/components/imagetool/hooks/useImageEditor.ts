@@ -83,7 +83,8 @@ interface ImageEditorActions {
     fill: [number, number, number, number],
   ) => Promise<void>;
   handleRotate: (degrees: number) => Promise<void>;
-  handleExport: (format: ExportFormat, quality?: number) => Promise<void>;
+  /** Le chemin écrit, ou `null` si rien ne l'a été. */
+  handleExport: (format: ExportFormat, quality?: number) => Promise<string | null>;
   handleUndo: () => Promise<void>;
   handleRedo: () => Promise<void>;
   handleResetToOriginal: () => Promise<void>;
@@ -268,12 +269,13 @@ export function useImageEditor(): ImageEditorState & ImageEditorActions {
   const handleExport = useCallback(
     async (format: ExportFormat, quality?: number) => {
       const id = activeRef.current;
-      if (!id) return;
+      if (!id) return null;
+      let written: string | null = null;
       await withLoading(async () => {
-        if (await exportImage(id, format, quality)) {
-          updateTab(id, (tab) => ({ ...tab, savedIndex: tab.historyIndex }));
-        }
+        written = await exportImage(id, format, quality);
+        if (written) updateTab(id, (tab) => ({ ...tab, savedIndex: tab.historyIndex }));
       });
+      return written;
     },
     [withLoading, updateTab],
   );

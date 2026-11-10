@@ -6,6 +6,7 @@ use audio_dsp::approval::Approved;
 use audio_dsp::error::CmdError;
 use audio_dsp::recent::{self, RecentFile};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -28,7 +29,11 @@ pub struct VideoState {
     preview: Mutex<Option<PathBuf>>,
     preview_cancel: Mutex<Arc<AtomicBool>>,
     capabilities: OnceLock<Capabilities>,
+    after_export: AfterExport,
 }
+
+/// Ce qu'il reste à faire d'un fichier une fois son export terminé, par chemin de sortie.
+type AfterExport = Arc<Mutex<HashMap<String, (Vec<String>, Option<String>)>>>;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Capabilities {
@@ -39,8 +44,17 @@ pub struct Capabilities {
 impl VideoState {
     pub fn new<R: Runtime>(app: AppHandle<R>) -> Self {
         let emitter = app.clone();
+        let after_export = AfterExport::default();
+        let (pending, finisher) = (after_export.clone(), app.clone());
         let queue = ExportQueue::new(
-            move |options: ExportOptions, ctx| run_job(&options, ctx),
+            move |options: ExportOptions, ctx| {
+                let result = run_job(&options, ctx);
+                let next = pending.lock().unwrap().remove(&options.output_path);
+                if let (Ok(()), Some((projects, srt))) = (&result, next) {
+                    finish_export(&finisher, &options.output_path, &projects, srt.as_deref());
+                }
+                result
+            },
             move |jobs| {
                 let _ = emitter.emit("video-queue", jobs);
             },
@@ -50,6 +64,7 @@ impl VideoState {
             preview: Mutex::new(None),
             preview_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
             capabilities: OnceLock::new(),
+            after_export,
         }
     }
 
@@ -64,6 +79,20 @@ impl VideoState {
             let _ = std::fs::remove_file(p);
         }
     }
+}
+
+/// Le fichier exporté rejoint les projets demandés ; l'interface en est prévenue.
+fn finish_export<R: Runtime>(
+    app: &AppHandle<R>,
+    output: &str,
+    projects: &[String],
+    srt: Option<&str>,
+) {
+    let handle = app.clone();
+    let _ = handle.emit(
+        "video-export-added",
+        crate::commands::media_subs::add_everywhere(&handle, Path::new(output), projects, srt),
+    );
 }
 
 /// Un travail de la file : un dossier de travail privé, l'export, puis le nettoyage.
@@ -454,6 +483,26 @@ pub async fn video_queue_add(
         .queue
         .add(options, meta)
         .map_err(|m| CmdError::from(anyhow::anyhow!(m)))
+}
+
+/// À appeler avant de lancer l'export : ce fichier, une fois écrit, rejoindra ces projets.
+#[tauri::command]
+pub fn video_add_after_export(
+    approved: State<'_, Approved>,
+    state: State<'_, VideoState>,
+    output_path: String,
+    projects: Vec<String>,
+    srt: Option<String>,
+) -> Result<(), CmdError> {
+    approved
+        .check_output(&output_path)
+        .map_err(CmdError::from)?;
+    state
+        .after_export
+        .lock()
+        .unwrap()
+        .insert(output_path, (projects, srt));
+    Ok(())
 }
 
 #[tauri::command]

@@ -435,6 +435,7 @@ mod tests {
             speed: 1.0,
             fade_curve: FadeCurve::Linear,
             filter: None,
+            subtitles: None,
         }
     }
 
@@ -788,6 +789,7 @@ mod tests {
                     playback_speed: 1.0,
                     loop_video: false,
                     color_filter: None,
+                    subtitles: None,
                     crop: None,
                 })],
                 transition_in: None,

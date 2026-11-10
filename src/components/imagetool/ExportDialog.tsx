@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ExportFormat } from "./types";
 import { useT } from "./lib/langContext";
 
@@ -9,6 +9,8 @@ interface ExportDialogProps {
   defaultQuality?: number;
   onExport: (format: ExportFormat, quality?: number) => void;
   onClose: () => void;
+  /** « Ajouter à un projet », affiché avant les boutons. */
+  extra?: ReactNode;
 }
 
 const FORMATS: Array<{ value: ExportFormat; label: string; supportsQuality: boolean }> = [
@@ -19,7 +21,15 @@ const FORMATS: Array<{ value: ExportFormat; label: string; supportsQuality: bool
   { value: "tiff", label: "TIFF", supportsQuality: false },
 ];
 
-export function ExportDialog({ open, isLoading, defaultFormat, defaultQuality, onExport, onClose }: ExportDialogProps) {
+export function ExportDialog({
+  open,
+  isLoading,
+  defaultFormat,
+  defaultQuality,
+  onExport,
+  onClose,
+  extra,
+}: ExportDialogProps) {
   const t = useT();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [format, setFormat] = useState<ExportFormat>(defaultFormat ?? "png");
@@ -103,6 +113,7 @@ export function ExportDialog({ open, isLoading, defaultFormat, defaultQuality, o
         )}
       </div>
 
+      {extra && <div className="px-5 pb-4">{extra}</div>}
       <div className="px-5 py-3 border-t border-slate-700 flex justify-end gap-2">
         <button
           onClick={onClose}

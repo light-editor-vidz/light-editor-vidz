@@ -77,7 +77,7 @@ function installBackend() {
   );
   vi.mocked(tauri.resetToOriginal).mockImplementation((id) => Promise.resolve(backend.move(id, 0)));
   vi.mocked(tauri.gotoHistory).mockImplementation((id, i) => Promise.resolve(backend.move(id, i)));
-  vi.mocked(tauri.exportImage).mockResolvedValue(true);
+  vi.mocked(tauri.exportImage).mockResolvedValue("/out.png");
   vi.mocked(tauri.stripExif).mockResolvedValue(true);
   vi.mocked(tauri.getExif).mockResolvedValue([]);
   vi.mocked(tauri.closeTab).mockResolvedValue(undefined);
@@ -391,7 +391,7 @@ describe("useImageEditor — edits and history", () => {
   });
 
   it("does not mark the tab as saved when the save dialog is cancelled", async () => {
-    vi.mocked(tauri.exportImage).mockResolvedValue(false);
+    vi.mocked(tauri.exportImage).mockResolvedValue(null);
     const { result } = await withOpenImage();
     await act(async () => {
       await result.current.handleFlip("horizontal");

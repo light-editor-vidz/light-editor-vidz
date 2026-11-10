@@ -16,6 +16,7 @@ import {
   type ExportResult,
 } from "../../lib/commands";
 import type { Notice } from "./StatusBanner";
+import { expandLinkedSubtitles } from "../../lib/subs/linked";
 import ExportModal from "./ExportModal";
 import { useRegisterMenuActions } from "../../lib/menuBridge";
 
@@ -70,7 +71,7 @@ export default function TopBar({
       filters: [{ name: t("topbar.mp4Filter"), extensions: ["mp4"] }],
     });
     if (!outputPath) return;
-    await runExport(outputPath, () => exportProject(projectDir, project, outputPath, options));
+    await runExport(outputPath, () => exportProject(projectDir, expandLinkedSubtitles(project), outputPath, options));
   }
 
   async function handleExportAudio(format: AudioExportFormat) {

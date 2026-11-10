@@ -1,3 +1,10 @@
+import {
+  listMediaSubs,
+  removeMediaSub,
+  saveMediaSub,
+  type AddReport,
+  type MediaSubEntry,
+} from "../../lib/subs/commands";
 // Le pont entre la vue Vidéo et le moteur Rust (`commands/video_tool.rs`). Il a la forme de l'API
 // que LightCutVidz exposait depuis Electron : les composants n'ont pas à savoir qu'ils tournent
 // dans Tauri. Les tests substituent une maquette via `window.electronAPI`.
@@ -69,6 +76,13 @@ export interface VideoApi {
   toFileUrl: (filePath: string) => Promise<string>;
   /** La même vidéo par HTTP local : le WebView de Linux refuse les protocoles internes dans `<video>`. */
   toStreamUrl: (url: string) => Promise<string>;
+  /** Les sous-titres associés à ce fichier. */
+  listSubs: (path: string) => Promise<MediaSubEntry[]>;
+  saveSub: (path: string, entry: MediaSubEntry) => Promise<void>;
+  removeSub: (path: string, id: string) => Promise<void>;
+  /** À appeler avant l'export : le fichier écrit rejoindra ces projets. */
+  addAfterExport: (outputPath: string, projects: string[], srt: string | null) => Promise<void>;
+  onAddedToProjects: (callback: (report: AddReport) => void) => () => void;
   openVideo: () => Promise<string | null>;
   saveVideo: (defaultName?: string, format?: string) => Promise<string | null>;
   cancelFfmpeg: () => Promise<void>;
@@ -131,6 +145,11 @@ const tauriApi: VideoApi = {
   getPathForFile: () => "",
   toFileUrl: fileUrl,
   toStreamUrl: (url) => invoke<string>("video_stream_url", { path: localPaths.get(url) ?? url }),
+  listSubs: listMediaSubs,
+  saveSub: saveMediaSub,
+  removeSub: removeMediaSub,
+  addAfterExport: (outputPath, projects, srt) => invoke("video_add_after_export", { outputPath, projects, srt }),
+  onAddedToProjects: (callback) => subscribe<AddReport>("video-export-added", callback),
   openVideo: () => invoke<string | null>("video_pick_file"),
   saveVideo: async (defaultName, format) => {
     const choice = await invoke<{ path: string; confirm_overwrite: boolean } | null>("video_pick_output", {

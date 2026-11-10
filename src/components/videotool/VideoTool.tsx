@@ -24,6 +24,8 @@ import type { CropRect, EditorState, SubtitleAnimation, SubtitleStyle, TrimSegme
 import type { StabilizeLevel } from "./hooks/useHistory";
 import { useT } from "./i18n";
 import GenerateSubtitlesDialog from "../subtitles/GenerateSubtitlesDialog";
+import { cuesToSrt, remapCues } from "../../lib/subs/linked";
+import i18n from "i18next";
 import { parseSrt } from "./utils/srt";
 import "./videotool.css";
 
@@ -237,6 +239,14 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
       reset();
       setVideoPath(filePath);
       setGenerated([]);
+      getApi()
+        .listSubs(filePath)
+        .then((entries) => {
+          if (id === loadId.current) {
+            setGenerated(entries.map((e) => ({ id: e.id, label: e.label, cues: parseSrt(e.srt) })));
+          }
+        })
+        .catch(() => {});
       setVideoUrl(url);
       setDuration(0);
       setVideoSize(null);
@@ -527,6 +537,36 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
     if (forcedPath.current !== videoPath) void loadVideo(videoPath, true);
     else setToast(t.error_video_unreadable);
   }, [t, videoPath, videoUrl, loadVideo]);
+  /** Un sous-titre généré est associé tout de suite à la vidéo, et le reste d'une session à l'autre. */
+  const associateSubtitles = (srt: string, id: string) => {
+    const cues = parseSrt(srt);
+    if (!videoPath || cues.length === 0) return;
+    const label = generated.find((g) => g.id === id)?.label ?? `#${generated.length + 1}`;
+    setGenerated((list) =>
+      list.some((g) => g.id === id)
+        ? list.map((g) => (g.id === id ? { ...g, cues } : g))
+        : [...list, { id, label, cues }],
+    );
+    setActivePanel("subtitles");
+    void getApi().saveSub(videoPath, { id, label, srt });
+  };
+  /** Le sous-titre à emporter dans un projet : s'il n'est pas incrusté, recalé sur le montage. */
+  const associatedSrt = () => {
+    const last = generated[generated.length - 1];
+    if (editable.subtitles || !last) return null;
+    const cues = remapCues(last.cues, keptSegments, editable.speed);
+    return cues.length > 0 ? cuesToSrt(cues) : null;
+  };
+  useEffect(() => {
+    if (!tabActive) return;
+    return getApi().onAddedToProjects((report) =>
+      setToast(
+        report.errors.length > 0
+          ? i18n.t("subs.addToProjectFailed", { error: report.errors[0] })
+          : i18n.t("subs.addedToProjects", { count: report.added }),
+      ),
+    );
+  }, [tabActive]);
   const onSubtitlesError = useCallback(
     (reason: "empty" | "read") => setToast(reason === "empty" ? t.subtitles_empty : t.subtitles_error),
     [t],
@@ -749,7 +789,10 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
                 onEditTexts={editSubtitleTexts}
                 generated={generated}
                 onUseGenerated={(g) => setSubtitles(g.label, g.cues)}
-                onDiscardGenerated={(id) => setGenerated((list) => list.filter((x) => x.id !== id))}
+                onDiscardGenerated={(id) => {
+                  setGenerated((list) => list.filter((x) => x.id !== id));
+                  if (videoPath) void getApi().removeSub(videoPath, id);
+                }}
               />
             </Suspense>
           )}
@@ -778,7 +821,12 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
 
         {showExport && (
           <Suspense fallback={null}>
-            <ExportModal state={editorState} onClose={closeExport} onQueued={onExportQueued} />
+            <ExportModal
+              state={editorState}
+              associatedSrt={associatedSrt}
+              onClose={closeExport}
+              onQueued={onExportQueued}
+            />
           </Suspense>
         )}
 
@@ -787,12 +835,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
             source={{ kind: "file", path: videoPath }}
             label={videoPath}
             onClose={() => setShowGenerate(false)}
-            onUse={(srt) => {
-              const cues = parseSrt(srt);
-              if (cues.length === 0) return;
-              setGenerated((list) => [...list, { id: Date.now(), label: `#${list.length + 1}`, cues }]);
-              setActivePanel("subtitles");
-            }}
+            onAssociate={associateSubtitles}
           />
         )}
 

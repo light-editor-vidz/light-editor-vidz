@@ -153,7 +153,8 @@
     "assetInUse": "“{{name}}” is used in the project: remove it from the timeline first.",
     "filterImages": "Images",
     "filterVideos": "Videos",
-    "filterAudio": "Audio"
+    "filterAudio": "Audio",
+    "subtitlesToggle": "Subtitles on when added"
   },
   "settings": {
     "title": "Settings",
@@ -329,7 +330,17 @@
     "videoCropY": "Y",
     "videoCropW": "W",
     "videoCropH": "H",
-    "videoCropReset": "Reset"
+    "videoCropReset": "Reset",
+    "subtitles": "Subtitles",
+    "subtitlesShow": "Show on the scene",
+    "subtitlesPosition": "Subtitle position",
+    "subtitlesSize": "Subtitle size",
+    "subtitlesEdit": "Edit subtitles",
+    "subtitlesAt": {
+      "top": "Top",
+      "middle": "Middle",
+      "bottom": "Bottom"
+    }
   },
   "canvas": {
     "videoDecodeError": "This video cannot be played (unsupported format/codec)",
@@ -949,7 +960,6 @@
     "resultCount_one": "{{count}} subtitle generated",
     "resultCount_other": "{{count}} subtitles generated",
     "addToProject": "Add as text elements to the project",
-    "useInVideo": "Add to the list of the Subtitles panel",
     "saveFile": "Save as a file",
     "format": "Format",
     "fileFilter": "Subtitles",
@@ -974,6 +984,15 @@
       "emptyWarning_one": "{{count}} empty subtitle will be removed.",
       "emptyWarning_other": "{{count}} empty subtitles will be removed.",
       "confirmRemove": "Remove and apply"
-    }
+    },
+    "associated": "Linked to this media automatically.",
+    "done": "Done",
+    "addedToProjects_one": "Added to {{count}} project",
+    "addedToProjects_other": "Added to {{count}} projects",
+    "addToProjectFailed": "Could not add to a project: {{error}}"
+  },
+  "addToProjects": {
+    "label": "Add to a project",
+    "browse": "Another project…"
   }
 }

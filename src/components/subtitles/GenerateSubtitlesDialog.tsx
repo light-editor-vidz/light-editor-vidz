@@ -51,14 +51,15 @@ interface Props {
   onClose: () => void;
   /** Project contexts: adds the cues (in source time) to the project, which maps them to its timeline. */
   onPlace?: (cues: TimedCue[]) => void;
-  /** Video view: uses the generated subtitles (SRT text) in the current video. */
-  onUse?: (srt: string) => void;
+  /** Vue Vidéo, vue Audio, média d'un projet : le sous-titre est associé au média dès qu'il est
+   * généré, puis à chaque correction (même `sessionId` : il remplace le précédent). */
+  onAssociate?: (srt: string, sessionId: string) => void;
 }
 
 const baseName = (p: string) => p.replace(/\\/g, "/").split("/").pop() ?? p;
 
 /** The window that generates subtitles from a video, a sound or a whole project. */
-export default function GenerateSubtitlesDialog({ source, label, onClose, onPlace, onUse }: Props) {
+export default function GenerateSubtitlesDialog({ source, label, onClose, onPlace, onAssociate }: Props) {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<SubsSettings | null>(null);
   const [languages, setLanguages] = useState<SubsLanguage[]>([]);
@@ -73,11 +74,11 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
   const [result, setResult] = useState<SubsOutput | null>(null);
   const [place, setPlace] = useState(true);
   // Sans projet ni vidéo où déposer le résultat (vue Audio), le fichier est la seule issue.
-  const [save, setSave] = useState(!onPlace && !onUse);
+  const [save, setSave] = useState(!onPlace && !onAssociate);
   const [format, setFormat] = useState<SubsFormat>("srt");
-  const [use, setUse] = useState(true);
   const [editing, setEditing] = useState(false);
   const cancelled = useRef(false);
+  const sessionId = useRef("");
 
   const sttKey = settings ? STT_KEYS[settings.stt_engine] : null;
   const trKey = settings && target ? TRANSLATION_KEYS[settings.translation_engine] : null;
@@ -176,6 +177,8 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
         out = await translateSubs(out.srt_path, out.srt_content, out.language, target);
       }
       setResult(out);
+      sessionId.current = crypto.randomUUID();
+      onAssociate?.(out.srt_content, sessionId.current);
     } catch (e) {
       if (!cancelled.current) setError(describeError(e));
     } finally {
@@ -196,6 +199,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
     try {
       const edited = await updateSubs(result.srt_content, texts);
       setResult({ ...result, srt_content: edited.srt_content });
+      onAssociate?.(edited.srt_content, sessionId.current);
       setEditing(false);
     } catch (e) {
       setError(describeError(e));
@@ -213,14 +217,13 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
         if (!written) return;
       }
       if (onPlace && place) onPlace(cues.map(({ start, end, text }) => ({ start, end, text })));
-      if (onUse && use) onUse(result.srt_content);
       onClose();
     } catch (e) {
       setError(describeError(e));
     }
   }
 
-  const nothingChosen = !(onPlace && place) && !(onUse && use) && !save;
+  const nothingChosen = !onAssociate && !(onPlace && place) && !save;
   const stageLabel = progress
     ? t(`subs.stage.${progress.stage}`, { defaultValue: progress.stage })
     : t("subs.starting");
@@ -273,12 +276,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
                   {t("subs.addToProject")}
                 </label>
               )}
-              {onUse && (
-                <label className="subs-check">
-                  <input type="checkbox" checked={use} onChange={(e) => setUse(e.target.checked)} />
-                  {t("subs.useInVideo")}
-                </label>
-              )}
+              {onAssociate && <p className="modal-hint">{t("subs.associated")}</p>}
               <label className="subs-check">
                 <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} />
                 {t("subs.saveFile")}
@@ -475,7 +473,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
                   onClick={apply}
                   disabled={nothingChosen || cues.length === 0 || editing}
                 >
-                  {t("subs.apply")}
+                  {onAssociate ? t("subs.done") : t("subs.apply")}
                 </button>
               ) : (
                 <button

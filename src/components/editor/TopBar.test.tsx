@@ -40,6 +40,7 @@ const project = {
   height: 1080,
   fps: 30,
   compositions: [],
+  audio_tracks: [],
 } as unknown as Project;
 
 function setup(props: Partial<Parameters<typeof TopBar>[0]> = {}) {

@@ -153,6 +153,9 @@ pub struct VideoElement {
     /// Zone de l'image source conservée ; `None` = toute l'image.
     #[serde(default)]
     pub crop: Option<crate::video_fx::VideoCrop>,
+    /// Sous-titre associé à la vidéo ; affiché sur la scène s'il est activé.
+    #[serde(default)]
+    pub subtitles: Option<LinkedSubtitles>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -203,6 +206,30 @@ pub struct AudioTrack {
     /// Filtre passe-bas / passe-haut / passe-bande appliqué à la piste.
     #[serde(default)]
     pub filter: Option<AudioFilter>,
+    /// Sous-titre associé à la piste ; affiché sur les scènes s'il est activé.
+    #[serde(default)]
+    pub subtitles: Option<LinkedSubtitles>,
+}
+
+/// Une réplique, en secondes dans le temps du média.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LinkedCue {
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+}
+
+/// Le sous-titre d'une vidéo ou d'une piste audio : il suit le média sur la timeline.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LinkedSubtitles {
+    pub enabled: bool,
+    pub cues: Vec<LinkedCue>,
+    pub font_size: f64,
+    pub color: String,
+    /// `top`, `middle` ou `bottom`.
+    pub position: String,
 }
 
 fn default_speed() -> f64 {

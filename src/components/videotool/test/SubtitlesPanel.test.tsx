@@ -256,7 +256,7 @@ describe("SubtitlesPanel — fonts", () => {
 });
 
 describe("SubtitlesPanel — generated subtitles", () => {
-  const generated = [{ id: 7, label: "#1", cues: loaded.cues }];
+  const generated = [{ id: "7", label: "#1", cues: loaded.cues }];
 
   it("lists the generated subtitles, to use or delete", () => {
     const onUseGenerated = vi.fn();
@@ -266,7 +266,7 @@ describe("SubtitlesPanel — generated subtitles", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use" }));
     expect(onUseGenerated).toHaveBeenCalledWith(generated[0]);
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    expect(onDiscardGenerated).toHaveBeenCalledWith(7);
+    expect(onDiscardGenerated).toHaveBeenCalledWith("7");
   });
 
   it("keeps the list next to the loaded subtitles", () => {

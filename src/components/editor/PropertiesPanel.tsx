@@ -9,6 +9,8 @@ import { AudioProperties } from "./properties/AudioProperties";
 import { TextProperties } from "./properties/TextProperties";
 import { MediaProperties } from "./properties/MediaProperties";
 import { ShapeProperties } from "./properties/ShapeProperties";
+import { LinkedSubtitlesFields } from "./properties/LinkedSubtitlesFields";
+import type { LinkedCue } from "../../bindings/LinkedCue";
 
 interface Props {
   element: Element | null;
@@ -30,6 +32,7 @@ interface Props {
   onUngroup: () => void;
   /** Generates subtitles from the selected video element or audio track. */
   onGenerateSubtitles?: () => void;
+  onEditLinkedCues?: (src: string, cues: LinkedCue[]) => void;
 }
 
 export default function PropertiesPanel({
@@ -49,6 +52,7 @@ export default function PropertiesPanel({
   onGroup,
   onUngroup,
   onGenerateSubtitles,
+  onEditLinkedCues,
 }: Props) {
   const { t } = useTranslation();
   const generateButton = onGenerateSubtitles ? (
@@ -73,6 +77,13 @@ export default function PropertiesPanel({
       <aside className="editor-properties">
         <div className="properties-content">
           <AudioProperties track={audioTrack} onUpdate={onUpdateAudio} />
+          {audioTrack.subtitles && (
+            <LinkedSubtitlesFields
+              subtitles={audioTrack.subtitles}
+              onChange={(subtitles) => onUpdateAudio({ subtitles })}
+              onEditCues={(cues) => onEditLinkedCues?.(audioTrack.src, cues)}
+            />
+          )}
           {generateButton}
           {layers}
         </div>
@@ -123,6 +134,13 @@ export default function PropertiesPanel({
               element={element}
               onUpdate={onUpdate}
               activeDuration={element.duration ?? activeCompositionDuration - element.start_time}
+            />
+          )}
+          {element.type === "video" && element.subtitles && (
+            <LinkedSubtitlesFields
+              subtitles={element.subtitles}
+              onChange={(subtitles) => onUpdate({ subtitles })}
+              onEditCues={(cues) => onEditLinkedCues?.(element.src, cues)}
             />
           )}
           {element.type === "video" && generateButton}

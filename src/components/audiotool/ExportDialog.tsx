@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import type { ExportFormat, WavDepth } from "../../lib/audiotool/helpers";
@@ -31,6 +31,8 @@ interface Props {
   onExport: () => void;
   onCancel: () => void;
   onClose: () => void;
+  /** « Ajouter à un projet ». */
+  addToProjects?: ReactNode;
 }
 
 /** Les options d'export : le format, et le format des échantillons pour un WAV. */
@@ -45,6 +47,7 @@ export default function ExportDialog({
   onExport,
   onCancel,
   onClose,
+  addToProjects,
 }: Props) {
   const { t } = useTranslation();
 
@@ -117,6 +120,7 @@ export default function ExportDialog({
               <div className="at-progress-fill" style={{ width: `${progress}%` }} />
             </div>
           )}
+          {addToProjects}
           <span className="at-export-hint" role="status">
             {problem}
           </span>

@@ -229,6 +229,10 @@ pub fn merge_speech(mut speech: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
 }
 
 /// The stretches of speech of the recording, in seconds, as Silero sees them.
+/// Le modèle de détection de la parole est minuscule et calculé par blocs de 32 ms : mesuré sur
+/// 225 s d'audio, 1,3 s avec un thread, plus de 3 min avec 8 sur une machine occupée.
+const VAD_THREADS: i32 = 1;
+
 fn detect_speech(vad_path: &Path, source: &mut WavSource) -> Result<Vec<(f64, f64)>> {
     detect_speech_in(vad_path, source, VAD_WINDOW_SECS)
 }
@@ -243,7 +247,7 @@ fn detect_speech_in(
         .context("VAD model path is not valid UTF-8")?;
     let mut params = WhisperVadContextParams::new();
     params.set_use_gpu(false);
-    params.set_n_threads(thread_count());
+    params.set_n_threads(VAD_THREADS);
     let mut vad = WhisperVadContext::new(path, params).context("loading the VAD model")?;
 
     let window = (window_secs * SAMPLE_RATE as f64) as usize;
@@ -273,13 +277,15 @@ fn detect_speech_in(
     Ok(merge_speech(speech))
 }
 
-/// Every core: whisper.cpp defaults to `min(4, cores)`, which leaves most of a modern
-/// CPU idle.
+/// La moitié des cœurs logiques : les threads de whisper.cpp s'attendent en boucle active, et les
+/// occuper tous effondre le débit dès que la machine fait autre chose (mesuré sur 8 cœurs logiques
+/// chargés, 30 s d'audio : 25 s avec 4 threads, plus de 2 min avec 8).
 pub fn thread_count() -> i32 {
-    std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .clamp(1, 64) as i32
+    half_of(std::thread::available_parallelism().map_or(8, |n| n.get()))
+}
+
+fn half_of(cores: usize) -> i32 {
+    (cores / 2).clamp(1, 32) as i32
 }
 
 type Progress = Arc<Mutex<Box<dyn FnMut(f32) + Send>>>;
@@ -560,10 +566,11 @@ mod tests {
     }
 
     #[test]
-    fn every_core_is_used() {
-        let expected = std::thread::available_parallelism().map_or(4, |n| n.get()) as i32;
-
-        assert_eq!(thread_count(), expected.clamp(1, 64));
+    fn half_of_the_logical_cores_are_used() {
+        assert_eq!(half_of(8), 4);
+        assert_eq!(half_of(16), 8);
+        assert_eq!(half_of(1), 1);
+        assert_eq!(half_of(256), 32);
         assert!(thread_count() >= 1);
     }
 

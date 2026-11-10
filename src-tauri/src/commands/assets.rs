@@ -102,13 +102,20 @@ pub(crate) fn unique_destination(dir: &Path, filename: &str) -> PathBuf {
 /// Retourne le chemin relatif au dossier projet (ex: `assets/images/logo.png`).
 #[tauri::command]
 pub async fn import_asset(
+    app: tauri::AppHandle,
     projects: State<'_, OpenProjects>,
     project_dir: String,
     kind: String,
     source_path: String,
 ) -> CmdResult<String> {
     let dir = projects.require(&project_dir)?;
-    blocking(move || copy_asset(&dir, &kind, &source_path)).await
+    blocking(move || {
+        let relative = copy_asset(&dir, &kind, &source_path)?;
+        // Le sous-titre généré pour ce fichier le suit dans le projet.
+        super::media_subs::copy_association(&app, Path::new(&source_path), &dir.join(&relative));
+        Ok(relative)
+    })
+    .await
 }
 
 fn copy_asset(project_dir: &Path, kind: &str, source_path: &str) -> Result<String, String> {
@@ -139,6 +146,8 @@ fn copy_asset(project_dir: &Path, kind: &str, source_path: &str) -> Result<Strin
 pub struct AssetInfo {
     pub filename: String,
     pub relative_path: String,
+    /// Un sous-titre accompagne ce média.
+    pub has_subtitles: bool,
 }
 
 /// Liste les médias déjà importés dans `<project_dir>/assets/<kind>s/`.
@@ -162,11 +171,13 @@ fn scan_assets(project_dir: &Path, kind: &str) -> Result<Vec<AssetInfo>, String>
 
     let mut assets = Vec::new();
     for entry in entries.flatten() {
-        if entry.path().is_file() {
+        // Le `.srt` d'un média n'est pas un média de la bibliothèque.
+        if entry.path().is_file() && entry.path().extension().is_none_or(|e| e != "srt") {
             if let Some(filename) = entry.file_name().to_str() {
                 assets.push(AssetInfo {
                     filename: filename.to_string(),
                     relative_path: format!("assets/{subdir}/{filename}"),
+                    has_subtitles: super::media_subs::sidecar(&entry.path()).is_file(),
                 });
             }
         }
@@ -198,6 +209,7 @@ fn remove_asset(project_dir: &Path, kind: &str, filename: &str) -> Result<(), St
         return Err("Invalid asset filename".to_string());
     }
     let path = project_dir.join("assets").join(subdir).join(filename);
+    let _ = fs::remove_file(super::media_subs::sidecar(&path));
     if !path.is_file() {
         return Err("Asset not found".to_string());
     }

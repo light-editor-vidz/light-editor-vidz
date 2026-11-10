@@ -153,7 +153,8 @@
     "assetInUse": "« {{name}} » est utilisé dans le projet : retirez-le d'abord de la timeline.",
     "filterImages": "Images",
     "filterVideos": "Vidéos",
-    "filterAudio": "Audio"
+    "filterAudio": "Audio",
+    "subtitlesToggle": "Sous-titres activés à l'ajout"
   },
   "settings": {
     "title": "Réglages",
@@ -329,7 +330,17 @@
     "videoCropY": "Y",
     "videoCropW": "L",
     "videoCropH": "H",
-    "videoCropReset": "Réinitialiser"
+    "videoCropReset": "Réinitialiser",
+    "subtitles": "Sous-titres",
+    "subtitlesShow": "Afficher sur la scène",
+    "subtitlesPosition": "Position du sous-titre",
+    "subtitlesSize": "Taille du sous-titre",
+    "subtitlesEdit": "Modifier les sous-titres",
+    "subtitlesAt": {
+      "top": "Haut",
+      "middle": "Milieu",
+      "bottom": "Bas"
+    }
   },
   "canvas": {
     "videoDecodeError": "Cette vidéo ne peut pas être lue (format/codec non supporté)",
@@ -949,7 +960,6 @@
     "resultCount_one": "{{count}} sous-titre généré",
     "resultCount_other": "{{count}} sous-titres générés",
     "addToProject": "Ajouter au projet en éléments texte",
-    "useInVideo": "Ajouter à la liste du panneau Sous-titres",
     "saveFile": "Enregistrer dans un fichier",
     "format": "Format",
     "fileFilter": "Sous-titres",
@@ -974,6 +984,15 @@
       "emptyWarning_one": "{{count}} sous-titre vide sera retiré.",
       "emptyWarning_other": "{{count}} sous-titres vides seront retirés.",
       "confirmRemove": "Les retirer et appliquer"
-    }
+    },
+    "associated": "Associé automatiquement à ce média.",
+    "done": "Terminé",
+    "addedToProjects_one": "Ajouté à {{count}} projet",
+    "addedToProjects_other": "Ajouté à {{count}} projets",
+    "addToProjectFailed": "Ajout à un projet impossible : {{error}}"
+  },
+  "addToProjects": {
+    "label": "Ajouter à un projet",
+    "browse": "Un autre projet…"
   }
 }

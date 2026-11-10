@@ -44,6 +44,10 @@ import CutTimeline from "./CutTimeline";
 import DropZone from "./DropZone";
 import ExportDialog from "./ExportDialog";
 import GenerateSubtitlesDialog from "../subtitles/GenerateSubtitlesDialog";
+import AddToProjects from "../AddToProjects";
+import { addOutputToProjects, listMediaSubs, saveMediaSub } from "../../lib/subs/commands";
+import { cuesToSrt, remapCues } from "../../lib/subs/linked";
+import { parseSrt } from "../videotool/utils/srt";
 import Spectrum from "./Spectrum";
 import "./audiotool.css";
 
@@ -114,6 +118,7 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
 
   const [exportOpen, setExportOpen] = useState(false);
   const [subsOpen, setSubsOpen] = useState(false);
+  const [projects, setProjects] = useState<string[]>([]);
   const [format, setFormat] = useState<ExportFormat>("wav");
   const [wavDepth, setWavDepth] = useState<WavDepth>("float32");
   const [processing, setProcessing] = useState(false);
@@ -370,12 +375,26 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
       );
       setExportOpen(false);
       say(t("audioTool.export.done", { name: baseName(output) }), "success");
+      if (projects.length > 0) await addToProjects(output);
     } catch (e) {
       if ((e as EngineError | null)?.code === "cancelled") say(t("audioTool.export.cancelled"), "warning");
       else say(t("audioTool.msg.error", { error: describe(e) }), "error");
     } finally {
       setProcessing(false);
     }
+  }
+
+  /** Le fichier exporté rejoint les projets cochés, avec son sous-titre recalé sur le montage. */
+  async function addToProjects(output: string) {
+    if (!loaded) return;
+    const entries = await listMediaSubs(loaded.path);
+    const last = entries[entries.length - 1];
+    const cues = last
+      ? remapCues(parseSrt(last.srt), keptSegments(settings.cuts, loaded.info.duration), speedOf(settings))
+      : [];
+    const report = await addOutputToProjects(output, projects, cues.length > 0 ? cuesToSrt(cues) : null);
+    if (report.errors.length > 0) say(t("subs.addToProjectFailed", { error: report.errors[0] }), "error");
+    else say(t("subs.addedToProjects", { count: report.added }), "success");
   }
 
   async function openAnother() {
@@ -550,6 +569,7 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
           progress={progress}
           onExport={() => void runExport()}
           onCancel={() => void audioCancel()}
+          addToProjects={<AddToProjects selected={projects} onChange={setProjects} />}
           onClose={() => setExportOpen(false)}
         />
       )}
@@ -558,6 +578,7 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
           source={{ kind: "file", path: loaded.path }}
           label={loaded.path}
           onClose={() => setSubsOpen(false)}
+          onAssociate={(srt, id) => void saveMediaSub(loaded.path, { id, label: "#1", srt })}
         />
       )}
       {toast && <ToastView toast={toast} />}

@@ -101,6 +101,34 @@ export const translateSubs = (
 export const updateSubs = (srtContent: string, texts: string[]): Promise<{ srt_content: string }> =>
   invoke("update_subtitles", { srtContent, texts });
 
+export interface MediaSubEntry {
+  id: string;
+  label: string;
+  srt: string;
+}
+
+/** Les sous-titres associés à un fichier ouvert hors projet. */
+export const listMediaSubs = (path: string): Promise<MediaSubEntry[]> => invoke("media_subs_list", { path });
+export const saveMediaSub = (path: string, entry: MediaSubEntry): Promise<void> =>
+  invoke("media_subs_save", { path, entry });
+export const removeMediaSub = (path: string, id: string): Promise<void> => invoke("media_subs_remove", { path, id });
+
+/** Le sous-titre d'un média de projet (le `.srt` à côté de lui). */
+export async function projectMediaSubtitle(projectDir: string, src: string): Promise<string | null> {
+  return (await invoke<string | null | undefined>("project_media_subtitle", { projectDir, src })) ?? null;
+}
+export const setProjectMediaSubtitle = (projectDir: string, src: string, srt: string): Promise<void> =>
+  invoke("set_project_media_subtitle", { projectDir, src, srt });
+
+export interface AddReport {
+  added: number;
+  errors: string[];
+}
+
+/** Après un export : le fichier écrit rejoint la médiathèque de ces projets. */
+export const addOutputToProjects = (outputPath: string, projects: string[], srt: string | null): Promise<AddReport> =>
+  invoke("add_output_to_projects", { outputPath, projects, srt });
+
 export type SubsFormat = "srt" | "vtt" | "ass";
 
 /** « Enregistrer sous » : renvoie les chemins écrits, ou `null` si le dialogue est fermé. */

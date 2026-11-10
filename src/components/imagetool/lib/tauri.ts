@@ -124,8 +124,8 @@ export async function rotateImage(tabId: string, degrees: number): Promise<Image
 }
 
 /** `true` si un fichier a été écrit, `false` si l'utilisateur a annulé la boîte d'enregistrement. */
-export async function exportImage(tabId: string, format: ExportFormat, quality?: number): Promise<boolean> {
-  return invoke<boolean>("export_image", { tabId, format, quality: quality ?? null });
+export async function exportImage(tabId: string, format: ExportFormat, quality?: number): Promise<string | null> {
+  return invoke<string | null>("export_image", { tabId, format, quality: quality ?? null });
 }
 
 export async function undoImage(tabId: string): Promise<ImageMeta> {

@@ -44,6 +44,7 @@ export type AssetKind = "image" | "video" | "audio";
 export interface AssetInfo {
   filename: string;
   relative_path: string;
+  has_subtitles?: boolean;
 }
 
 /** Copie un fichier choisi par l'utilisateur dans `<project_dir>/assets/<kind>s/`. */

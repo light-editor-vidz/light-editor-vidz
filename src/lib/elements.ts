@@ -358,6 +358,7 @@ export function createVideoElement(relativeSrc: string, name: string): Element {
     loop_video: false,
     color_filter: null,
     crop: null,
+    subtitles: null,
   };
 }
 

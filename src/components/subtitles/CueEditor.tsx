@@ -1,5 +1,6 @@
 import { memo, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { cueTime } from "../../lib/subs/linked";
 
 export interface EditableCue {
   id: number;
@@ -8,12 +9,7 @@ export interface EditableCue {
   text: string;
 }
 
-/** `00:01:02,500`, comme dans un fichier SRT. */
-export function cueTime(seconds: number): string {
-  const ms = Math.round(seconds * 1000);
-  const pad = (n: number, size = 2) => String(n).padStart(size, "0");
-  return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
-}
+export { cueTime };
 
 /** La liste des répliques, en lecture. */
 export function CueList({ cues }: { cues: EditableCue[] }) {

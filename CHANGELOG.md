@@ -31,6 +31,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - The Linux `.deb` installs `gstreamer1.0-libav`, so H.264 and AAC can be previewed without installing anything else.
+- Exports from the Video, Audio and Image views can be added to one or several projects, and appear in their media library.
+- Generated subtitles are linked to their video or sound automatically. In a project they can be switched on when the media is added or from its properties, follow the media when it is moved, trimmed or sped up, and have their own size and position.
 - The text of generated subtitles can be corrected right after generation and, in the Video view, while they are in use.
 - A media file given on the command line opens in its tab; a second launch hands it to the open window.
 - The vignette colour filter of a video element is now previewed in the editor.

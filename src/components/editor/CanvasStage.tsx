@@ -1,3 +1,4 @@
+import { isLinkedElementId } from "../../lib/subs/linked";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Undo2, Redo2, Maximize2, Minus, Plus, SkipBack, SkipForward, Play, Pause } from "lucide-react";
@@ -123,7 +124,10 @@ export default function CanvasStage({
   const displayHeight = Math.round(stageSize.height * zoom);
   // Géométrie des éléments pour l'accroche : recalculée seulement quand la scène change.
   const geometries = useMemo(
-    () => composition.elements.map((el) => ({ x: el.x, y: el.y, width: el.width, height: el.height })),
+    () =>
+      composition.elements
+        .filter((el) => !isLinkedElementId(el.id))
+        .map((el) => ({ x: el.x, y: el.y, width: el.width, height: el.height })),
     [composition.elements],
   );
 
@@ -186,7 +190,7 @@ export default function CanvasStage({
         return;
       }
       const ids = composition.elements
-        .filter((el) => isElementActive(el, localTime))
+        .filter((el) => !isLinkedElementId(el.id) && isElementActive(el, localTime))
         .filter(
           (el) =>
             el.x < current.x + current.width &&
@@ -447,7 +451,7 @@ function SceneLayer({
             {el.type === "shape" && <ShapeView element={el} aspect={aspect} />}
           </div>
         );
-        if (!interactive) {
+        if (!interactive || isLinkedElementId(el.id)) {
           return (
             <div
               key={el.id}

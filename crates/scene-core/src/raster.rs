@@ -1817,6 +1817,7 @@ mod tests {
             playback_speed: 1.0,
             loop_video: false,
             color_filter: None,
+            subtitles: None,
             crop: None,
         }
     }

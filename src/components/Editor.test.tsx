@@ -73,6 +73,7 @@ const comp = (over: Partial<Composition> = {}): Composition => ({
 });
 
 const track = (over: Partial<AudioTrack> = {}): AudioTrack => ({
+  subtitles: null,
   id: "a1",
   name: "Music",
   src: "assets/audio/a.mp3",

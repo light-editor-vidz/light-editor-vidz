@@ -58,6 +58,17 @@ export function cuesOfAudioTrack(cues: TimedCue[], track: AudioTrack, projectDur
   );
 }
 
+/** Les morceaux d'une réplique par scène traversée, en temps de la scène. */
+export function splitAcrossScenes(project: Project, cue: TimedCue) {
+  const pieces: { composition: Project["compositions"][number]; start: number; duration: number }[] = [];
+  for (const composition of project.compositions) {
+    const from = Math.max(cue.start, composition.start_time);
+    const to = Math.min(cue.end, composition.start_time + composition.duration);
+    if (to - from > 0.05) pieces.push({ composition, start: from - composition.start_time, duration: to - from });
+  }
+  return pieces;
+}
+
 /** Répliques sous forme d'éléments texte : une par scène traversée (une réplique qui enjambe deux
  * scènes est coupée à la frontière), placées à leur instant relatif à la scène. Les répliques
  * hors du projet sont ignorées. */
@@ -65,18 +76,15 @@ export function addCuesToProject(project: Project, cues: TimedCue[]): { project:
   let next = project;
   let added = 0;
   for (const cue of [...cues].sort((a, b) => a.start - b.start)) {
-    for (const composition of project.compositions) {
-      const from = Math.max(cue.start, composition.start_time);
-      const to = Math.min(cue.end, composition.start_time + composition.duration);
-      if (to - from <= 0.05) continue;
+    for (const { composition, start, duration } of splitAcrossScenes(project, cue)) {
       const element = createSubtitleElement();
       if (element.type !== "text") continue;
       const named = {
         ...element,
         name: cue.text.length > 28 ? `${cue.text.slice(0, 27)}…` : cue.text,
         content: cue.text,
-        start_time: from - composition.start_time,
-        duration: to - from,
+        start_time: start,
+        duration,
       } as Element;
       next = addElementToComposition(next, composition.id, named);
       added += 1;
