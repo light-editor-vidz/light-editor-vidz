@@ -5,3 +5,8 @@ pub mod atempo;
 pub mod filters;
 pub mod plan;
 pub mod video_filters;
+pub mod subtitles;
+pub mod export;
+pub mod ffmpeg;
+pub mod hardware;
+pub mod queue;

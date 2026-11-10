@@ -32,7 +32,7 @@
     "nameEn": "Blur",
     "nameFr": "Flou",
     "css": "blur(5px)",
-    "ffmpeg": "boxblur=luma_radius=min(iw\\,ih)/100:luma_power=1"
+    "ffmpeg": "boxblur=luma_radius=min(w\\,h)/100:luma_power=1"
   },
   {
     "id": "bright",
