@@ -1,0 +1,199 @@
+.vt-root .toolbar {
+  width: 200px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+}
+
+.vt-root .tool-section {
+  padding: 12px 0;
+}
+
+.vt-root .tool-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
+}
+
+.vt-root .tool-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.vt-root .speed-display {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.vt-root .speed-slider {
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.vt-root .speed-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.vt-root .speed-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.vt-root .preset-btn {
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  border: 1px solid transparent;
+  transition: all 0.1s;
+}
+
+.vt-root .preset-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.vt-root .preset-btn.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.vt-root .tool-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.vt-root .tool-toggle-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.vt-root .tool-toggle-btn svg {
+  flex-shrink: 0;
+}
+
+.vt-root .tool-toggle-btn-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.vt-root .tool-toggle-btn.active-ok {
+  color: var(--success);
+  border-color: var(--success);
+  background: rgba(72, 187, 120, 0.1);
+}
+
+.vt-root .tool-toggle-btn.active-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: rgba(229, 62, 62, 0.1);
+}
+
+.vt-root .tool-toggle-btn.active-accent {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(224, 90, 43, 0.1);
+}
+
+.vt-root .crop-applied-badge {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.vt-root .crop-reset-btn {
+  margin-top: 4px;
+  color: var(--text-muted) !important;
+  border-color: var(--border) !important;
+  background: var(--bg-tertiary) !important;
+}
+
+.vt-root .crop-reset-btn:hover {
+  color: var(--danger) !important;
+  border-color: var(--danger) !important;
+}
+
+.vt-root .crop-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.vt-root .crop-hint strong {
+  color: var(--accent);
+}
+
+.vt-root .trim-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.vt-root .trim-hint strong {
+  color: var(--text-secondary);
+}
+
+.vt-root .trim-count {
+  margin-top: 8px;
+  padding: 4px 8px;
+  background: rgba(224, 90, 43, 0.15);
+  border: 1px solid rgba(224, 90, 43, 0.4);
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--accent);
+  text-align: center;
+}
+
+.vt-root .stab-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.vt-root .stab-btn {
+  padding: 5px 4px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.vt-root .stab-btn:hover {
+  color: var(--text-primary);
+}
+
+.vt-root .stab-btn.active {
+  background: var(--accent);
+  color: white;
+}

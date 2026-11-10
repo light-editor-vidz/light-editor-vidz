@@ -133,7 +133,8 @@ pub async fn pick_media_file<R: Runtime>(
     .await?;
     Ok(picked.map(|path| {
         let kind = kind_of(&path);
-        if kind == "audio" {
+        // L'audio et la vidéo se lisent via le protocole `asset:` : leur accès passe par là.
+        if kind == "audio" || kind == "video" {
             approved.allow_input(&path);
         }
         PickedFile { path, kind }

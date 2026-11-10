@@ -3,7 +3,9 @@
 
 use crate::plan::{Cue, Segment, SubtitleStyle};
 
-pub const RAINBOW_PALETTE: [&str; 6] = ["#FF3B5C", "#FFB800", "#00E5A0", "#00B4FF", "#B14EFF", "#FF6EC7"];
+pub const RAINBOW_PALETTE: [&str; 6] = [
+    "#FF3B5C", "#FFB800", "#00E5A0", "#00B4FF", "#B14EFF", "#FF6EC7",
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
@@ -24,9 +26,17 @@ pub fn split_words_proportional(cue: &Cue) -> Vec<Event> {
     let mut out: Vec<Event> = words
         .iter()
         .map(|w| {
-            let share = if total > 0 { w.chars().count() as f64 / total as f64 } else { 1.0 / words.len() as f64 };
+            let share = if total > 0 {
+                w.chars().count() as f64 / total as f64
+            } else {
+                1.0 / words.len() as f64
+            };
             let d = duration * share;
-            let ev = Event { start: t, end: t + d, text: (*w).to_string() };
+            let ev = Event {
+                start: t,
+                end: t + d,
+                text: (*w).to_string(),
+            };
             t += d;
             ev
         })
@@ -50,7 +60,11 @@ pub fn split_chars_proportional(cue: &Cue) -> Vec<Event> {
         .iter()
         .map(|c| {
             cumulative.push(*c);
-            let ev = Event { start: t, end: t + char_dur, text: cumulative.clone() };
+            let ev = Event {
+                start: t,
+                end: t + char_dur,
+                text: cumulative.clone(),
+            };
             t += char_dur;
             ev
         })
@@ -62,13 +76,20 @@ pub fn split_chars_proportional(cue: &Cue) -> Vec<Event> {
 }
 
 fn escape_ass_text(text: &str) -> String {
-    text.replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}").replace('\n', "\\N")
+    text.replace('\\', "\\\\")
+        .replace('{', "\\{")
+        .replace('}', "\\}")
+        .replace('\n', "\\N")
 }
 
 fn channels(hex: &str) -> (String, String, String) {
     let clean = hex.trim_start_matches('#');
     let clean = if clean.len() >= 6 { clean } else { "ffffff" };
-    (clean[0..2].to_uppercase(), clean[2..4].to_uppercase(), clean[4..6].to_uppercase())
+    (
+        clean[0..2].to_uppercase(),
+        clean[2..4].to_uppercase(),
+        clean[4..6].to_uppercase(),
+    )
 }
 
 /// `&HBBGGRR&` — dans les balises de remplacement en ligne (`\1c…`).
@@ -98,7 +119,11 @@ fn slide_coords(w: u32, h: u32, position: &str) -> Slide {
         "middle" => (h as f64 / 2.0).round() as i64,
         _ => h as i64 - margin,
     };
-    Slide { x, y_target, y_start: y_target + (h as f64 * 0.05).round() as i64 }
+    Slide {
+        x,
+        y_target,
+        y_start: y_target + (h as f64 * 0.05).round() as i64,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -112,7 +137,13 @@ pub struct ExpandOptions {
 
 impl Default for ExpandOptions {
     fn default() -> Self {
-        Self { video_width: 1920, video_height: 1080, position: "bottom".into(), color: "#ffffff".into(), accent_color: "#22d3ee".into() }
+        Self {
+            video_width: 1920,
+            video_height: 1080,
+            position: "bottom".into(),
+            color: "#ffffff".into(),
+            accent_color: "#22d3ee".into(),
+        }
     }
 }
 
@@ -124,25 +155,53 @@ pub fn expand_cues_to_events(cues: &[Cue], animation: &str, o: &ExpandOptions) -
         match animation {
             "word-pop" => {
                 for w in split_words_proportional(cue) {
-                    events.push(Event { start: w.start, end: w.end, text: format!("{{\\fscx60\\fscy60\\t(0,120,\\fscx100\\fscy100)}}{}", escape_ass_text(&w.text)) });
+                    events.push(Event {
+                        start: w.start,
+                        end: w.end,
+                        text: format!(
+                            "{{\\fscx60\\fscy60\\t(0,120,\\fscx100\\fscy100)}}{}",
+                            escape_ass_text(&w.text)
+                        ),
+                    });
                 }
             }
             "word-bounce" => {
                 for w in split_words_proportional(cue) {
-                    events.push(Event { start: w.start, end: w.end, text: format!("{{\\fscx135\\fscy135\\t(0,80,\\fscx100\\fscy100)}}{}", escape_ass_text(&w.text)) });
+                    events.push(Event {
+                        start: w.start,
+                        end: w.end,
+                        text: format!(
+                            "{{\\fscx135\\fscy135\\t(0,80,\\fscx100\\fscy100)}}{}",
+                            escape_ass_text(&w.text)
+                        ),
+                    });
                 }
             }
             "rainbow" => {
                 let text: Vec<String> = split_words_proportional(cue)
                     .iter()
                     .enumerate()
-                    .map(|(i, w)| format!("{{\\1c{}}}{}", ass_color_tag(RAINBOW_PALETTE[i % RAINBOW_PALETTE.len()]), escape_ass_text(&w.text)))
+                    .map(|(i, w)| {
+                        format!(
+                            "{{\\1c{}}}{}",
+                            ass_color_tag(RAINBOW_PALETTE[i % RAINBOW_PALETTE.len()]),
+                            escape_ass_text(&w.text)
+                        )
+                    })
                     .collect();
-                events.push(Event { start: cue.start, end: cue.end, text: format!("{{\\fad(200,200)}}{}", text.join(" ")) });
+                events.push(Event {
+                    start: cue.start,
+                    end: cue.end,
+                    text: format!("{{\\fad(200,200)}}{}", text.join(" ")),
+                });
             }
             "typewriter" => {
                 for c in split_chars_proportional(cue) {
-                    events.push(Event { start: c.start, end: c.end, text: escape_ass_text(&c.text) });
+                    events.push(Event {
+                        start: c.start,
+                        end: c.end,
+                        text: escape_ass_text(&c.text),
+                    });
                 }
             }
             "word-highlight" => {
@@ -154,13 +213,21 @@ pub fn expand_cues_to_events(cues: &[Cue], animation: &str, o: &ExpandOptions) -
                         .map(|(j, other)| {
                             let escaped = escape_ass_text(&other.text);
                             if j == i {
-                                format!("{{\\1c{}}}{escaped}{{\\1c{}}}", ass_color_tag(&o.accent_color), ass_color_tag(&o.color))
+                                format!(
+                                    "{{\\1c{}}}{escaped}{{\\1c{}}}",
+                                    ass_color_tag(&o.accent_color),
+                                    ass_color_tag(&o.color)
+                                )
                             } else {
                                 escaped
                             }
                         })
                         .collect();
-                    events.push(Event { start: w.start, end: w.end, text: text.join(" ") });
+                    events.push(Event {
+                        start: w.start,
+                        end: w.end,
+                        text: text.join(" "),
+                    });
                 }
             }
             "sentence-slide" => {
@@ -168,11 +235,22 @@ pub fn expand_cues_to_events(cues: &[Cue], animation: &str, o: &ExpandOptions) -
                 events.push(Event {
                     start: cue.start,
                     end: cue.end,
-                    text: format!("{{\\move({},{},{},{},0,300)\\fad(300,0)}}{}", s.x, s.y_start, s.x, s.y_target, escape_ass_text(&cue.text)),
+                    text: format!(
+                        "{{\\move({},{},{},{},0,300)\\fad(300,0)}}{}",
+                        s.x,
+                        s.y_start,
+                        s.x,
+                        s.y_target,
+                        escape_ass_text(&cue.text)
+                    ),
                 });
             }
             // sentence-fade, et repli pour un mode inconnu
-            _ => events.push(Event { start: cue.start, end: cue.end, text: format!("{{\\fad(200,200)}}{}", escape_ass_text(&cue.text)) }),
+            _ => events.push(Event {
+                start: cue.start,
+                end: cue.end,
+                text: format!("{{\\fad(200,200)}}{}", escape_ass_text(&cue.text)),
+            }),
         }
     }
     events
@@ -201,7 +279,9 @@ fn strip_intro_animation(text: &str) -> String {
     let mut t = remove_tag(text, "\\fad(");
     t = remove_tag(&t, "\\move(");
     t = remove_tag(&t, "\\t(");
-    t = t.replace("\\fscx60\\fscy60", "").replace("\\fscx135\\fscy135", "");
+    t = t
+        .replace("\\fscx60\\fscy60", "")
+        .replace("\\fscx135\\fscy135", "");
     t.replace("{}", "")
 }
 
@@ -216,7 +296,11 @@ pub fn remap_events_to_kept_segments(events: &[Event], kept: &[Segment]) -> Vec<
             let clip_end = ev.end.min(seg.end);
             if clip_end > clip_start {
                 out.push(Event {
-                    text: if clip_start > ev.start { strip_intro_animation(&ev.text) } else { ev.text.clone() },
+                    text: if clip_start > ev.start {
+                        strip_intro_animation(&ev.text)
+                    } else {
+                        ev.text.clone()
+                    },
                     start: offset + (clip_start - seg.start),
                     end: offset + (clip_end - seg.start),
                 });
@@ -231,11 +315,24 @@ pub fn to_ass_time(seconds: f64) -> String {
     let total_cs = (seconds * 100.0).round().max(0.0) as u64;
     let cs = total_cs % 100;
     let total_sec = total_cs / 100;
-    format!("{}:{:02}:{:02}.{:02}", total_sec / 3600, (total_sec / 60) % 60, total_sec % 60, cs)
+    format!(
+        "{}:{:02}:{:02}.{:02}",
+        total_sec / 3600,
+        (total_sec / 60) % 60,
+        total_sec % 60,
+        cs
+    )
 }
 
-pub fn build_ass_content(events: &[Event], style: &SubtitleStyle, video_width: u32, video_height: u32) -> String {
-    let font_size_px = ((style.font_size / 100.0) * video_height as f64).round().max(8.0) as i64;
+pub fn build_ass_content(
+    events: &[Event],
+    style: &SubtitleStyle,
+    video_width: u32,
+    video_height: u32,
+) -> String {
+    let font_size_px = ((style.font_size / 100.0) * video_height as f64)
+        .round()
+        .max(8.0) as i64;
     let alignment = match style.position.as_str() {
         "top" => 8,
         "middle" => 5,
@@ -259,7 +356,14 @@ pub fn build_ass_content(events: &[Event], style: &SubtitleStyle, video_width: u
     let lines: Vec<String> = events
         .iter()
         .filter(|e| to_ass_time(e.start) != to_ass_time(e.end))
-        .map(|e| format!("Dialogue: 0,{},{},Default,,0,0,0,,{}", to_ass_time(e.start), to_ass_time(e.end), e.text))
+        .map(|e| {
+            format!(
+                "Dialogue: 0,{},{},Default,,0,0,0,,{}",
+                to_ass_time(e.start),
+                to_ass_time(e.end),
+                e.text
+            )
+        })
         .collect();
     format!("{header}{}\n", lines.join("\n"))
 }
@@ -269,7 +373,11 @@ mod tests {
     use super::*;
 
     fn cue(start: f64, end: f64, text: &str) -> Cue {
-        Cue { start, end, text: text.into() }
+        Cue {
+            start,
+            end,
+            text: text.into(),
+        }
     }
 
     fn style() -> SubtitleStyle {
@@ -298,7 +406,10 @@ mod tests {
     #[test]
     fn characters_accumulate_over_the_cue() {
         let c = split_chars_proportional(&cue(0.0, 3.0, "abc"));
-        assert_eq!(c.iter().map(|e| e.text.as_str()).collect::<Vec<_>>(), ["a", "ab", "abc"]);
+        assert_eq!(
+            c.iter().map(|e| e.text.as_str()).collect::<Vec<_>>(),
+            ["a", "ab", "abc"]
+        );
         assert_eq!(c[2].end, 3.0);
         assert!(split_chars_proportional(&cue(0.0, 1.0, "")).is_empty());
     }
@@ -321,18 +432,42 @@ mod tests {
         let o = ExpandOptions::default();
         let c = [cue(0.0, 2.0, "hello big world")];
         assert_eq!(expand_cues_to_events(&c, "word-pop", &o).len(), 3);
-        assert!(expand_cues_to_events(&c, "word-pop", &o)[0].text.starts_with("{\\fscx60\\fscy60\\t(0,120,"));
-        assert!(expand_cues_to_events(&c, "word-bounce", &o)[0].text.starts_with("{\\fscx135"));
-        assert_eq!(expand_cues_to_events(&c, "typewriter", &o).len(), "hello big world".chars().count());
+        assert!(expand_cues_to_events(&c, "word-pop", &o)[0]
+            .text
+            .starts_with("{\\fscx60\\fscy60\\t(0,120,"));
+        assert!(expand_cues_to_events(&c, "word-bounce", &o)[0]
+            .text
+            .starts_with("{\\fscx135"));
+        assert_eq!(
+            expand_cues_to_events(&c, "typewriter", &o).len(),
+            "hello big world".chars().count()
+        );
         let rainbow = expand_cues_to_events(&c, "rainbow", &o);
         assert_eq!(rainbow.len(), 1);
-        assert!(rainbow[0].text.starts_with("{\\fad(200,200)}{\\1c&H5C3BFF&}hello {\\1c") || rainbow[0].text.contains("&H5C3BFF&"));
+        assert!(
+            rainbow[0]
+                .text
+                .starts_with("{\\fad(200,200)}{\\1c&H5C3BFF&}hello {\\1c")
+                || rainbow[0].text.contains("&H5C3BFF&")
+        );
         let highlight = expand_cues_to_events(&c, "word-highlight", &o);
         assert_eq!(highlight.len(), 3);
-        assert!(highlight[1].text.contains("{\\1c&HEED322&}big{\\1c&HFFFFFF&}"), "{}", highlight[1].text);
-        assert!(expand_cues_to_events(&c, "sentence-slide", &o)[0].text.starts_with("{\\move(960,"));
-        assert!(expand_cues_to_events(&c, "sentence-fade", &o)[0].text.starts_with("{\\fad(200,200)}hello"));
-        assert!(expand_cues_to_events(&c, "unknown", &o)[0].text.starts_with("{\\fad(200,200)}"));
+        assert!(
+            highlight[1]
+                .text
+                .contains("{\\1c&HEED322&}big{\\1c&HFFFFFF&}"),
+            "{}",
+            highlight[1].text
+        );
+        assert!(expand_cues_to_events(&c, "sentence-slide", &o)[0]
+            .text
+            .starts_with("{\\move(960,"));
+        assert!(expand_cues_to_events(&c, "sentence-fade", &o)[0]
+            .text
+            .starts_with("{\\fad(200,200)}hello"));
+        assert!(expand_cues_to_events(&c, "unknown", &o)[0]
+            .text
+            .starts_with("{\\fad(200,200)}"));
     }
 
     #[test]
@@ -345,8 +480,21 @@ mod tests {
 
     #[test]
     fn events_are_clipped_and_shifted_onto_the_kept_segments() {
-        let events = [Event { start: 1.0, end: 7.0, text: "{\\fad(200,200)}x".into() }];
-        let kept = [Segment { start: 0.0, end: 3.0 }, Segment { start: 5.0, end: 8.0 }];
+        let events = [Event {
+            start: 1.0,
+            end: 7.0,
+            text: "{\\fad(200,200)}x".into(),
+        }];
+        let kept = [
+            Segment {
+                start: 0.0,
+                end: 3.0,
+            },
+            Segment {
+                start: 5.0,
+                end: 8.0,
+            },
+        ];
         let out = remap_events_to_kept_segments(&events, &kept);
         assert_eq!(out.len(), 2);
         assert_eq!((out[0].start, out[0].end), (1.0, 3.0));
@@ -358,15 +506,34 @@ mod tests {
 
     #[test]
     fn an_event_inside_a_cut_disappears() {
-        let events = [Event { start: 3.5, end: 4.5, text: "x".into() }];
-        let kept = [Segment { start: 0.0, end: 3.0 }, Segment { start: 5.0, end: 8.0 }];
+        let events = [Event {
+            start: 3.5,
+            end: 4.5,
+            text: "x".into(),
+        }];
+        let kept = [
+            Segment {
+                start: 0.0,
+                end: 3.0,
+            },
+            Segment {
+                start: 5.0,
+                end: 8.0,
+            },
+        ];
         assert!(remap_events_to_kept_segments(&events, &kept).is_empty());
     }
 
     #[test]
     fn the_intro_tags_are_stripped_from_a_continuation() {
-        assert_eq!(strip_intro_animation("{\\move(1,2,3,4,0,300)\\fad(300,0)}hi"), "hi");
-        assert_eq!(strip_intro_animation("{\\fscx60\\fscy60\\t(0,120,\\fscx100\\fscy100)}hi"), "hi");
+        assert_eq!(
+            strip_intro_animation("{\\move(1,2,3,4,0,300)\\fad(300,0)}hi"),
+            "hi"
+        );
+        assert_eq!(
+            strip_intro_animation("{\\fscx60\\fscy60\\t(0,120,\\fscx100\\fscy100)}hi"),
+            "hi"
+        );
     }
 
     #[test]
@@ -383,8 +550,16 @@ mod tests {
         s.position = "top".into();
         s.background_opacity = 0.5;
         let events = [
-            Event { start: 0.0, end: 1.0, text: "hi".into() },
-            Event { start: 2.0, end: 2.001, text: "gone".into() },
+            Event {
+                start: 0.0,
+                end: 1.0,
+                text: "hi".into(),
+            },
+            Event {
+                start: 2.0,
+                end: 2.001,
+                text: "gone".into(),
+            },
         ];
         let ass = build_ass_content(&events, &s, 1920, 1080);
         assert!(ass.contains("PlayResX: 1920") && ass.contains("PlayResY: 1080"));

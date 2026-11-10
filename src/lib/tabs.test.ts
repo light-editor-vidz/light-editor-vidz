@@ -150,4 +150,14 @@ describe("tabsReducer", () => {
     s = tabsReducer(s, { type: "openImage", path: "/p/b.png" });
     expect(s.tabs).toHaveLength(2);
   });
+
+  it("opens a video in a tab of its own and reuses the empty video view", () => {
+    let s = run([{ type: "openVideo", path: null }]);
+    const id = s.tabs[0].id;
+    s = tabsReducer(s, { type: "openVideo", path: "/v/a.mp4" });
+    expect(s.tabs).toHaveLength(1);
+    expect(s.tabs[0]).toMatchObject({ id, kind: "video", path: "/v/a.mp4" });
+    s = run([{ type: "openVideo", path: "/v/b.mp4" }], s);
+    expect(s.tabs.map((t) => t.kind)).toEqual(["video", "video"]);
+  });
 });

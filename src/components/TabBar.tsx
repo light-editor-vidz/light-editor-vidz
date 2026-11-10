@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Clapperboard, Home as HomeIcon, Image as ImageIcon, Music, X } from "lucide-react";
+import { Clapperboard, Film, Home as HomeIcon, Image as ImageIcon, Music, X } from "lucide-react";
 import { baseName } from "../lib/audiotool/helpers";
 import { HOME, type Tab } from "../lib/tabs";
 import "./TabBar.css";
@@ -33,8 +33,12 @@ export default function TabBar({ tabs, active, onActivate, onClose }: Props) {
         <span>{t("tabs.home")}</span>
       </button>
       {tabs.map((tab) => {
-        const title = titleOf(tab, t(tab.kind === "image" ? "tabs.image" : "tabs.audio"));
-        const Icon = tab.kind === "audio" ? Music : tab.kind === "image" ? ImageIcon : Clapperboard;
+        const title = titleOf(
+          tab,
+          t(tab.kind === "image" ? "tabs.image" : tab.kind === "video" ? "tabs.video" : "tabs.audio"),
+        );
+        const Icon =
+          tab.kind === "audio" ? Music : tab.kind === "image" ? ImageIcon : tab.kind === "video" ? Film : Clapperboard;
         return (
           <div key={tab.id} className={`tab${active === tab.id ? " active" : ""}`}>
             <button
@@ -48,7 +52,13 @@ export default function TabBar({ tabs, active, onActivate, onClose }: Props) {
               <Icon
                 size={14}
                 className={
-                  tab.kind === "audio" ? "tab-icon-audio" : tab.kind === "image" ? "tab-icon-image" : "tab-icon-project"
+                  tab.kind === "audio"
+                    ? "tab-icon-audio"
+                    : tab.kind === "image"
+                      ? "tab-icon-image"
+                      : tab.kind === "video"
+                        ? "tab-icon-video"
+                        : "tab-icon-project"
                 }
               />
               <span className="tab-title">{title}</span>

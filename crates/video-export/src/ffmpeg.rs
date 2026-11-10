@@ -71,18 +71,30 @@ struct ProbeStream {
 
 /// Lit la sortie JSON de `ffprobe -show_streams -show_format`.
 pub fn parse_probe(json: &str) -> Result<MediaInfo, String> {
-    let out: ProbeOut = serde_json::from_str(json).map_err(|e| format!("unreadable ffprobe output: {e}"))?;
-    let format = out.format.unwrap_or(ProbeFormat { format_name: None, duration: None });
+    let out: ProbeOut =
+        serde_json::from_str(json).map_err(|e| format!("unreadable ffprobe output: {e}"))?;
+    let format = out.format.unwrap_or(ProbeFormat {
+        format_name: None,
+        duration: None,
+    });
     let streams = out
         .streams
         .into_iter()
         .map(|s| {
             let from_matrix = s.side_data_list.as_ref().and_then(|l| {
-                l.iter().find_map(|d| d.get("rotation").and_then(|r| r.as_f64()))
+                l.iter()
+                    .find_map(|d| d.get("rotation").and_then(|r| r.as_f64()))
             });
-            let from_tag = s.tags.as_ref().and_then(|t| t.get("rotate")).and_then(|r| r.parse::<f64>().ok());
+            let from_tag = s
+                .tags
+                .as_ref()
+                .and_then(|t| t.get("rotate"))
+                .and_then(|r| r.parse::<f64>().ok());
             // Un `displaymatrix` de −90° est un quart de tour d'affichage de 90°.
-            let rotation = from_matrix.or(from_tag).map(|r| r.abs().round() as i32).filter(|r| *r != 0);
+            let rotation = from_matrix
+                .or(from_tag)
+                .map(|r| r.abs().round() as i32)
+                .filter(|r| *r != 0);
             StreamInfo {
                 codec_type: s.codec_type.unwrap_or_default(),
                 codec_name: s.codec_name.unwrap_or_default(),
@@ -90,27 +102,57 @@ pub fn parse_probe(json: &str) -> Result<MediaInfo, String> {
                 height: s.height,
                 pix_fmt: s.pix_fmt,
                 rotation,
-                attached_pic: s.disposition.and_then(|d| d.get("attached_pic").copied()).unwrap_or(0) == 1,
+                attached_pic: s
+                    .disposition
+                    .and_then(|d| d.get("attached_pic").copied())
+                    .unwrap_or(0)
+                    == 1,
             }
         })
         .collect();
     Ok(MediaInfo {
         format_name: format.format_name.unwrap_or_default(),
-        duration: format.duration.and_then(|d| d.parse().ok()).filter(|d: &f64| d.is_finite()),
+        duration: format
+            .duration
+            .and_then(|d| d.parse().ok())
+            .filter(|d: &f64| d.is_finite()),
         streams,
     })
 }
 
 const PROBLEM_WORDS: [&str; 14] = [
-    "error", "invalid", "fail", "no such", "unable", "cannot", "could not", "unrecognized", "unknown",
-    "not supported", "too big", "permission", "conversion failed", "no space",
+    "error",
+    "invalid",
+    "fail",
+    "no such",
+    "unable",
+    "cannot",
+    "could not",
+    "unrecognized",
+    "unknown",
+    "not supported",
+    "too big",
+    "permission",
+    "conversion failed",
+    "no space",
 ];
 
 fn is_chatter(line: &str) -> bool {
     let t = line.trim_start();
-    ["Stream", "Metadata", "Input", "Output", "out#", "[out#", "frame=", "size=", "video:", "Conversion failed"]
-        .iter()
-        .any(|p| t.starts_with(p))
+    [
+        "Stream",
+        "Metadata",
+        "Input",
+        "Output",
+        "out#",
+        "[out#",
+        "frame=",
+        "size=",
+        "video:",
+        "Conversion failed",
+    ]
+    .iter()
+    .any(|p| t.starts_with(p))
 }
 
 /// Les quelques lignes de stderr qui expliquent un échec, sans les statistiques de l'encodeur.
@@ -130,7 +172,11 @@ pub fn failure_message(lines: &[String]) -> String {
     } else {
         problems.into_iter().take(2).collect()
     };
-    chosen.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" | ")
+    chosen
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 /// Ce dont l'export a besoin d'un ffmpeg ; un double de test le remplace.
@@ -150,7 +196,11 @@ pub struct ProcessRunner {
 
 impl ProcessRunner {
     pub fn system(cancel: Arc<AtomicBool>) -> Self {
-        Self { ffmpeg: ffmpeg_binary(), ffprobe: ffprobe_binary(), cancel }
+        Self {
+            ffmpeg: ffmpeg_binary(),
+            ffprobe: ffprobe_binary(),
+            cancel,
+        }
     }
 }
 
@@ -160,7 +210,14 @@ impl Runner for ProcessRunner {
             return Err(FfError::Cancelled);
         }
         let mut child = Command::new(&self.ffmpeg)
-            .args(["-hide_banner", "-nostdin", "-nostats", "-y", "-progress", "pipe:1"])
+            .args([
+                "-hide_banner",
+                "-nostdin",
+                "-nostats",
+                "-y",
+                "-progress",
+                "pipe:1",
+            ])
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -215,13 +272,25 @@ impl Runner for ProcessRunner {
 
     fn probe(&self, path: &str) -> Result<MediaInfo, String> {
         let output = Command::new(&self.ffprobe)
-            .args(["-v", "error", "-show_streams", "-show_format", "-of", "json", path])
+            .args([
+                "-v",
+                "error",
+                "-show_streams",
+                "-show_format",
+                "-of",
+                "json",
+                path,
+            ])
             .stdin(Stdio::null())
             .output()
             .map_err(|e| format!("Failed to launch ffprobe: {e}"))?;
         if !output.status.success() {
             let err = String::from_utf8_lossy(&output.stderr);
-            let reason = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("unreadable file");
+            let reason = err
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("unreadable file");
             return Err(reason.to_string());
         }
         parse_probe(&String::from_utf8_lossy(&output.stdout))
@@ -264,7 +333,10 @@ mod tests {
         .unwrap();
         assert_eq!(info.duration, Some(12.5));
         assert_eq!(info.streams.len(), 3);
-        assert_eq!((info.streams[0].width, info.streams[0].rotation), (Some(1920), Some(90)));
+        assert_eq!(
+            (info.streams[0].width, info.streams[0].rotation),
+            (Some(1920), Some(90))
+        );
         assert_eq!(info.streams[1].codec_type, "audio");
         assert!(info.streams[2].attached_pic);
     }
@@ -294,25 +366,41 @@ mod tests {
         .iter()
         .map(|s| s.to_string())
         .collect();
-        assert_eq!(failure_message(&lines), "[vf#0:0] Error reinitializing filters! | Invalid argument");
+        assert_eq!(
+            failure_message(&lines),
+            "[vf#0:0] Error reinitializing filters! | Invalid argument"
+        );
     }
 
     #[test]
     fn without_a_recognisable_cause_the_last_lines_are_shown() {
-        let lines: Vec<String> = ["one", "two", "three", "four"].iter().map(|s| s.to_string()).collect();
+        let lines: Vec<String> = ["one", "two", "three", "four"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert_eq!(failure_message(&lines), "two | three | four");
         assert_eq!(failure_message(&[]), "");
     }
 
     #[test]
     fn a_cancelled_runner_never_starts_ffmpeg() {
-        let runner = ProcessRunner { ffmpeg: "/does/not/exist".into(), ffprobe: "x".into(), cancel: Arc::new(AtomicBool::new(true)) };
+        let runner = ProcessRunner {
+            ffmpeg: "/does/not/exist".into(),
+            ffprobe: "x".into(),
+            cancel: Arc::new(AtomicBool::new(true)),
+        };
         assert_eq!(runner.run(&[], &mut |_| {}), Err(FfError::Cancelled));
     }
 
     #[test]
     fn a_missing_ffmpeg_is_reported() {
-        let runner = ProcessRunner { ffmpeg: "/does/not/exist".into(), ffprobe: "x".into(), cancel: Arc::new(AtomicBool::new(false)) };
-        assert!(matches!(runner.run(&[], &mut |_| {}), Err(FfError::Failed(m)) if m.contains("Failed to launch ffmpeg")));
+        let runner = ProcessRunner {
+            ffmpeg: "/does/not/exist".into(),
+            ffprobe: "x".into(),
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+        assert!(
+            matches!(runner.run(&[], &mut |_| {}), Err(FfError::Failed(m)) if m.contains("Failed to launch ffmpeg"))
+        );
     }
 }

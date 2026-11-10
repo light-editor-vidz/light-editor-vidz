@@ -9,7 +9,11 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     menu_style::unhinted_text();
     tauri::Builder::default()
-        .setup(|_app| {
+        .setup(|app| {
+            {
+                use tauri::Manager;
+                app.manage(commands::video_tool::VideoState::new(app.handle().clone()));
+            }
             #[cfg(target_os = "linux")]
             menu_style::style_menu_bar();
             Ok(())
@@ -89,6 +93,20 @@ pub fn run() {
             commands::audio_tool::audio_recent_forget,
             commands::audio_tool::audio_process,
             commands::audio_tool::audio_cancel,
+            commands::video_tool::video_pick_file,
+            commands::video_tool::video_pick_subtitles,
+            commands::video_tool::video_pick_output,
+            commands::video_tool::video_probe,
+            commands::video_tool::video_preview,
+            commands::video_tool::video_cancel_preview,
+            commands::video_tool::video_filters,
+            commands::video_tool::video_capabilities,
+            commands::video_tool::video_queue_add,
+            commands::video_tool::video_queue_list,
+            commands::video_tool::video_queue_cancel,
+            commands::video_tool::video_queue_clear_finished,
+            commands::video_tool::video_recent_list,
+            commands::video_tool::video_recent_forget,
             imgz::commands::open::open_images,
             imgz::commands::open::open_images_by_paths,
             imgz::commands::exif::get_exif,
@@ -112,6 +130,13 @@ pub fn run() {
             imgz::commands::inpaint::inpaint_image,
             commands::release_notes::release_notes,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Les exports en cours sont arrêtés et l'aperçu transcodé supprimé à la sortie.
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                app.state::<commands::video_tool::VideoState>().shutdown();
+            }
+        });
 }

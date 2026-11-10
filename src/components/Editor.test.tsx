@@ -1451,38 +1451,3 @@ describe("Editor — menus et dialogues", () => {
     await waitFor(() => expect(screen.queryByText("Pexels")).not.toBeInTheDocument());
   });
 });
-
-describe("Editor — média initial (projet créé depuis un fichier)", () => {
-  async function renderWithMedia(media: { kind: "video" | "image"; src: string; name: string }) {
-    mockLoad.mockResolvedValue(makeProject());
-    render(<Editor projectDir="/p" onBack={vi.fn()} onOpenProject={vi.fn()} initialMedia={media} />);
-    await act(async () => {});
-  }
-
-  it("pose la vidéo dans la première scène, une seule fois", async () => {
-    await renderWithMedia({ kind: "video", src: "assets/video/clip.mp4", name: "clip.mp4" });
-
-    const first = elementsOf(await savedProject());
-    const added = first.filter((e) => e.type === "video");
-    expect(added).toHaveLength(1);
-    expect(added[0]).toMatchObject({ src: "assets/video/clip.mp4", name: "clip.mp4" });
-    // Les éléments déjà là sont intacts.
-    expect(first.filter((e) => e.type !== "video").map((e) => e.name)).toEqual(["one", "two"]);
-
-    expect(elementsOf(await savedProject()).filter((e) => e.type === "video")).toHaveLength(1);
-  });
-
-  it("pose l'image dans la première scène", async () => {
-    await renderWithMedia({ kind: "image", src: "assets/image/photo.png", name: "photo.png" });
-
-    const added = elementsOf(await savedProject()).filter((e) => e.type === "image");
-    expect(added).toHaveLength(1);
-    expect(added[0]).toMatchObject({ src: "assets/image/photo.png" });
-  });
-
-  it("n'ajoute rien sans média initial", async () => {
-    await renderEditor();
-
-    expect(elementsOf(await savedProject()).map((e) => e.name)).toEqual(["one", "two"]);
-  });
-});

@@ -318,13 +318,23 @@ describe("Home — outils", () => {
     render(<Home onOpenProject={vi.fn()} onOpenTool={onOpenTool} />);
     await act(async () => {});
 
-    for (const name of [/Video/, /Subtitles/]) {
+    for (const name of [/Subtitles/]) {
       const button = screen.getByRole("button", { name });
       expect(button).toBeDisabled();
       expect(button).toHaveTextContent("Coming soon");
       fireEvent.click(button);
     }
     expect(onOpenTool).not.toHaveBeenCalled();
+  });
+
+  it("Vidéo ouvre l'outil vidéo", async () => {
+    const onOpenTool = vi.fn();
+    render(<Home onOpenProject={vi.fn()} onOpenTool={onOpenTool} />);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByRole("button", { name: /Video/ }));
+
+    expect(onOpenTool).toHaveBeenCalledWith("video");
   });
 
   it("Image ouvre l'outil image", async () => {

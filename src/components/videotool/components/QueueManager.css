@@ -1,0 +1,180 @@
+.vt-root .queue-pill {
+  position: fixed;
+  top: 52px;
+  right: 14px;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.vt-root .queue-pill.busy {
+  border-color: var(--accent);
+}
+
+.vt-root .queue-pill.failed {
+  border-color: var(--danger);
+}
+
+.vt-root .queue-pill.idle {
+  color: var(--text-secondary);
+}
+
+.vt-root .queue-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: queue-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes queue-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.vt-root .queue-waiting {
+  color: var(--text-secondary);
+}
+
+.vt-root .queue-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 210;
+}
+
+.vt-root .queue-modal {
+  width: min(520px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.vt-root .queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 8px;
+}
+
+.vt-root .queue-header h2 {
+  font-size: 16px;
+}
+
+.vt-root .queue-close {
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text-secondary);
+  padding: 0 6px;
+}
+
+.vt-root .queue-list {
+  list-style: none;
+  padding: 4px 20px 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vt-root .queue-job {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+}
+
+.vt-root .queue-job-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.vt-root .queue-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.vt-root .queue-format {
+  font-size: 10px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+.vt-root .queue-status {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.vt-root .status-running .queue-status {
+  color: var(--accent);
+}
+
+.vt-root .status-done .queue-status {
+  color: var(--success);
+}
+
+.vt-root .status-error .queue-status {
+  color: var(--danger);
+}
+
+.vt-root .queue-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.vt-root .queue-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.vt-root .queue-error {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--danger);
+  user-select: text;
+  word-break: break-word;
+}
+
+.vt-root .queue-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.vt-root .queue-actions:empty {
+  display: none;
+}
+
+.vt-root .queue-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 20px 16px;
+}

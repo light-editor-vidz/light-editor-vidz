@@ -28,6 +28,8 @@ export interface MenuFlags {
   inAudio: boolean;
   /** Un onglet image (avec une image ouverte) est affiché. */
   inImage: boolean;
+  /** Un onglet vidéo (avec une vidéo ouverte) est affiché. */
+  inVideo: boolean;
   canUndo: boolean;
   canRedo: boolean;
   hasSelection: boolean;
@@ -37,6 +39,7 @@ const NO_FLAGS: MenuFlags = {
   inEditor: false,
   inAudio: false,
   inImage: false,
+  inVideo: false,
   canUndo: false,
   canRedo: false,
   hasSelection: false,

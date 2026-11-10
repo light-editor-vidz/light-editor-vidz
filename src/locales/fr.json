@@ -15,7 +15,7 @@
       },
       "video": {
         "name": "Vidéo",
-        "hint": ""
+        "hint": "Couper, recadrer, filtrer, sous-titrer"
       },
       "image": {
         "name": "Image",
@@ -566,7 +566,8 @@
     "close": "Fermer l'onglet",
     "closeNamed": "Fermer {{name}}",
     "unsupportedFile": "Ce type de fichier ne peut pas être ouvert.",
-    "image": "Image"
+    "image": "Image",
+    "video": "Vidéo"
   },
   "imageTool": {
     "toolbar": {

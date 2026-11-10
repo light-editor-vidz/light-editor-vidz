@@ -1,12 +1,5 @@
 // Les onglets de la fenêtre : l'accueil (toujours là), des projets, des fichiers audio.
 
-export interface ProjectMedia {
-  kind: "video" | "image";
-  /** Chemin relatif au dossier du projet, tel que renvoyé par l'import. */
-  src: string;
-  name: string;
-}
-
 export type Tab =
   | {
       id: string;
@@ -14,12 +7,10 @@ export type Tab =
       dir: string;
       /** Message à afficher à l'ouverture (ex : médias à ré-importer après un import legacy). */
       notice: string | null;
-      /** Média à poser dans la première scène à l'ouverture (projet créé depuis une vidéo/image). */
-      media: ProjectMedia | null;
     }
   | {
       id: string;
-      kind: "audio" | "image";
+      kind: "audio" | "image" | "video";
       /** Fichier ouvert ; `null` = vue vide (zone de dépôt et fichiers récents). */
       path: string | null;
     };
@@ -37,9 +28,10 @@ export interface TabsState {
 export const initialTabs: TabsState = { tabs: [], active: HOME, startNewProject: false };
 
 export type TabsAction =
-  | { type: "openProject"; dir: string; notice?: string | null; media?: ProjectMedia | null }
+  | { type: "openProject"; dir: string; notice?: string | null }
   | { type: "openAudio"; path: string | null }
   | { type: "openImage"; path: string | null }
+  | { type: "openVideo"; path: string | null }
   | { type: "activate"; id: string }
   | { type: "close"; id: string; intent?: "new" }
   | { type: "setTabPath"; id: string; path: string }
@@ -58,7 +50,7 @@ function neighbour(tabs: Tab[], closing: string): string {
 /** Ouvre un fichier dans un onglet de ce type : un onglet qui l'a déjà est remis au premier plan,
  * un onglet vide affiché est rempli, sinon un nouvel onglet est créé. La vue vide n'existe
  * qu'une fois. */
-function openFileTab(state: TabsState, kind: "audio" | "image", path: string | null): TabsState {
+function openFileTab(state: TabsState, kind: "audio" | "image" | "video", path: string | null): TabsState {
   const existing = state.tabs.find((t) => t.kind === kind && t.path === path);
   if (existing) return { ...state, active: existing.id };
   const shown = state.tabs.find((t) => t.id === state.active);
@@ -80,7 +72,6 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
         kind: "project",
         dir: action.dir,
         notice: action.notice ?? null,
-        media: action.media ?? null,
       };
       return { tabs: [...state.tabs, tab], active: tab.id, startNewProject: false };
     }
@@ -88,6 +79,8 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
       return openFileTab(state, "audio", action.path);
     case "openImage":
       return openFileTab(state, "image", action.path);
+    case "openVideo":
+      return openFileTab(state, "video", action.path);
     case "activate":
       return state.active === action.id || (action.id !== HOME && !state.tabs.some((t) => t.id === action.id))
         ? state

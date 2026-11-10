@@ -1,0 +1,329 @@
+.vt-root .timeline {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 16px 6px;
+  gap: 5px;
+}
+
+.vt-root .tl-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  height: 20px;
+}
+
+.vt-root .tl-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+}
+
+.vt-root .tl-cut-count {
+  font-size: 11px;
+  color: var(--accent);
+  background: rgba(224, 90, 43, 0.15);
+  border: 1px solid rgba(224, 90, 43, 0.35);
+  border-radius: 10px;
+  padding: 0 7px;
+  line-height: 18px;
+}
+
+.vt-root .tl-clear-btn {
+  padding: 2px 9px;
+  border-radius: 4px;
+  background: rgba(229, 62, 62, 0.12);
+  border: 1px solid rgba(229, 62, 62, 0.35);
+  color: var(--danger);
+  font-size: 11px;
+  transition: background 0.1s;
+}
+
+.vt-root .tl-clear-btn:hover {
+  background: rgba(229, 62, 62, 0.22);
+}
+
+.vt-root .tl-hint {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.vt-root .tl-track {
+  flex: 1;
+  position: relative;
+  cursor: crosshair;
+  display: flex;
+  flex-direction: column;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  min-height: 0;
+}
+
+.vt-root .tl-ruler {
+  height: 20px;
+  position: relative;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  z-index: 2;
+}
+
+.vt-root .tl-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.vt-root .tl-tick.major {
+  background: var(--border);
+}
+
+.vt-root .tl-tick.minor {
+  background: var(--tick-minor);
+}
+
+.vt-root .tl-tick-label {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.vt-root .tl-body {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.vt-root .tl-kept-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.vt-root .tl-cut {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* transparent so filmstrip shows through — red tint on top */
+  background: rgba(220, 50, 50, 0.55);
+  border-left: 3px solid #e53e3e;
+  border-right: 3px solid #e53e3e;
+  cursor: move;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  /* Cut zones look brighter than masked kept zones */
+  box-shadow: inset 0 0 0 9999px rgba(220, 50, 50, 0.1);
+}
+
+.vt-root .tl-cut.selected {
+  border-color: #fc8181;
+  background: rgba(220, 50, 50, 0.7);
+}
+
+.vt-root .tl-cut-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  cursor: ew-resize;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vt-root .tl-cut-handle::after {
+  content: "";
+  width: 3px;
+  height: 60%;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 2px;
+}
+
+.vt-root .tl-cut-handle-left {
+  left: -2px;
+}
+
+.vt-root .tl-cut-handle-right {
+  right: -2px;
+}
+
+.vt-root .tl-cut-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.vt-root .tl-cut-duration {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.vt-root .tl-cut-delete {
+  pointer-events: all;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+
+.vt-root .tl-cut-delete:hover {
+  background: var(--danger);
+}
+
+.vt-root .tl-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 10;
+  transform: translateX(-1px);
+}
+
+.vt-root .tl-playhead-head {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  clip-path: polygon(50% 100%, 0 0, 100% 0);
+}
+
+.vt-root .cut-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 4px;
+  overflow: hidden;
+}
+
+.vt-root .cut-editor-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.vt-root .cut-editor-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vt-root .cut-editor-field-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.vt-root .cut-editor-input {
+  width: 72px;
+  padding: 3px 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-family: "SF Mono", "Menlo", monospace;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.vt-root .cut-editor-input:focus {
+  border-color: var(--accent);
+}
+
+.vt-root .cut-editor-seek {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 0.1s,
+    color 0.1s;
+}
+
+.vt-root .cut-editor-seek:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.vt-root .cut-editor-arrow {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.vt-root .cut-editor-dur {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.vt-root .cut-editor-delete {
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: 5px;
+  background: rgba(229, 62, 62, 0.12);
+  border: 1px solid rgba(229, 62, 62, 0.35);
+  color: var(--danger);
+  font-size: 11px;
+  transition: background 0.1s;
+}
+
+.vt-root .cut-editor-delete:hover {
+  background: rgba(229, 62, 62, 0.25);
+}
+
+.vt-root .cut-editor-placeholder {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.vt-root .tl-cut-draft {
+  opacity: 0.7;
+  border-style: dashed;
+}

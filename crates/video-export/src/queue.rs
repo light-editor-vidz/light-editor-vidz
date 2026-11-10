@@ -80,7 +80,14 @@ impl<S: Send + 'static> ExportQueue<S> {
         execute: impl Fn(S, &JobContext) -> Result<(), String> + Send + Sync + 'static,
         on_change: impl Fn(Vec<JobSnapshot>) + Send + Sync + 'static,
     ) -> Self {
-        let state = Arc::new((Mutex::new(State { jobs: vec![], seq: 0, shutdown: false }), Condvar::new()));
+        let state = Arc::new((
+            Mutex::new(State {
+                jobs: vec![],
+                seq: 0,
+                shutdown: false,
+            }),
+            Condvar::new(),
+        ));
         let on_change: Arc<OnChange> = Arc::new(on_change);
         let execute: Arc<Execute<S>> = Arc::new(execute);
         {
@@ -99,7 +106,14 @@ impl<S: Send + 'static> ExportQueue<S> {
     }
 
     pub fn get(&self, id: u64) -> Option<JobSnapshot> {
-        self.state.0.lock().unwrap().jobs.iter().find(|j| j.snap.id == id).map(|j| j.snap.clone())
+        self.state
+            .0
+            .lock()
+            .unwrap()
+            .jobs
+            .iter()
+            .find(|j| j.snap.id == id)
+            .map(|j| j.snap.clone())
     }
 
     /// Ajoute un travail. Deux travaux qui écrivent le même fichier s'écraseraient : refusé.
@@ -107,13 +121,25 @@ impl<S: Send + 'static> ExportQueue<S> {
         let (lock, cv) = &*self.state;
         let (id, snapshot) = {
             let mut st = lock.lock().unwrap();
-            if st.jobs.iter().any(|j| active(j.snap.status) && j.snap.output_path == meta.output_path) {
+            if st
+                .jobs
+                .iter()
+                .any(|j| active(j.snap.status) && j.snap.output_path == meta.output_path)
+            {
                 return Err("Another queued export already writes to that file".into());
             }
             st.seq += 1;
             let id = st.seq;
             st.jobs.push(Job {
-                snap: JobSnapshot { id, name: meta.name, format: meta.format, status: JobStatus::Queued, progress: 0, output_path: meta.output_path, error: None },
+                snap: JobSnapshot {
+                    id,
+                    name: meta.name,
+                    format: meta.format,
+                    status: JobStatus::Queued,
+                    progress: 0,
+                    output_path: meta.output_path,
+                    error: None,
+                },
                 spec: Some(spec),
                 cancel: Arc::new(AtomicBool::new(false)),
             });
@@ -128,7 +154,9 @@ impl<S: Send + 'static> ExportQueue<S> {
     pub fn cancel(&self, id: u64) -> bool {
         let snapshot = {
             let mut st = self.state.0.lock().unwrap();
-            let Some(job) = st.jobs.iter_mut().find(|j| j.snap.id == id) else { return false };
+            let Some(job) = st.jobs.iter_mut().find(|j| j.snap.id == id) else {
+                return false;
+            };
             if !active(job.snap.status) {
                 return false;
             }
@@ -149,7 +177,16 @@ impl<S: Send + 'static> ExportQueue<S> {
 
     /// Annule tous les travaux actifs (à la fermeture de l'application).
     pub fn cancel_all(&self) {
-        let ids: Vec<u64> = self.state.0.lock().unwrap().jobs.iter().filter(|j| active(j.snap.status)).map(|j| j.snap.id).collect();
+        let ids: Vec<u64> = self
+            .state
+            .0
+            .lock()
+            .unwrap()
+            .jobs
+            .iter()
+            .filter(|j| active(j.snap.status))
+            .map(|j| j.snap.id)
+            .collect();
         for id in ids {
             self.cancel(id);
         }
@@ -166,11 +203,24 @@ impl<S: Send + 'static> ExportQueue<S> {
     }
 
     pub fn has_active(&self) -> bool {
-        self.state.0.lock().unwrap().jobs.iter().any(|j| active(j.snap.status))
+        self.state
+            .0
+            .lock()
+            .unwrap()
+            .jobs
+            .iter()
+            .any(|j| active(j.snap.status))
     }
 
     pub fn active_count(&self) -> usize {
-        self.state.0.lock().unwrap().jobs.iter().filter(|j| active(j.snap.status)).count()
+        self.state
+            .0
+            .lock()
+            .unwrap()
+            .jobs
+            .iter()
+            .filter(|j| active(j.snap.status))
+            .count()
     }
 }
 
@@ -182,7 +232,11 @@ impl<S: Send + 'static> Drop for ExportQueue<S> {
     }
 }
 
-fn worker<S: Send + 'static>(state: Arc<(Mutex<State<S>>, Condvar)>, on_change: Arc<OnChange>, execute: Arc<Execute<S>>) {
+fn worker<S: Send + 'static>(
+    state: Arc<(Mutex<State<S>>, Condvar)>,
+    on_change: Arc<OnChange>,
+    execute: Arc<Execute<S>>,
+) {
     let (lock, cv) = &*state;
     loop {
         // Prochain travail en attente, ou attendre.
@@ -192,12 +246,24 @@ fn worker<S: Send + 'static>(state: Arc<(Mutex<State<S>>, Condvar)>, on_change: 
                 if st.shutdown {
                     return;
                 }
-                if let Some(pos) = st.jobs.iter().position(|j| j.snap.status == JobStatus::Queued) {
+                if let Some(pos) = st
+                    .jobs
+                    .iter()
+                    .position(|j| j.snap.status == JobStatus::Queued)
+                {
                     let job = &mut st.jobs[pos];
                     job.snap.status = JobStatus::Running;
-                    let spec = job.spec.take().expect("un travail en attente a sa spécification");
+                    let spec = job
+                        .spec
+                        .take()
+                        .expect("un travail en attente a sa spécification");
                     let (id, cancel) = (job.snap.id, job.cancel.clone());
-                    break (id, spec, cancel, st.jobs.iter().map(|j| j.snap.clone()).collect::<Vec<_>>());
+                    break (
+                        id,
+                        spec,
+                        cancel,
+                        st.jobs.iter().map(|j| j.snap.clone()).collect::<Vec<_>>(),
+                    );
                 }
                 st = cv.wait(st).unwrap();
             }
@@ -212,7 +278,9 @@ fn worker<S: Send + 'static>(state: Arc<(Mutex<State<S>>, Condvar)>, on_change: 
                     let pct = pct.min(100);
                     let snapshot = {
                         let mut st = state.0.lock().unwrap();
-                        let Some(job) = st.jobs.iter_mut().find(|j| j.snap.id == id) else { return };
+                        let Some(job) = st.jobs.iter_mut().find(|j| j.snap.id == id) else {
+                            return;
+                        };
                         if job.snap.progress == pct {
                             return;
                         }
@@ -256,7 +324,11 @@ mod tests {
     use std::time::Duration;
 
     fn meta(out: &str) -> JobMeta {
-        JobMeta { name: out.into(), format: "mp4".into(), output_path: out.into() }
+        JobMeta {
+            name: out.into(),
+            format: "mp4".into(),
+            output_path: out.into(),
+        }
     }
 
     fn wait_for(q: &ExportQueue<u32>, id: u64, status: JobStatus) {
@@ -292,12 +364,18 @@ mod tests {
     fn two_jobs_cannot_write_the_same_file_while_active() {
         let (release, wait) = mpsc::channel::<()>();
         let wait = Mutex::new(wait);
-        let q = ExportQueue::new(move |_: u32, _: &JobContext| {
-            let _ = wait.lock().unwrap().recv();
-            Ok(())
-        }, |_| {});
+        let q = ExportQueue::new(
+            move |_: u32, _: &JobContext| {
+                let _ = wait.lock().unwrap().recv();
+                Ok(())
+            },
+            |_| {},
+        );
         let a = q.add(1, meta("/same")).unwrap();
-        assert_eq!(q.add(2, meta("/same")).unwrap_err(), "Another queued export already writes to that file");
+        assert_eq!(
+            q.add(2, meta("/same")).unwrap_err(),
+            "Another queued export already writes to that file"
+        );
         release.send(()).unwrap();
         wait_for(&q, a, JobStatus::Done);
         // Une fois fini, le fichier peut être réécrit.
@@ -307,12 +385,18 @@ mod tests {
 
     #[test]
     fn a_failing_job_records_its_error_and_the_queue_goes_on() {
-        let q = ExportQueue::new(|n: u32, _: &JobContext| if n == 1 { Err("boom".into()) } else { Ok(()) }, |_| {});
+        let q = ExportQueue::new(
+            |n: u32, _: &JobContext| if n == 1 { Err("boom".into()) } else { Ok(()) },
+            |_| {},
+        );
         let a = q.add(1, meta("/a")).unwrap();
         let b = q.add(2, meta("/b")).unwrap();
         wait_for(&q, b, JobStatus::Done);
         let a = q.get(a).unwrap();
-        assert_eq!((a.status, a.error.as_deref()), (JobStatus::Error, Some("boom")));
+        assert_eq!(
+            (a.status, a.error.as_deref()),
+            (JobStatus::Error, Some("boom"))
+        );
     }
 
     #[test]
@@ -320,11 +404,14 @@ mod tests {
         let (release, wait) = mpsc::channel::<()>();
         let wait = Mutex::new(wait);
         let (ran_tx, ran) = mpsc::channel();
-        let q = ExportQueue::new(move |n: u32, _: &JobContext| {
-            ran_tx.send(n).unwrap();
-            let _ = wait.lock().unwrap().recv();
-            Ok(())
-        }, |_| {});
+        let q = ExportQueue::new(
+            move |n: u32, _: &JobContext| {
+                ran_tx.send(n).unwrap();
+                let _ = wait.lock().unwrap().recv();
+                Ok(())
+            },
+            |_| {},
+        );
         let a = q.add(1, meta("/a")).unwrap();
         let b = q.add(2, meta("/b")).unwrap();
         wait_for(&q, a, JobStatus::Running);
@@ -359,12 +446,15 @@ mod tests {
     fn finished_jobs_can_be_cleared_and_active_ones_are_kept() {
         let (release, wait) = mpsc::channel::<()>();
         let wait = Mutex::new(wait);
-        let q = ExportQueue::new(move |n: u32, _: &JobContext| {
-            if n == 2 {
-                let _ = wait.lock().unwrap().recv();
-            }
-            Ok(())
-        }, |_| {});
+        let q = ExportQueue::new(
+            move |n: u32, _: &JobContext| {
+                if n == 2 {
+                    let _ = wait.lock().unwrap().recv();
+                }
+                Ok(())
+            },
+            |_| {},
+        );
         let a = q.add(1, meta("/a")).unwrap();
         let b = q.add(2, meta("/b")).unwrap();
         wait_for(&q, a, JobStatus::Done);
@@ -379,11 +469,14 @@ mod tests {
     fn every_change_is_announced() {
         let seen = Arc::new(Mutex::new(Vec::<JobStatus>::new()));
         let sink = seen.clone();
-        let q = ExportQueue::new(|_: u32, _: &JobContext| Ok(()), move |jobs| {
-            if let Some(j) = jobs.last() {
-                sink.lock().unwrap().push(j.status);
-            }
-        });
+        let q = ExportQueue::new(
+            |_: u32, _: &JobContext| Ok(()),
+            move |jobs| {
+                if let Some(j) = jobs.last() {
+                    sink.lock().unwrap().push(j.status);
+                }
+            },
+        );
         let a = q.add(1, meta("/a")).unwrap();
         wait_for(&q, a, JobStatus::Done);
         std::thread::sleep(Duration::from_millis(20));

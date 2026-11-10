@@ -6,11 +6,12 @@ import Home from "./components/Home";
 import Editor from "./components/Editor";
 import AudioTool from "./components/audiotool/AudioTool";
 import ImageTool from "./components/imagetool/ImageTool";
+import VideoTool from "./components/videotool/VideoTool";
 import TabBar from "./components/TabBar";
 import { installCloseGuard } from "./lib/closeGuard";
 import { describeError } from "./lib/errors";
 import { TabActiveProvider, useRegisterMenuActions } from "./lib/menuBridge";
-import { createProjectFromMedia, mediaKind, pickMediaFile, type PickedFile } from "./lib/openMedia";
+import { mediaKind, pickMediaFile, type PickedFile } from "./lib/openMedia";
 import { HOME, initialTabs, tabsReducer } from "./lib/tabs";
 
 function TabPanel({ active, children }: { active: boolean; children: React.ReactNode }) {
@@ -44,8 +45,7 @@ function App() {
         } else if (kind === "image") {
           dispatch({ type: "openImage", path });
         } else if (kind === "video") {
-          const { dir, media } = await createProjectFromMedia(path, kind);
-          dispatch({ type: "openProject", dir, media });
+          dispatch({ type: "openVideo", path });
         } else {
           setError(t("tabs.unsupportedFile"));
         }
@@ -120,6 +120,7 @@ function App() {
             onOpenTool={(tool) => {
               if (tool === "audio") dispatch({ type: "openAudio", path: null });
               if (tool === "image") dispatch({ type: "openImage", path: null });
+              if (tool === "video") dispatch({ type: "openVideo", path: null });
             }}
           />
         </TabPanel>
@@ -130,9 +131,19 @@ function App() {
               <Editor
                 projectDir={tab.dir}
                 initialNotice={tab.notice}
-                initialMedia={tab.media}
                 onBack={(intent) => dispatch({ type: "close", id: tab.id, intent })}
                 onOpenProject={(dir, notice) => dispatch({ type: "openProject", dir, notice })}
+              />
+            ) : tab.kind === "video" ? (
+              <VideoTool
+                path={tab.path}
+                onOpenFile={() => void openFile()}
+                onOpenPath={(path) => dispatch({ type: "setTabPath", id: tab.id, path })}
+                onClose={() => dispatch({ type: "close", id: tab.id })}
+                registerCloseGuard={(guard) => {
+                  closeGuards.current.set(tab.id, guard);
+                  return () => void closeGuards.current.delete(tab.id);
+                }}
               />
             ) : tab.kind === "image" ? (
               <ImageTool

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import TabBar from "./TabBar";
 import { HOME, type Tab } from "../lib/tabs";
 
-const project: Tab = { id: "project-1", kind: "project", dir: "/work/Spot A.lvproj", notice: null, media: null };
+const project: Tab = { id: "project-1", kind: "project", dir: "/work/Spot A.lvproj", notice: null };
 const audio: Tab = { id: "audio-1", kind: "audio", path: "/music/song.mp3" };
 const emptyAudio: Tab = { id: "audio-2", kind: "audio", path: null };
 

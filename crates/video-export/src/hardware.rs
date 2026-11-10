@@ -18,10 +18,25 @@ pub fn candidates(platform: &str) -> &'static [&'static str] {
 pub fn detect_hardware(runner: &dyn Runner, platform: &str) -> Vec<String> {
     let mut usable = Vec::new();
     for id in candidates(platform) {
-        let Ok(profile) = hardware_profile(id, "balanced") else { continue };
+        let Ok(profile) = hardware_profile(id, "balanced") else {
+            continue;
+        };
         let mut args = profile.input_args.clone();
-        args.extend(["-f", "lavfi", "-i", "color=c=black:s=320x240:d=0.3:r=10", "-vf"].map(String::from));
-        args.push(if profile.filter.is_empty() { "format=yuv420p".into() } else { profile.filter.clone() });
+        args.extend(
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=320x240:d=0.3:r=10",
+                "-vf",
+            ]
+            .map(String::from),
+        );
+        args.push(if profile.filter.is_empty() {
+            "format=yuv420p".into()
+        } else {
+            profile.filter.clone()
+        });
         args.extend(profile.args);
         args.extend(["-f", "null", "-"].map(String::from));
         if runner.run(&args, &mut |_| {}).is_ok() {
@@ -33,14 +48,22 @@ pub fn detect_hardware(runner: &dyn Runner, platform: &str) -> Vec<String> {
 
 /// `ffmpeg -filters` liste les deux filtres de stabilisation.
 pub fn has_stabilization(filters_text: &str) -> bool {
-    let has = |name: &str| filters_text.split(|c: char| !c.is_alphanumeric()).any(|w| w == name);
+    let has = |name: &str| {
+        filters_text
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|w| w == name)
+    };
     has("vidstabdetect") && has("vidstabtransform")
 }
 
 /// La stabilisation marche-t-elle vraiment ? Avoir les filtres ne suffit pas (certains builds
 /// écrivent des données de mouvement qu'ils ne savent pas relire) : les deux passes sont essayées
 /// sur un court clip tremblé synthétique.
-pub fn stabilization_works(runner: &dyn Runner, filters_text: &str, work_dir: &std::path::Path) -> bool {
+pub fn stabilization_works(
+    runner: &dyn Runner,
+    filters_text: &str,
+    work_dir: &std::path::Path,
+) -> bool {
     if !has_stabilization(filters_text) {
         return false;
     }
@@ -55,10 +78,19 @@ pub fn stabilization_works(runner: &dyn Runner, filters_text: &str, work_dir: &s
     ];
     let attempt = |filter: String| -> Result<(), FfError> {
         let mut args: Vec<String> = source.iter().map(|s| s.to_string()).collect();
-        args.extend(["-vf".to_string(), filter, "-f".into(), "null".into(), "-".into()]);
+        args.extend([
+            "-vf".to_string(),
+            filter,
+            "-f".into(),
+            "null".into(),
+            "-".into(),
+        ]);
         runner.run(&args, &mut |_| {})
     };
-    attempt(format!("vidstabdetect=shakiness=6:accuracy=15:result={trf}")).is_ok()
+    attempt(format!(
+        "vidstabdetect=shakiness=6:accuracy=15:result={trf}"
+    ))
+    .is_ok()
         && attempt(format!("vidstabtransform=input={trf}")).is_ok()
 }
 
@@ -68,9 +100,11 @@ mod tests {
     use crate::ffmpeg::MediaInfo;
     use std::cell::RefCell;
 
+    type FailWhen = Box<dyn Fn(&[String]) -> bool>;
+
     struct Fake {
         calls: RefCell<Vec<Vec<String>>>,
-        fail_when: Box<dyn Fn(&[String]) -> bool>,
+        fail_when: FailWhen,
     }
 
     impl Runner for Fake {
@@ -88,7 +122,10 @@ mod tests {
     }
 
     fn fake(fail_when: impl Fn(&[String]) -> bool + 'static) -> Fake {
-        Fake { calls: RefCell::new(vec![]), fail_when: Box::new(fail_when) }
+        Fake {
+            calls: RefCell::new(vec![]),
+            fail_when: Box::new(fail_when),
+        }
     }
 
     #[test]
@@ -117,7 +154,9 @@ mod tests {
 
     #[test]
     fn the_filters_are_looked_up_as_whole_words() {
-        assert!(has_stabilization(" T. vidstabdetect  V->V\n T. vidstabtransform V->V"));
+        assert!(has_stabilization(
+            " T. vidstabdetect  V->V\n T. vidstabtransform V->V"
+        ));
         assert!(!has_stabilization(" T. vidstabdetect V->V"));
         assert!(!has_stabilization("myvidstabdetect vidstabtransformx"));
     }
@@ -127,7 +166,11 @@ mod tests {
         let text = "vidstabdetect vidstabtransform";
         let dir = std::path::Path::new("/tmp");
         assert!(stabilization_works(&fake(|_| false), text, dir));
-        assert!(!stabilization_works(&fake(|a| a.iter().any(|x| x.starts_with("vidstabtransform"))), text, dir));
+        assert!(!stabilization_works(
+            &fake(|a| a.iter().any(|x| x.starts_with("vidstabtransform"))),
+            text,
+            dir
+        ));
         assert!(!stabilization_works(&fake(|_| false), "nothing", dir));
     }
 }

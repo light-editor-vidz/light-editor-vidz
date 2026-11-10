@@ -25,10 +25,10 @@ export default tseslint.config(
     },
   },
   {
-    // La vue Image reprend le code de LightCutImgz tel qu'il a été écrit et testé : les règles
+    // Les vues Image et Vidéo reprennent le code de LightCutImgz et LightCutVidz tel qu'il a été écrit et testé : les règles
     // de la nouvelle génération de `react-hooks` (setState dans un effet, accès aux refs pendant
     // le rendu) ne s'y appliquent pas.
-    files: ["src/components/imagetool/**/*.{ts,tsx}"],
+    files: ["src/components/imagetool/**/*.{ts,tsx}", "src/components/videotool/**/*.{ts,tsx}"],
     rules: {
       "react-hooks/set-state-in-effect": "off",
       "react-hooks/refs": "off",

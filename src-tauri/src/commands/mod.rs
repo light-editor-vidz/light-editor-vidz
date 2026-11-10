@@ -8,6 +8,7 @@ pub mod registry;
 pub mod release_notes;
 pub mod secrets;
 pub mod stock;
+pub mod video_tool;
 
 /// Exécute un travail bloquant (disque, copie de gros fichiers) hors du thread principal : les
 /// commandes Tauri synchrones y tournent, et gèleraient l'interface pendant toute leur durée.

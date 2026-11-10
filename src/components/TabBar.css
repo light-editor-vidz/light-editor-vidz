@@ -102,3 +102,8 @@
   color: var(--color-image);
   flex-shrink: 0;
 }
+
+.tab-icon-video {
+  color: var(--color-video);
+  flex-shrink: 0;
+}

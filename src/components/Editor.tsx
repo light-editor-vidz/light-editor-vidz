@@ -81,25 +81,9 @@ interface Props {
   onOpenProject: (dir: string, notice?: string) => void;
   /** Message affiché à l'ouverture (ex : médias à ré-importer après un import legacy). */
   initialNotice?: string | null;
-  /** Média à poser dans la première scène dès que le projet est chargé (projet créé en ouvrant
-   * une vidéo ou une image depuis « Fichier > Ouvrir »). */
-  initialMedia?: InitialMedia | null;
 }
 
-export interface InitialMedia {
-  kind: "video" | "image";
-  /** Chemin relatif au dossier du projet, tel que renvoyé par l'import. */
-  src: string;
-  name: string;
-}
-
-export default function Editor({
-  projectDir,
-  onBack,
-  onOpenProject,
-  initialNotice = null,
-  initialMedia = null,
-}: Props) {
+export default function Editor({ projectDir, onBack, onOpenProject, initialNotice = null }: Props) {
   const { t } = useTranslation();
   const [history, dispatch] = useReducer(historyReducer, initialHistory);
   const { present: project, saved: savedProject, past, future } = history;
@@ -139,24 +123,6 @@ export default function Editor({
       })
       .catch((e) => setLoadError(describeError(e)));
   }, [projectDir]);
-
-  // Le média d'un projet créé depuis un fichier est posé une seule fois, au premier chargement.
-  const initialMediaDone = useRef(false);
-  useEffect(() => {
-    if (initialMediaDone.current || !initialMedia || !project) return;
-    const active = resolveActiveComposition(project, 0);
-    if (!active) return;
-    initialMediaDone.current = true;
-    const element =
-      initialMedia.kind === "video"
-        ? createVideoElement(initialMedia.src, initialMedia.name)
-        : createImageElement(initialMedia.src, initialMedia.name);
-    dispatch({
-      type: "mutate",
-      fn: (p: Project) => addElementToComposition(p, active.composition.id, element),
-      now: performance.now(),
-    });
-  }, [initialMedia, project]);
 
   const { saving, saveError, flush } = useAutosave({
     project,

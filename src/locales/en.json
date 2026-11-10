@@ -15,7 +15,7 @@
       },
       "video": {
         "name": "Video",
-        "hint": ""
+        "hint": "Cut, crop, filter, subtitle"
       },
       "image": {
         "name": "Image",
@@ -566,7 +566,8 @@
     "close": "Close tab",
     "closeNamed": "Close {{name}}",
     "unsupportedFile": "This file type cannot be opened.",
-    "image": "Image"
+    "image": "Image",
+    "video": "Video"
   },
   "imageTool": {
     "toolbar": {

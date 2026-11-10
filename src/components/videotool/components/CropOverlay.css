@@ -1,0 +1,133 @@
+.vt-root .crop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: all;
+}
+
+.vt-root .crop-shade {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+.vt-root .crop-box {
+  position: absolute;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  cursor: move;
+}
+
+.vt-root .crop-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.15) 1px, transparent 1px);
+  background-size: 33.33% 33.33%;
+  pointer-events: none;
+}
+
+.vt-root .crop-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: white;
+  border-radius: 2px;
+}
+
+.vt-root .crop-handle-tl {
+  top: -6px;
+  left: -6px;
+  cursor: nw-resize;
+}
+
+.vt-root .crop-handle-tr {
+  top: -6px;
+  right: -6px;
+  cursor: ne-resize;
+}
+
+.vt-root .crop-handle-bl {
+  bottom: -6px;
+  left: -6px;
+  cursor: sw-resize;
+}
+
+.vt-root .crop-handle-br {
+  bottom: -6px;
+  right: -6px;
+  cursor: se-resize;
+}
+
+.vt-root .crop-dimensions {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.65);
+  color: white;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.vt-root .crop-apply-btn {
+  position: absolute;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+  transition: background 0.15s;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vt-root .crop-apply-btn:hover {
+  background: var(--accent-hover);
+}
+
+.vt-root .crop-apply-btn kbd {
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: inherit;
+}
+
+.vt-root .crop-aspects {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  gap: 4px;
+  z-index: 20;
+}
+
+.vt-root .crop-aspect {
+  background: rgba(0, 0, 0, 0.65);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 5px;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.vt-root .crop-aspect:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.vt-root .crop-aspect.active {
+  background: var(--accent);
+  border-color: var(--accent);
+}

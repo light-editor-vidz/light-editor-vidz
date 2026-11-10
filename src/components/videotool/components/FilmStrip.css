@@ -1,0 +1,20 @@
+.vt-root .filmstrip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.vt-root .filmstrip-empty {
+  background: var(--bg-tertiary);
+}
+
+.vt-root .filmstrip-thumb {
+  flex-shrink: 0;
+  width: 80px;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  opacity: 0.5;
+  border-right: 1px solid rgba(0, 0, 0, 0.3);
+}

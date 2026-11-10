@@ -1,9 +1,9 @@
-import { render, screen, fireEvent, within, act, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 import App from "./App";
 import { inertBridge, useTabActive } from "./lib/menuBridge";
-import { createProjectFromMedia, mediaKind, pickMediaFile } from "./lib/openMedia";
+import { mediaKind, pickMediaFile } from "./lib/openMedia";
 
 /** Compte les montages : un projet garde son éditeur tant que son onglet est ouvert. */
 function Mounted() {
@@ -22,7 +22,7 @@ vi.mock("./components/Home", () => ({
     startNewProject,
   }: {
     onOpenProject: (dir: string) => void;
-    onOpenTool: (tool: "audio" | "image") => void;
+    onOpenTool: (tool: "audio" | "image" | "video") => void;
     startNewProject?: boolean;
   }) => (
     <div>
@@ -34,6 +34,9 @@ vi.mock("./components/Home", () => ({
       </button>
       <button type="button" onClick={() => onOpenTool("image")}>
         tool-image
+      </button>
+      <button type="button" onClick={() => onOpenTool("video")}>
+        tool-video
       </button>
     </div>
   ),
@@ -51,18 +54,15 @@ vi.mock("@tauri-apps/api/window", () => ({
 vi.mock("./lib/openMedia", () => ({
   pickMediaFile: vi.fn(),
   mediaKind: vi.fn(),
-  createProjectFromMedia: vi.fn(),
 }));
 const editorMounts = vi.hoisted(() => ({ count: 0 }));
 vi.mock("./components/Editor", () => ({
   default: function EditorMock({
     projectDir,
-    initialMedia,
     onBack,
     onOpenProject,
   }: {
     projectDir: string;
-    initialMedia?: { name: string } | null;
     onBack: (intent?: "new") => void;
     onOpenProject: (dir: string) => void;
   }) {
@@ -73,7 +73,6 @@ vi.mock("./components/Editor", () => ({
         <span>
           editor:{projectDir}
           {active ? "" : " (hidden)"}
-          {initialMedia ? ` +${initialMedia.name}` : ""}
         </span>
         <button type="button" onClick={() => onBack()}>
           back
@@ -86,6 +85,11 @@ vi.mock("./components/Editor", () => ({
         </button>
       </div>
     );
+  },
+}));
+vi.mock("./components/videotool/VideoTool", () => ({
+  default: function VideoToolMock({ path }: { path: string | null }) {
+    return <span>video:{path ?? "empty"}</span>;
   },
 }));
 vi.mock("./components/imagetool/ImageTool", () => ({
@@ -131,7 +135,6 @@ vi.mock("./components/audiotool/AudioTool", () => ({
 
 const mockPick = vi.mocked(pickMediaFile);
 const mockKind = vi.mocked(mediaKind);
-const mockCreate = vi.mocked(createProjectFromMedia);
 
 const tab = (name: RegExp | string) => screen.getByRole("tab", { name });
 
@@ -272,27 +275,22 @@ describe("App — ouvrir un fichier", () => {
     expect(screen.getAllByRole("tab")).toHaveLength(1);
   });
 
-  it("une vidéo crée un projet qui la contient et l'ouvre", async () => {
+  it("une vidéo s'ouvre dans la vue Vidéo, sans créer de projet", async () => {
     mockPick.mockResolvedValue({ path: "/m/clip.mp4", kind: "video" });
-    mockCreate.mockResolvedValue({
-      dir: "/m/proj.lvproj",
-      media: { kind: "video", src: "assets/x", name: "clip.mp4" },
-    });
     render(<App />);
 
     await openFileFromMenu();
 
-    expect(mockCreate).toHaveBeenCalledWith("/m/clip.mp4", "video");
-    expect(screen.getByText("editor:/m/proj.lvproj +clip.mp4")).toBeVisible();
+    expect(screen.getByText("video:/m/clip.mp4")).toBeVisible();
+    expect(tab("clip.mp4")).toHaveAttribute("aria-selected", "true");
   });
 
-  it("une image s'ouvre dans la vue Image, sans créer de projet", async () => {
+  it("une image s’ouvre dans la vue Image", async () => {
     mockPick.mockResolvedValue({ path: "/m/photo.png", kind: "image" });
     render(<App />);
 
     await openFileFromMenu();
 
-    expect(mockCreate).not.toHaveBeenCalled();
     expect(screen.getByText("image:/m/photo.png")).toBeVisible();
     expect(tab("photo.png")).toHaveAttribute("aria-selected", "true");
   });
@@ -317,19 +315,6 @@ describe("App — ouvrir un fichier", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("This file type cannot be opened.");
     expect(screen.getAllByRole("tab")).toHaveLength(1);
-  });
-
-  it("signale l'échec de création du projet, et le message se ferme", async () => {
-    mockPick.mockResolvedValue({ path: "/m/clip.mp4", kind: "video" });
-    mockCreate.mockRejectedValue(new Error("disk full"));
-    render(<App />);
-
-    await openFileFromMenu();
-
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("disk full");
-    fireEvent.click(within(alert).getByRole("button"));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("ouvre comme un fichier choisi ce qui est déposé sur la fenêtre", async () => {
@@ -404,5 +389,14 @@ describe("App — vue Image", () => {
 
     expect(mockPick).toHaveBeenCalled();
     expect(screen.getByText("image:/m/next.png")).toBeVisible();
+  });
+
+  it("le bouton Vidéo de l'accueil ouvre une vue Vidéo vide", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByText("tool-video"));
+
+    expect(screen.getByText("video:empty")).toBeVisible();
+    expect(tab("Video")).toHaveAttribute("aria-selected", "true");
   });
 });

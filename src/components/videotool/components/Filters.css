@@ -1,0 +1,77 @@
+.vt-root .filters-panel {
+  padding: 12px;
+  background: var(--bg-secondary);
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+}
+
+.vt-root .filters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 10px;
+}
+
+.vt-root .filter-card {
+  background: var(--bg-card);
+  border: 2px solid transparent;
+  border-radius: 6px;
+  padding: 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: all 0.2s ease;
+  color: var(--text-soft);
+}
+
+.vt-root .filter-card:hover {
+  background: var(--border);
+  color: var(--text-primary);
+}
+
+.vt-root .filter-card.active {
+  border-color: var(--select);
+  background: var(--select-bg);
+  color: var(--text-primary);
+}
+
+.vt-root .filter-preview-box {
+  width: 60px;
+  height: 40px;
+  background: #000;
+  border-radius: 4px;
+  margin-bottom: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vt-root .filter-preview-inner {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vt-root .preview-placeholder {
+  font-weight: bold;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.vt-root .filter-preview-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.vt-root .filter-name {
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}

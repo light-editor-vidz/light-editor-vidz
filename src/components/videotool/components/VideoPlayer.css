@@ -1,0 +1,8 @@
+.vt-root .video-element {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  cursor: pointer;
+  display: block;
+}
