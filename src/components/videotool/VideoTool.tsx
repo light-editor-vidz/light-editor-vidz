@@ -184,14 +184,17 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
   // loads (menu "Open" while one transcodes) cannot leave the player on one file
   // and the export on another.
   const loadId = useRef(0);
+  // The file whose preview was already transcoded: a second playback error is final.
+  const forcedPath = useRef<string | null>(null);
   const hasEdits = useRef(false);
   useEffect(() => {
     hasEdits.current = canUndo;
   }, [canUndo]);
 
   const loadVideo = useCallback(
-    async (filePath: string) => {
+    async (filePath: string, force = false) => {
       const id = ++loadId.current;
+      forcedPath.current = force ? filePath : null;
       setLoading({ msg: t.loading_preparing, progress: 0 });
 
       // Registered outside the try so the failure path unregisters it too.
@@ -200,7 +203,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
       });
       let url: string | null = null;
       try {
-        url = await getApi().previewVideo(filePath);
+        url = await getApi().previewVideo(filePath, force);
       } catch (err) {
         if (id === loadId.current) {
           console.error("Preview transcode failed:", err);
@@ -473,7 +476,11 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
   useEffect(() => {
     if (!videoPath && !loading) refreshRecent();
   }, [videoPath, loading, refreshRecent]);
-  const onVideoError = useCallback(() => setToast(t.error_video_unreadable), [t]);
+  // The webview may lack the codec of a file that looked playable: transcode a preview once.
+  const onVideoError = useCallback(() => {
+    if (videoPath && forcedPath.current !== videoPath) void loadVideo(videoPath, true);
+    else setToast(t.error_video_unreadable);
+  }, [t, videoPath, loadVideo]);
   const onSubtitlesError = useCallback(
     (reason: "empty" | "read") => setToast(reason === "empty" ? t.subtitles_empty : t.subtitles_error),
     [t],

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { X } from "lucide-react";
@@ -195,7 +196,8 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
     ? t(`subs.stage.${progress.stage}`, { defaultValue: progress.stage })
     : t("subs.starting");
 
-  return (
+  // In the body: no ancestor view (video, audio…) can restyle or clip it.
+  return createPortal(
     <div className="modal-backdrop" onClick={busy ? undefined : onClose}>
       <div
         className="modal subs-modal"
@@ -435,6 +437,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

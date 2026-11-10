@@ -64,7 +64,24 @@ describe("VideoTool — opening a video", () => {
     await act(async () => {});
 
     expect(previewVideo).toHaveBeenCalledTimes(1);
-    expect(previewVideo).toHaveBeenCalledWith("/v/a.mp4");
+    expect(previewVideo).toHaveBeenCalledWith("/v/a.mp4", false);
+  });
+
+  it("retries once with a transcoded preview when the video cannot be played", async () => {
+    const { previewVideo, container } = setup({ path: "/v/a.mp4" });
+    await screen.findByText("a.mp4");
+    const video = container.querySelector("video")!;
+
+    await act(async () => {
+      fireEvent.error(video);
+    });
+    expect(previewVideo).toHaveBeenLastCalledWith("/v/a.mp4", true);
+
+    await act(async () => {
+      fireEvent.error(container.querySelector("video")!);
+    });
+    expect(previewVideo).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText(/cannot be played/)).toBeInTheDocument();
   });
 
   it("shows the video editor once the preview is ready", async () => {

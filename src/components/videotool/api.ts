@@ -80,7 +80,8 @@ export interface VideoApi {
   listRecent: () => Promise<RecentEntry[]>;
   removeRecent: (path: string) => Promise<void>;
   clearRecent: () => Promise<void>;
-  previewVideo: (filePath: string) => Promise<string>;
+  /** `force`: transcode even when the file looks playable (the webview lacks the codec). */
+  previewVideo: (filePath: string, force?: boolean) => Promise<string>;
   openSubtitleFile: () => Promise<{ filePath: string; content: string } | null>;
   onPreviewProgress: (callback: (progress: number) => void) => () => void;
   exportVideo: (options: ExportRequest) => Promise<{ success: boolean; outputPath: string }>;
@@ -155,10 +156,10 @@ const tauriApi: VideoApi = {
   },
   removeRecent: (path) => invoke("video_recent_forget", { path }),
   clearRecent: () => invoke("video_recent_forget", { path: null }),
-  previewVideo: async (filePath) => {
+  previewVideo: async (filePath, force = false) => {
     const preview = await invoke<{ path: string; transcoded: boolean }>("video_preview", {
       path: filePath,
-      force: false,
+      force,
     });
     return convertFileSrc(preview.path);
   },
