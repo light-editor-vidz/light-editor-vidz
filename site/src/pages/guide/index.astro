@@ -1,0 +1,124 @@
+---
+import Base from '../../layouts/Base.astro';
+import Logo from '../../components/Logo.astro';
+import Shot from '../../components/Shot.astro';
+import T from '../../components/T.astro';
+import ToolList from '../../components/ToolList.astro';
+import { app } from '../../data/apps';
+import { ui } from '../../data/ui';
+import { u } from '../../data/url';
+
+const tabs = [
+  ['overview', ui.tabs.overview],
+  ['install', ui.tabs.install],
+  ['uninstall', ui.tabs.uninstall],
+] as const;
+const style = `--h:${app.h1};--h2:${app.h2}`;
+const alt = { fr: `${app.name} : capture d'écran`, en: `${app.name}: screenshot` };
+---
+<Base title={ui.navGuide.en} path="guide/" description={app.tagline.en}>
+  <div style={style}>
+    <section class="ahero">
+      <div class="wrap ahero-in">
+        <div>
+          <div class="crumbs mono"><a href={u()}>{app.name}</a> / <T t={ui.navGuide} /></div>
+          <div class="num mono"><T t={app.kind} /></div>
+          <h1>{app.name}</h1>
+          <p class="tag"><T t={app.tagline} /></p>
+          <div class="cta">
+            <a href="#install" class="btn b-dark" data-tab="install"><T t={ui.installBtn} /></a>
+            <a href={u('guide/montage/')} class="btn b-out"><T t={ui.ctaGuide} /></a>
+          </div>
+        </div>
+        <div class="logo-big"><div><Logo size={300} /></div></div>
+      </div>
+    </section>
+
+    <div class="tabbar">
+      <div class="wrap" role="tablist">
+        {tabs.map(([k, label], i) => (
+          <button type="button" role="tab" id={`tab-${k}`} aria-controls={`panel-${k}`} aria-selected={i === 0 ? 'true' : 'false'} data-tab={k}><T t={label} /></button>
+        ))}
+      </div>
+    </div>
+
+    <div class="wrap panels">
+      <div class="panel" role="tabpanel" id="panel-overview" aria-labelledby="tab-overview">
+        <div class="two">
+          <div class="paras">
+            {app.intro.map((p) => <p><T t={p} /></p>)}
+          </div>
+          <div class="card">
+            <div class="first"><div class="k mono"><T t={ui.platforms} /></div><div class="v"><T t={app.platform} /></div></div>
+            <div><div class="k mono"><T t={ui.licenseLabel} /></div><div class="v">MIT</div></div>
+            <div>
+              <div class="k mono" style="margin-bottom:10px"><T t={ui.req} /></div>
+              <ul>{app.reqs.map((r) => <li><T t={r} /></li>)}</ul>
+            </div>
+          </div>
+        </div>
+        <div class="hero-shot"><Shot id="montage" name={app.hero} alt={alt} eager /></div>
+        <ToolList />
+      </div>
+
+      <div class="panel" role="tabpanel" id="panel-install" aria-labelledby="tab-install" hidden>
+        <div class="oneliner">
+          <div class="body">
+            <div class="lbl mono"><T t={ui.oneCmd} /></div>
+            <code><i>$ </i>{app.command}</code>
+          </div>
+          <button type="button" class="copy" data-copy={app.command}><span class="idle"><T t={ui.copy} /></span><span class="done"><T t={ui.copied} /></span></button>
+        </div>
+        <p class="rerun"><T t={ui.rerun} /></p>
+        <div class="blocks">
+          {app.install.map((b) => (
+            <div class="block">
+              <div class="t"><T t={b.title} /></div>
+              {b.body && <p><T t={b.body} /></p>}
+              {b.code && <pre><T t={b.code} /></pre>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div class="panel" role="tabpanel" id="panel-uninstall" aria-labelledby="tab-uninstall" hidden>
+        <div class="blocks">
+          {app.uninstall.map((b) => (
+            <div class="block">
+              <div class="t"><T t={b.title} /></div>
+              {b.body && <p><T t={b.body} /></p>}
+              {b.code && <pre><T t={b.code} /></pre>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+    <div style="height:96px"></div>
+  </div>
+
+  <script>
+    const tabs = [...document.querySelectorAll<HTMLButtonElement>('[role=tab]')];
+    const keys = tabs.map((t) => t.dataset.tab!);
+    const show = (k: string, top = true) => {
+      if (!keys.includes(k)) k = keys[0];
+      tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === k)));
+      keys.forEach((id) => (document.getElementById(`panel-${id}`)!.hidden = id !== k));
+      if (top) window.scrollTo({ top: 0 });
+    };
+    tabs.forEach((t) =>
+      t.addEventListener('click', () => {
+        history.replaceState(null, '', t.dataset.tab === keys[0] ? location.pathname : `#${t.dataset.tab}`);
+        show(t.dataset.tab!);
+      }),
+    );
+    document.querySelectorAll<HTMLAnchorElement>('a[data-tab]').forEach((a) =>
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        history.replaceState(null, '', a.getAttribute('href'));
+        show(a.dataset.tab!);
+      }),
+    );
+    show(location.hash.slice(1), false);
+    addEventListener('hashchange', () => show(location.hash.slice(1)));
+  </script>
+</Base>

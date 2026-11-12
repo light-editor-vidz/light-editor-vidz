@@ -1,0 +1,22 @@
+---
+import Logo from './Logo.astro';
+import T from './T.astro';
+import { tools } from '../data/apps';
+import { ui } from '../data/ui';
+import { u } from '../data/url';
+---
+<div class="tool-list">
+  <div class="list-head">
+    <h2><T t={ui.toolsTitle} /></h2>
+    <span class="mono"><T t={ui.toolsSub} /></span>
+  </div>
+  {tools.map((t, i) => (
+    <a href={u(`guide/${t.id}/`)} class="row tint" style={`--h:${t.h[0]}`}>
+      <span class="n mono">{'0' + (i + 1)}</span>
+      <Logo tool={t.id as any} size={64} />
+      <div><div class="nm"><T t={t.name} /></div><div class="kd mono"><T t={t.kind} /></div></div>
+      <p><T t={t.short} /></p>
+      <span class="arrow">→</span>
+    </a>
+  ))}
+</div>

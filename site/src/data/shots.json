@@ -1,18 +1,82 @@
 {
- "editor-vidz/editor": [
+ "audio/export": [
+  960,
+  700
+ ],
+ "audio/main": [
+  960,
+  700
+ ],
+ "image/adjust": [
+  1200,
+  800
+ ],
+ "image/crop": [
+  1200,
+  800
+ ],
+ "image/filters": [
+  1200,
+  800
+ ],
+ "image/main": [
+  1200,
+  800
+ ],
+ "image/remove": [
+  1200,
+  800
+ ],
+ "montage/editor": [
   1440,
   900
  ],
- "editor-vidz/export": [
+ "montage/export": [
   1440,
   900
  ],
- "editor-vidz/home": [
+ "montage/home": [
   1440,
   900
  ],
- "editor-vidz/new": [
+ "montage/new": [
   1440,
   900
+ ],
+ "subtitles/export": [
+  1000,
+  780
+ ],
+ "subtitles/home": [
+  1000,
+  780
+ ],
+ "subtitles/result": [
+  1000,
+  780
+ ],
+ "video/cuts": [
+  1400,
+  860
+ ],
+ "video/export": [
+  1400,
+  860
+ ],
+ "video/filters": [
+  1400,
+  860
+ ],
+ "video/home": [
+  1400,
+  860
+ ],
+ "video/layout": [
+  1400,
+  860
+ ],
+ "video/subtitles": [
+  1400,
+  860
  ]
 }

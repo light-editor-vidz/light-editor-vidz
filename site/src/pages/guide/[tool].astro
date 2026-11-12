@@ -1,39 +1,41 @@
 ---
-import Base from '../layouts/Base.astro';
-import Logo from '../components/Logo.astro';
-import Shot from '../components/Shot.astro';
-import T from '../components/T.astro';
-import { apps } from '../data/apps';
-import { ui } from '../data/ui';
-import { u } from '../data/url';
+import Base from '../../layouts/Base.astro';
+import Logo from '../../components/Logo.astro';
+import Shot from '../../components/Shot.astro';
+import T from '../../components/T.astro';
+import { app, tools, type Tool } from '../../data/apps';
+import { ui } from '../../data/ui';
+import { u } from '../../data/url';
 
-const app = apps[0];
+export function getStaticPaths() {
+  return tools.map((tool) => ({ params: { tool: tool.id }, props: { tool } }));
+}
+const { tool } = Astro.props as { tool: Tool };
+const others = tools.filter((t) => t.id !== tool.id);
 const tabs = [
   ['overview', ui.tabs.overview],
   ['how', ui.tabs.how],
   ['features', ui.tabs.features],
   ['examples', ui.tabs.examples],
-  ['install', ui.tabs.install],
-  ['uninstall', ui.tabs.uninstall],
 ] as const;
-const style = `--h:${app.h1};--h2:${app.h2}`;
-const alt = (t: { fr: string; en: string }) => ({ fr: `${app.name} : ${t.fr}`, en: `${app.name}: ${t.en}` });
+const style = `--h:${tool.h[0]};--h2:${tool.h[1]}`;
+const alt = (t: { fr: string; en: string }) => ({ fr: `${tool.name.fr} : ${t.fr}`, en: `${tool.name.en} : ${t.en}` });
 ---
-<Base title={ui.navGuide.en} path="guide/" description={app.tagline.en}>
+<Base title={`${tool.name.en}`} path={`guide/${tool.id}/`} description={tool.tagline.en}>
   <div style={style}>
     <section class="ahero">
       <div class="wrap ahero-in">
         <div>
-          <div class="crumbs mono"><a href={u()}>{app.name}</a> / <T t={ui.navGuide} /></div>
-          <div class="num mono"><T t={app.kind} /></div>
-          <h1>{app.name}</h1>
-          <p class="tag"><T t={app.tagline} /></p>
+          <div class="crumbs mono"><a href={u()}>{app.name}</a> / <a href={u('guide/')}><T t={ui.navGuide} /></a> / <T t={tool.name} /></div>
+          <div class="num mono"><T t={tool.kind} /></div>
+          <h1><T t={tool.name} /></h1>
+          <p class="tag"><T t={tool.tagline} /></p>
           <div class="cta">
-            <a href="#install" class="btn b-dark" data-tab="install"><T t={ui.installBtn} /></a>
-            <a href="#how" class="btn b-out" data-tab="how"><T t={ui.tabs.how} /></a>
+            <a href="#how" class="btn b-dark" data-tab="how"><T t={ui.tabs.how} /></a>
+            <a href={u('guide/#install')} class="btn b-out"><T t={ui.installBtn} /></a>
           </div>
         </div>
-        <div class="logo-big"><div><Logo size={300} /></div></div>
+        <div class="logo-big"><div><Logo tool={tool.id as any} size={300} /></div></div>
       </div>
     </section>
 
@@ -49,40 +51,36 @@ const alt = (t: { fr: string; en: string }) => ({ fr: `${app.name} : ${t.fr}`, e
       <div class="panel" role="tabpanel" id="panel-overview" aria-labelledby="tab-overview">
         <div class="two">
           <div class="paras">
-            {app.intro.map((p) => <p><T t={p} /></p>)}
+            {tool.intro.map((p) => <p><T t={p} /></p>)}
           </div>
           <div class="card">
             <div class="first"><div class="k mono"><T t={ui.platforms} /></div><div class="v"><T t={app.platform} /></div></div>
             <div><div class="k mono"><T t={ui.licenseLabel} /></div><div class="v">MIT</div></div>
-            {app.formats.map((f) => (
+            {tool.formats.map((f) => (
               <div><div class="k mono"><T t={f.label} /></div><div class="v sm"><T t={f.value} /></div></div>
             ))}
-            <div>
-              <div class="k mono" style="margin-bottom:10px"><T t={ui.req} /></div>
-              <ul>{app.reqs.map((r) => <li><T t={r} /></li>)}</ul>
-            </div>
           </div>
         </div>
-        <div class="hero-shot"><Shot id={app.id} name={app.hero} alt={alt(app.tagline)} eager /></div>
+        <div class="hero-shot"><Shot id={tool.id} name={tool.hero} alt={alt(tool.tagline)} eager /></div>
       </div>
 
       <div class="panel" role="tabpanel" id="panel-how" aria-labelledby="tab-how" hidden>
         <h2 class="h3 big"><T t={ui.howTitle} /></h2>
-        {app.how.map((s) => (
+        {tool.how.map((s) => (
           <div class={`step${s.shot ? '' : ' noshot'}`}>
             <div class="txt">
               <h3><T t={s.title} /></h3>
               <p><T t={s.body} /></p>
             </div>
-            {s.shot && <Shot id={app.id} name={s.shot} alt={alt(s.title)} />}
+            {s.shot && <Shot id={tool.id} name={s.shot} alt={alt(s.title)} />}
           </div>
         ))}
 
-        {app.shortcuts.length > 0 && (
+        {tool.shortcuts.length > 0 && (
           <>
             <h2 class="h3 big"><T t={ui.shortcutsTitle} /></h2>
             <div class="keys">
-              {app.shortcuts.map((k) => (
+              {tool.shortcuts.map((k) => (
                 <div><kbd>{k.keys}</kbd><span><T t={k.label} /></span></div>
               ))}
             </div>
@@ -91,14 +89,14 @@ const alt = (t: { fr: string; en: string }) => ({ fr: `${app.name} : ${t.fr}`, e
 
         <h2 class="h3 big"><T t={ui.notesTitle} /></h2>
         <div class="notes">
-          {app.notes.map((n) => (
+          {tool.notes.map((n) => (
             <div><div class="t"><T t={n.title} /></div><p><T t={n.body} /></p></div>
           ))}
         </div>
       </div>
 
       <div class="panel" role="tabpanel" id="panel-features" aria-labelledby="tab-features" hidden>
-        {app.groups.map((g) => (
+        {tool.groups.map((g) => (
           <section class="grp">
             <h2 class="h3"><T t={g.title} /></h2>
             <div class="feats">
@@ -111,7 +109,7 @@ const alt = (t: { fr: string; en: string }) => ({ fr: `${app.name} : ${t.fr}`, e
       </div>
 
       <div class="panel" role="tabpanel" id="panel-examples" aria-labelledby="tab-examples" hidden>
-        {app.examples.map((e, k) => (
+        {tool.examples.map((e, k) => (
           <div class="ex">
             <div><div class="n mono">{'0' + (k + 1)}</div><div class="t"><T t={e.title} /></div></div>
             <div class="steps">
@@ -122,40 +120,16 @@ const alt = (t: { fr: string; en: string }) => ({ fr: `${app.name} : ${t.fr}`, e
           </div>
         ))}
       </div>
-
-      <div class="panel" role="tabpanel" id="panel-install" aria-labelledby="tab-install" hidden>
-        <div class="oneliner">
-          <div class="body">
-            <div class="lbl mono"><T t={ui.oneCmd} /></div>
-            <code><i>$ </i>{app.command}</code>
-          </div>
-          <button type="button" class="copy" data-copy={app.command}><span class="idle"><T t={ui.copy} /></span><span class="done"><T t={ui.copied} /></span></button>
-        </div>
-        <p class="rerun"><T t={ui.rerun} /></p>
-        <div class="blocks">
-          {app.install.map((b) => (
-            <div class="block">
-              <div class="t"><T t={b.title} /></div>
-              {b.body && <p><T t={b.body} /></p>}
-              {b.code && <pre><T t={b.code} /></pre>}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div class="panel" role="tabpanel" id="panel-uninstall" aria-labelledby="tab-uninstall" hidden>
-        <div class="blocks">
-          {app.uninstall.map((b) => (
-            <div class="block">
-              <div class="t"><T t={b.title} /></div>
-              {b.body && <p><T t={b.body} /></p>}
-              {b.code && <pre><T t={b.code} /></pre>}
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
 
+    <section class="wrap others">
+      <h2><T t={ui.otherGuides} /></h2>
+      <div class="g">
+        {others.map((t) => (
+          <a href={u(`guide/${t.id}/`)} class="tint" style={`--h:${t.h[0]}`}><Logo tool={t.id as any} size={44} /><T t={t.name} /></a>
+        ))}
+      </div>
+    </section>
   </div>
 
   <script>

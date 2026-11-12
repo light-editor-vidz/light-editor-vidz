@@ -1,4 +1,4 @@
-import { content, type Content } from './content';
+import { editor, tools, type Editor, type Tool } from './content';
 
 export type Lang = 'fr' | 'en';
 export type Bi = { fr: string; en: string };
@@ -10,11 +10,7 @@ const same = (s: string): Bi => ({ fr: s, en: s });
 // Adresse publique du site : les scripts d'installation y sont servis (voir scripts/prepare.mjs).
 export const SITE = 'https://light-editor-vidz.github.io/light-editor-vidz';
 
-export const IDS = ['editor-vidz'] as const;
-export type AppId = (typeof IDS)[number];
-
-export interface App extends Omit<Content, 'pkg' | 'h'> {
-  n: string;
+export interface App extends Omit<Editor, 'pkg' | 'h'> {
   h1: number;
   h2: number;
   install: Block[];
@@ -23,7 +19,7 @@ export interface App extends Omit<Content, 'pkg' | 'h'> {
   uninstallCommand: string;
 }
 
-function build(id: string, c: Content) {
+function build(id: string, c: Editor) {
   const o = c.pkg;
   const command = `curl -fsSL ${SITE}/install.sh | bash`;
   const uninstallCommand = `curl -fsSL ${SITE}/uninstall.sh | bash`;
@@ -113,10 +109,9 @@ function build(id: string, c: Content) {
   return { install, uninstall, command, uninstallCommand };
 }
 
-export const apps: App[] = IDS.map((id, i) => {
-  const c = content.find((x) => x.id === id)!;
-  const { pkg, h, ...rest } = c;
-  return { ...rest, n: '0' + (i + 1), h1: h[0], h2: h[1], ...build(id, c) } as App;
-});
+const { pkg, h, ...rest } = editor;
+export const app: App = { ...rest, h1: h[0], h2: h[1], ...build(editor.id, editor) } as App;
 
-export const byId = (id: string) => apps.find((a) => a.id === id)!;
+export { tools };
+export type { Tool };
+export const toolById = (id: string) => tools.find((t) => t.id === id)!;

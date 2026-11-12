@@ -8,7 +8,8 @@ const dist = 'dist';
 const errors = [];
 const fail = (m) => errors.push(m);
 
-const pages = ['index.html', '404.html', 'guide/index.html', 'install/index.html'];
+const tools = ['montage', 'audio', 'image', 'video', 'subtitles'];
+const pages = ['index.html', '404.html', 'guide/index.html', 'install/index.html', ...tools.map((t) => `guide/${t}/index.html`)];
 for (const p of pages) if (!existsSync(join(dist, p))) fail(`page manquante : ${p}`);
 
 const walk = (d) => readdirSync(d).flatMap((f) => (statSync(join(d, f)).isDirectory() ? walk(join(d, f)) : [join(d, f)]));
@@ -26,13 +27,26 @@ for (const f of walk(dist).filter((f) => f.endsWith('.html'))) {
   }
 }
 
-const guide = readFileSync(join(dist, 'guide/index.html'), 'utf8');
-for (const t of ['overview', 'how', 'features', 'examples', 'install', 'uninstall']) {
-  if (!guide.includes(`id="panel-${t}"`)) fail(`guide : onglet ${t} manquant`);
+// Le guide général : présentation, installation, désinstallation, et un lien vers chaque guide.
+const hub = readFileSync(join(dist, 'guide/index.html'), 'utf8');
+for (const t of ['overview', 'install', 'uninstall']) {
+  if (!hub.includes(`id="panel-${t}"`)) fail(`guide : onglet ${t} manquant`);
 }
-if (!guide.includes(`${BASE}/install.sh | bash`)) fail("guide : commande d'installation absente");
-const imgs = [...guide.matchAll(/src="(\/light-editor-vidz\/screenshots\/[^"]+)"/g)].length;
-if (imgs < 4) fail(`guide : ${imgs} captures seulement`);
+if (!hub.includes(`${BASE}/install.sh | bash`)) fail("guide : commande d'installation absente");
+for (const t of tools) if (!hub.includes(`href="${BASE}/guide/${t}/"`)) fail(`guide : lien vers ${t} absent`);
+
+// Chaque guide détaillé : ses quatre onglets, des captures, de vrais contenus.
+for (const t of tools) {
+  const html = readFileSync(join(dist, `guide/${t}/index.html`), 'utf8');
+  for (const tab of ['overview', 'how', 'features', 'examples']) {
+    if (!html.includes(`id="panel-${tab}"`)) fail(`${t} : onglet ${tab} manquant`);
+  }
+  const imgs = [...html.matchAll(/src="(\/light-editor-vidz\/screenshots\/[^"]+)"/g)].length;
+  if (imgs < 4) fail(`${t} : ${imgs} captures seulement (deux langues par capture)`);
+  const steps = (html.match(/class="step/g) ?? []).length;
+  if (steps < 3) fail(`${t} : ${steps} étapes seulement`);
+  if ((html.match(/class="ex"/g) ?? []).length < 3) fail(`${t} : moins de 3 exemples`);
+}
 for (const f of ['install.sh', 'uninstall.sh']) {
   if (!existsSync(join(dist, f))) fail(`${f} absent du site`);
   else if (!readFileSync(join(dist, f), 'utf8').startsWith('#!')) fail(`${f} : ce n'est pas un script`);
