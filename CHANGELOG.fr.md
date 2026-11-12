@@ -7,6 +7,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-12
+
 ### Ajouté
 
 - Génération de sous-titres (issue de LightGenSubz), là où se trouve le média : dans la vue Vidéo (panneau Sous-titres, « Générer à partir de l'audio… »), dans la vue Audio (bouton de l'en-tête), sur un élément vidéo ou une piste audio d'un projet (panneau des propriétés) et pour le projet entier (barre du haut ou menu Fichier) — le mixage de toutes les scènes et sons est transcrit en un seul jeu. La transcription se fait en local (whisper.cpp, modèles base / small / medium) ou via Groq, OpenAI, Deepgram ou AssemblyAI ; la traduction en local (NLLB-200) ou via DeepL, OpenAI, Google Translate ou Azure Translator. Dans un projet, le résultat peut être ajouté en éléments texte, enregistré en `.srt` / `.vtt` / `.ass`, ou les deux ; dans la vue Vidéo, il peut servir directement de sous-titres incrustés.

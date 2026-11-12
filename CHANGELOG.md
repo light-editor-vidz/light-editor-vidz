@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-12
+
 ### Added
 
 - Subtitle generation (from LightGenSubz), available where the media is: in the Video view (Subtitles panel, "Generate from the audio…"), in the Audio view (header button), on a video element or an audio track of a project (properties panel), and for the whole project (top bar or File menu) — the mix of every scene and sound is transcribed as one set. Transcription runs locally (whisper.cpp, models base / small / medium) or through Groq, OpenAI, Deepgram or AssemblyAI; translation runs locally (NLLB-200) or through DeepL, OpenAI, Google Translate or Azure Translator. In a project the result can be added as text elements, saved as an `.srt` / `.vtt` / `.ass` file, or both; in the Video view it can be used directly as the burned-in subtitles.
