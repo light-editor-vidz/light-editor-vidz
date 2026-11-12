@@ -31,8 +31,10 @@ interface Props {
   onExport: () => void;
   onCancel: () => void;
   onClose: () => void;
-  /** « Ajouter à un projet ». */
+  /** Où exporter : l'ordinateur, des projets, ou les deux. */
   addToProjects?: ReactNode;
+  /** Ni l'ordinateur ni un projet n'est choisi : rien à exporter. */
+  noDestination?: boolean;
 }
 
 /** Les options d'export : le format, et le format des échantillons pour un WAV. */
@@ -48,6 +50,7 @@ export default function ExportDialog({
   onCancel,
   onClose,
   addToProjects,
+  noDestination = false,
 }: Props) {
   const { t } = useTranslation();
 
@@ -135,7 +138,12 @@ export default function ExportDialog({
               {t("audioTool.export.cancel")}
             </button>
           )}
-          <button type="button" className="btn-primary" onClick={onExport} disabled={processing || problem !== ""}>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={onExport}
+            disabled={processing || problem !== "" || noDestination}
+          >
             {processing ? t("audioTool.export.progress", { percent: progress }) : t("audioTool.export.run")}
           </button>
         </div>

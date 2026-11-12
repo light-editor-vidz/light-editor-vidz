@@ -13,6 +13,8 @@ import {
   type PresetId,
 } from "../utils/presets";
 import AddToProjects from "../../AddToProjects";
+import { noDestination } from "../../../lib/exportDestination";
+import { stagedExportPath } from "../../../lib/subs/commands";
 import "./ExportModal.css";
 
 interface Props {
@@ -78,6 +80,7 @@ function loadPrefs(): Prefs {
 export default function ExportModal({ state, onClose, onQueued, associatedSrt }: Props) {
   const { t, lang } = useT();
   const [projects, setProjects] = useState<string[]>([]);
+  const [toComputer, setToComputer] = useState(true);
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
   const { format, quality, resolution, gifWidth, gifFps } = prefs;
   const update = (patch: Partial<Prefs>) =>
@@ -152,6 +155,7 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
   const keptDuration = keptSegments.reduce((acc, s) => acc + (s.end - s.start), 0) / state.speed;
   const exporting = progress !== null && !done;
   const nothingToExport = keptSegments.length === 0;
+  const destinationMissing = noDestination(toComputer, projects);
 
   useEffect(() => {
     const off = getApi().onProgress((p: number) => setProgress(p));
@@ -192,7 +196,7 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
     setError(null);
     setDone(false);
 
-    if (!state.videoPath || nothingToExport) return;
+    if (!state.videoPath || nothingToExport || destinationMissing) return;
 
     const baseName =
       state.videoPath
@@ -200,7 +204,16 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
         .pop()
         ?.replace(/\.[^.]+$/, "") || "output";
 
-    const savePath = await getApi().saveVideo(`${baseName}_edit.${format}`, format);
+    // Vers les seuls projets : un fichier temporaire, sans boîte d'enregistrement.
+    let savePath: string | null;
+    try {
+      savePath = toComputer
+        ? await getApi().saveVideo(`${baseName}_edit.${format}`, format)
+        : await stagedExportPath(`${baseName}_edit.${format}`);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+      return;
+    }
     if (!savePath) return;
 
     if (projects.length > 0) {
@@ -504,13 +517,18 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
           </div>
         )}
 
-        {done && outputPath && (
+        {done && outputPath && toComputer && (
           <div className="export-done">
             {t.export_saved} <strong>{outputPath}</strong>
           </div>
         )}
 
-        <AddToProjects selected={projects} onChange={setProjects} />
+        <AddToProjects
+          selected={projects}
+          onChange={setProjects}
+          toComputer={toComputer}
+          onToComputer={setToComputer}
+        />
 
         {nothingToExport && <div className="export-error">{t.export_nothing}</div>}
 
@@ -541,7 +559,7 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
             onClick={() => {
               void handleExport("queue");
             }}
-            disabled={exporting || nothingToExport}
+            disabled={exporting || nothingToExport || destinationMissing}
           >
             {t.export_queue_add}
           </button>
@@ -550,7 +568,7 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
             onClick={() => {
               void handleExport("now");
             }}
-            disabled={exporting || nothingToExport}
+            disabled={exporting || nothingToExport || destinationMissing}
           >
             {done ? t.export_again : t.export_btn}
           </button>

@@ -129,6 +129,9 @@ export interface AddReport {
 export const addOutputToProjects = (outputPath: string, projects: string[], srt: string | null): Promise<AddReport> =>
   invoke("add_output_to_projects", { outputPath, projects, srt });
 
+/** Export vers les seuls projets : un fichier temporaire, copié dans les projets puis supprimé. */
+export const stagedExportPath = (filename: string): Promise<string> => invoke("staged_export_path", { filename });
+
 export type SubsFormat = "srt" | "vtt" | "ass";
 
 /** « Enregistrer sous » : renvoie les chemins écrits, ou `null` si le dialogue est fermé. */

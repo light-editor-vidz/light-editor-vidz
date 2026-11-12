@@ -212,7 +212,8 @@ pub struct AddReport {
     pub errors: Vec<String>,
 }
 
-/// Ajoute `output` à chaque projet et prévient les médiathèques ouvertes.
+/// Ajoute `output` à chaque projet et prévient les médiathèques ouvertes. Un export destiné aux
+/// seuls projets est ensuite supprimé : les projets en ont leur copie.
 pub fn add_everywhere<R: tauri::Runtime>(
     app: &AppHandle<R>,
     output: &Path,
@@ -226,8 +227,63 @@ pub fn add_everywhere<R: tauri::Runtime>(
             Err(e) => report.errors.push(e),
         }
     }
+    discard_staged(app, output);
     let _ = app.emit("project-assets-changed", ());
     report
+}
+
+/// Où s'écrit un export qui ne va que dans des projets, le temps de l'y copier.
+fn staging_root<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    app.path()
+        .app_cache_dir()
+        .ok()
+        .map(|dir| dir.join("export-staging"))
+}
+
+/// `<root>/<id>/<filename>` ; refuse un nom qui désignerait un autre dossier.
+fn staged_path_in(root: &Path, id: &str, filename: &str) -> Result<PathBuf, String> {
+    let plain = Path::new(filename).file_name().and_then(|f| f.to_str()) == Some(filename);
+    if !plain || filename.starts_with('.') {
+        return Err(format!("Invalid file name: {filename}"));
+    }
+    let dir = root.join(id);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join(filename))
+}
+
+/// Supprime le dossier d'un export temporaire ; ne touche à rien d'autre.
+fn discard_staged_in(root: &Path, output: &Path) {
+    if let Some(dir) = output.parent().filter(|dir| dir.parent() == Some(root)) {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+/// Après un export temporaire : copié dans les projets, échoué ou annulé.
+pub fn discard_staged<R: tauri::Runtime>(app: &AppHandle<R>, output: &Path) {
+    if let Some(root) = staging_root(app) {
+        discard_staged_in(&root, output);
+    }
+}
+
+/// Au lancement : les exports temporaires laissés par un arrêt brutal.
+pub fn clear_staging<R: tauri::Runtime>(app: &AppHandle<R>) {
+    if let Some(root) = staging_root(app) {
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+/// Export vers les seuls projets : un fichier temporaire au nom voulu, que l'export peut écrire.
+#[tauri::command]
+pub fn staged_export_path(
+    app: AppHandle,
+    approved: State<'_, Approved>,
+    filename: String,
+) -> Result<String, CmdError> {
+    let root = staging_root(&app).ok_or_else(|| refuse("No cache directory".into()))?;
+    let path =
+        staged_path_in(&root, &uuid::Uuid::new_v4().to_string(), &filename).map_err(refuse)?;
+    approved.allow_output(&path);
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Après un export audio ou image : le fichier, déjà écrit, rejoint les projets cochés.
@@ -319,6 +375,29 @@ mod tests {
         fs::write(&gif, b"gif").unwrap();
         add_to_project(p.path(), &gif, None).unwrap();
         assert!(p.path().join("assets/images/b.gif").is_file());
+    }
+
+    #[test]
+    fn a_staged_export_keeps_its_name_and_only_its_own_folder_is_discarded() {
+        let root = tempfile::tempdir().unwrap();
+        let staged = staged_path_in(root.path(), "job", "clip_edit.mp4").unwrap();
+        assert_eq!(staged, root.path().join("job/clip_edit.mp4"));
+        fs::write(&staged, b"video").unwrap();
+        let other = root.path().join("other.txt");
+        fs::write(&other, b"keep").unwrap();
+        discard_staged_in(root.path(), &other);
+        assert!(other.is_file());
+        discard_staged_in(root.path(), &staged);
+        assert!(!root.path().join("job").exists());
+        assert!(other.is_file());
+    }
+
+    #[test]
+    fn a_staged_name_cannot_leave_its_folder() {
+        let root = tempfile::tempdir().unwrap();
+        for bad in ["../x.mp4", "a/b.mp4", "", ".hidden", ".."] {
+            assert!(staged_path_in(root.path(), "job", bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

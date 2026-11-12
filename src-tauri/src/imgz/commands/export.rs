@@ -127,6 +127,8 @@ pub async fn export_image(
     tab_id: String,
     format: String,
     quality: Option<u8>,
+    // Déjà choisie (export vers les seuls projets) : pas de dialogue.
+    output: Option<String>,
 ) -> Result<Option<String>, String> {
     let img_format = format_from_str(&format)?;
     let ext = extension_for(img_format);
@@ -144,18 +146,24 @@ pub async fn export_image(
             .to_string()
     };
 
-    let path = app
-        .dialog()
-        .file()
-        .add_filter("Image", &[ext])
-        .set_file_name(format!("{stem}.{ext}"))
-        .blocking_save_file();
-
-    let Some(path) = path else {
-        return Ok(None);
+    let path_buf = match output {
+        Some(output) => {
+            approved.check_output(&output).map_err(|e| e.to_string())?;
+            std::path::PathBuf::from(output)
+        }
+        None => {
+            let path = app
+                .dialog()
+                .file()
+                .add_filter("Image", &[ext])
+                .set_file_name(format!("{stem}.{ext}"))
+                .blocking_save_file();
+            let Some(path) = path else {
+                return Ok(None);
+            };
+            path.into_path().map_err(|e| e.to_string())?
+        }
     };
-
-    let path_buf = path.into_path().map_err(|e| e.to_string())?;
 
     // Le verrou n'est tenu que pour copier une référence : l'encodage et l'écriture
     // (longs sur une grande image) se font hors verrou.

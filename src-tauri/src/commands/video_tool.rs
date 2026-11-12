@@ -50,8 +50,16 @@ impl VideoState {
             move |options: ExportOptions, ctx| {
                 let result = run_job(&options, ctx);
                 let next = pending.lock().unwrap().remove(&options.output_path);
-                if let (Ok(()), Some((projects, srt))) = (&result, next) {
-                    finish_export(&finisher, &options.output_path, &projects, srt.as_deref());
+                match (&result, next) {
+                    (Ok(()), Some((projects, srt))) => {
+                        finish_export(&finisher, &options.output_path, &projects, srt.as_deref())
+                    }
+                    // Un export temporaire échoué ou annulé ne sert plus à rien.
+                    (Err(_), _) => crate::commands::media_subs::discard_staged(
+                        &finisher,
+                        Path::new(&options.output_path),
+                    ),
+                    _ => {}
                 }
                 result
             },

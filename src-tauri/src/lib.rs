@@ -26,6 +26,7 @@ pub fn run() {
                 if let Ok(cache) = app.path().app_cache_dir() {
                     subz::pipeline::audio_extract::remove_stale_temp_dirs(&cache, STALE_AUDIO_AGE);
                 }
+                commands::media_subs::clear_staging(app.handle());
             }
             #[cfg(target_os = "linux")]
             menu_style::style_menu_bar();
@@ -107,6 +108,7 @@ pub fn run() {
             commands::media_subs::project_media_subtitle,
             commands::media_subs::set_project_media_subtitle,
             commands::media_subs::add_output_to_projects,
+            commands::media_subs::staged_export_path,
             commands::video_tool::video_add_after_export,
             commands::audio_tool::pick_media_file,
             commands::audio_tool::media_kind,

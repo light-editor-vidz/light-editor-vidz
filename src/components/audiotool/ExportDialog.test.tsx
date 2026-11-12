@@ -61,6 +61,11 @@ describe("ExportDialog", () => {
     expect(onExport).toHaveBeenCalled();
   });
 
+  it("ne peut pas exporter sans destination", () => {
+    setup({ noDestination: true });
+    expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+  });
+
   it("explique pourquoi l'export est refusé, et le désactive", () => {
     setup({ problem: "The fade in (3.00 s) is longer than the audio kept" });
 

@@ -371,7 +371,7 @@ describe("useImageEditor — edits and history", () => {
       await result.current.handleExport("jpeg", 80);
     });
 
-    expect(tauri.exportImage).toHaveBeenCalledWith("t1", "jpeg", 80);
+    expect(tauri.exportImage).toHaveBeenCalledWith("t1", "jpeg", 80, undefined);
   });
 
   it("marks the tab as saved after an export, and as modified by the next edit", async () => {

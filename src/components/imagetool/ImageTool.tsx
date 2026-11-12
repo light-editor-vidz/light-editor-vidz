@@ -35,7 +35,8 @@ import { loadPrefs, savePrefs } from "./lib/prefs";
 import { addRecentFile, clearRecentFiles, getRecentFiles, removeRecentFile } from "./lib/recentFiles";
 import type { CropRect, MaskBox, PickedColor } from "./types";
 import AddToProjects from "../AddToProjects";
-import { addOutputToProjects } from "../../lib/subs/commands";
+import { noDestination } from "../../lib/exportDestination";
+import { addOutputToProjects, stagedExportPath } from "../../lib/subs/commands";
 import i18n from "i18next";
 import "./imagetool.css";
 
@@ -164,6 +165,7 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
   const [showFlipBar, setShowFlipBar] = useState(false);
   const [prefs, setPrefs] = useState(() => loadPrefs());
   const [projects, setProjects] = useState<string[]>([]);
+  const [toComputer, setToComputer] = useState(true);
   const [recentFiles, setRecentFiles] = useState<string[]>(() => getRecentFiles());
   const [pickedColor, setPickedColor] = useState<PickedColor | null>(null);
   const [pickedColorResult, setPickedColorResult] = useState<PickedColor | null>(null);
@@ -775,9 +777,30 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
         isLoading={isLoading}
         defaultFormat={prefs.defaultExportFormat}
         defaultQuality={prefs.defaultJpegQuality}
-        extra={<AddToProjects selected={projects} onChange={setProjects} />}
+        noDestination={noDestination(toComputer, projects)}
+        extra={
+          <AddToProjects
+            selected={projects}
+            onChange={setProjects}
+            toComputer={toComputer}
+            onToComputer={setToComputer}
+          />
+        }
         onExport={async (format, quality) => {
-          const output = await handleExport(format, quality);
+          if (noDestination(toComputer, projects)) return;
+          let staged: string | undefined;
+          if (!toComputer) {
+            // Vers les seuls projets : un fichier temporaire au nom de l'image, sans boîte d'enregistrement.
+            const label = tabs.find((x) => x.id === activeTabId)?.label ?? "export";
+            const stem = label.replace(/\.[^.]+$/, "") || "export";
+            try {
+              staged = await stagedExportPath(`${stem}.${format === "jpeg" ? "jpg" : format}`);
+            } catch (e) {
+              setNotice({ message: String(e), type: "error" });
+              return;
+            }
+          }
+          const output = await handleExport(format, quality, staged);
           setExportOpen(false);
           if (output && projects.length > 0) {
             try {

@@ -992,6 +992,8 @@
     "addToProjectFailed": "Ajout à un projet impossible : {{error}}"
   },
   "addToProjects": {
+    "computer": "Sur mon ordinateur",
+    "none": "Choisis où exporter : sur ton ordinateur, dans un projet, ou les deux.",
     "label": "Ajouter à un projet",
     "browse": "Un autre projet…"
   }

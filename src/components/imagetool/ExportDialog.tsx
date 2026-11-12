@@ -9,8 +9,10 @@ interface ExportDialogProps {
   defaultQuality?: number;
   onExport: (format: ExportFormat, quality?: number) => void;
   onClose: () => void;
-  /** « Ajouter à un projet », affiché avant les boutons. */
+  /** Où exporter (l'ordinateur, des projets, ou les deux), affiché avant les boutons. */
   extra?: ReactNode;
+  /** Ni l'ordinateur ni un projet n'est choisi : rien à exporter. */
+  noDestination?: boolean;
 }
 
 const FORMATS: Array<{ value: ExportFormat; label: string; supportsQuality: boolean }> = [
@@ -29,6 +31,7 @@ export function ExportDialog({
   onExport,
   onClose,
   extra,
+  noDestination = false,
 }: ExportDialogProps) {
   const t = useT();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -124,7 +127,7 @@ export function ExportDialog({
         </button>
         <button
           onClick={handleExport}
-          disabled={isLoading}
+          disabled={isLoading || noDestination}
           className="px-4 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors disabled:opacity-50"
           data-testid="export-button"
         >

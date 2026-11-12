@@ -45,7 +45,8 @@ import DropZone from "./DropZone";
 import ExportDialog from "./ExportDialog";
 import GenerateSubtitlesDialog from "../subtitles/GenerateSubtitlesDialog";
 import AddToProjects from "../AddToProjects";
-import { addOutputToProjects, listMediaSubs, saveMediaSub } from "../../lib/subs/commands";
+import { noDestination } from "../../lib/exportDestination";
+import { addOutputToProjects, listMediaSubs, saveMediaSub, stagedExportPath } from "../../lib/subs/commands";
 import { cuesToSrt, remapCues } from "../../lib/subs/linked";
 import { parseSrt } from "../videotool/utils/srt";
 import Spectrum from "./Spectrum";
@@ -119,6 +120,7 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
   const [exportOpen, setExportOpen] = useState(false);
   const [subsOpen, setSubsOpen] = useState(false);
   const [projects, setProjects] = useState<string[]>([]);
+  const [toComputer, setToComputer] = useState(true);
   const [format, setFormat] = useState<ExportFormat>("wav");
   const [wavDepth, setWavDepth] = useState<WavDepth>("float32");
   const [processing, setProcessing] = useState(false);
@@ -336,12 +338,13 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
   }, [processing]);
 
   async function runExport() {
-    if (!loaded || processing || problem) return;
+    if (!loaded || processing || problem || noDestination(toComputer, projects)) return;
     let output: string | null;
     try {
       // Le moteur ajoute l'extension du format choisi si elle a été omise : le conteneur est décidé
-      // par le format, le nom doit donc s'y accorder.
-      output = await audioPickOutput(defaultOutputPath(loaded.path, format), format);
+      // par le format, le nom doit donc s'y accorder. Vers les seuls projets : pas de dialogue.
+      const suggested = defaultOutputPath(loaded.path, format);
+      output = toComputer ? await audioPickOutput(suggested, format) : await stagedExportPath(baseName(suggested));
     } catch (e) {
       say(t("audioTool.msg.error", { error: describe(e) }), "error");
       return;
@@ -374,7 +377,7 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
         ),
       );
       setExportOpen(false);
-      say(t("audioTool.export.done", { name: baseName(output) }), "success");
+      if (toComputer) say(t("audioTool.export.done", { name: baseName(output) }), "success");
       if (projects.length > 0) await addToProjects(output);
     } catch (e) {
       if ((e as EngineError | null)?.code === "cancelled") say(t("audioTool.export.cancelled"), "warning");
@@ -569,7 +572,15 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
           progress={progress}
           onExport={() => void runExport()}
           onCancel={() => void audioCancel()}
-          addToProjects={<AddToProjects selected={projects} onChange={setProjects} />}
+          noDestination={noDestination(toComputer, projects)}
+          addToProjects={
+            <AddToProjects
+              selected={projects}
+              onChange={setProjects}
+              toComputer={toComputer}
+              onToComputer={setToComputer}
+            />
+          }
           onClose={() => setExportOpen(false)}
         />
       )}

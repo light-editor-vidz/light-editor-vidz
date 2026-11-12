@@ -123,9 +123,17 @@ export async function rotateImage(tabId: string, degrees: number): Promise<Image
   return mapMeta(raw);
 }
 
-/** `true` si un fichier a été écrit, `false` si l'utilisateur a annulé la boîte d'enregistrement. */
-export async function exportImage(tabId: string, format: ExportFormat, quality?: number): Promise<string | null> {
-  return invoke<string | null>("export_image", { tabId, format, quality: quality ?? null });
+/**
+ * Le chemin écrit, ou `null` si l'utilisateur a annulé la boîte d'enregistrement. `output` déjà
+ * choisi (export vers les seuls projets) : pas de boîte.
+ */
+export async function exportImage(
+  tabId: string,
+  format: ExportFormat,
+  quality?: number,
+  output?: string,
+): Promise<string | null> {
+  return invoke<string | null>("export_image", { tabId, format, quality: quality ?? null, output: output ?? null });
 }
 
 export async function undoImage(tabId: string): Promise<ImageMeta> {

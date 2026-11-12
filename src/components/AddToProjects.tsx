@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listRecentProjects } from "../lib/commands";
+import { noDestination } from "../lib/exportDestination";
 import "./subtitles/subtitles.css";
 
 const nameOf = (path: string) =>
@@ -10,13 +11,20 @@ const nameOf = (path: string) =>
     .split(/[/\\]/)
     .pop() ?? path;
 
-/** « Ajouter à un projet » d'une fenêtre d'export : les projets récents à cocher, ou un autre dossier. */
+/**
+ * Où va un export : sur l'ordinateur (« Enregistrer sous »), dans des projets (projets récents à
+ * cocher, ou un autre dossier), ou les deux.
+ */
 export default function AddToProjects({
   selected,
   onChange,
+  toComputer,
+  onToComputer,
 }: {
   selected: string[];
   onChange: (projects: string[]) => void;
+  toComputer: boolean;
+  onToComputer: (on: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [enabled, setEnabled] = useState(false);
@@ -45,6 +53,10 @@ export default function AddToProjects({
   return (
     <div className="add-to-projects">
       <label className="subs-check">
+        <input type="checkbox" checked={toComputer} onChange={(e) => onToComputer(e.target.checked)} />
+        {t("addToProjects.computer")}
+      </label>
+      <label className="subs-check">
         <input type="checkbox" checked={enabled} onChange={(e) => toggleEnabled(e.target.checked)} />
         {t("addToProjects.label")}
       </label>
@@ -66,6 +78,11 @@ export default function AddToProjects({
             {t("addToProjects.browse")}
           </button>
         </>
+      )}
+      {noDestination(toComputer, selected) && (
+        <span className="add-to-projects-hint" role="status">
+          {t("addToProjects.none")}
+        </span>
       )}
     </div>
   );

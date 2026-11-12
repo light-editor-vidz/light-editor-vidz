@@ -107,6 +107,11 @@ describe("ExportDialog", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("Export button is disabled without a destination", () => {
+    renderDialog({ noDestination: true });
+    expect(screen.getByTestId("export-button")).toBeDisabled();
+  });
+
   it("Export button is disabled while loading", () => {
     renderDialog({ isLoading: true });
     expect(screen.getByTestId("export-button")).toBeDisabled();
