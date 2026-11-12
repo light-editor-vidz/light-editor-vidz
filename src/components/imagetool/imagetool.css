@@ -8,11 +8,15 @@
 @import "tailwindcss/utilities.css" layer(utilities) source(none);
 @source "./";
 
-/* L'échelle de gris `slate` de Tailwind est redéfinie sur les couleurs de la suite : `slate-950`
+/* `inline` : les classes pointent directement sur `--s800`…, définies sous `.it-root`. Sans lui,
+ * `--color-slate-800: var(--s800)` serait résolu sur `:root`, où `--s800` n'existe pas, et toutes
+ * ces couleurs seraient transparentes.
+ *
+ * L'échelle de gris `slate` de Tailwind est redéfinie sur les couleurs de la suite : `slate-950`
  * est la page, `slate-900` les barres, `slate-800` les cartes, `slate-700`/`600` les bordures,
  * `slate-500` à `slate-100` le texte. Le thème clair retourne l'échelle. L'indigo devient la
  * couleur d'accent de l'éditeur. */
-@theme {
+@theme inline {
   --color-slate-50: var(--s50);
   --color-slate-100: var(--s100);
   --color-slate-200: var(--s200);
@@ -43,6 +47,9 @@
   --color-amber-200: var(--a200);
   --color-amber-700: var(--a700);
   --color-amber-900: var(--a900);
+
+  /* En dur : le voile `::backdrop` d'une <dialog> n'hérite pas toujours des variables de la page. */
+  --color-black: #000;
 
   /* La suite écrit son texte en 13 px, ses libellés en 12 px. */
   --text-sm: 0.8125rem;
