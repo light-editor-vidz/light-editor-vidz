@@ -7,6 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-12
+
+### Fixed
+
+- The macOS build: whisper.cpp is now built for macOS 11 or later, which version 1.1.0 failed to do, so 1.1.0 was only published for Linux.
+
 ## [1.1.0] - 2026-11-12
 
 ### Added
