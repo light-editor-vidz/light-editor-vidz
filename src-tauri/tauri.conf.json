@@ -44,6 +44,9 @@
         "depends": ["gstreamer1.0-libav"]
       }
     },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
     "externalBin": ["binaries/ffmpeg", "binaries/ffprobe"]
   },
   "plugins": {
