@@ -1,0 +1,6 @@
+node_modules
+dist
+.astro
+# copiés au build depuis la racine du dépôt (scripts/prepare.mjs)
+public/install.sh
+public/uninstall.sh

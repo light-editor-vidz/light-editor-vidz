@@ -1,0 +1,19 @@
+{
+  "name": "light-editor-vidz-site",
+  "version": "1.0.0",
+  "scripts": {
+    "predev": "node scripts/prepare.mjs",
+    "dev": "astro dev",
+    "prebuild": "node scripts/prepare.mjs",
+    "build": "astro build",
+    "preview": "astro preview",
+    "test": "npm run build && node scripts/check.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+    "@fontsource/dm-mono": "^5.3.0",
+    "astro": "^7.4.1"
+  },
+  "private": true,
+  "type": "module"
+}

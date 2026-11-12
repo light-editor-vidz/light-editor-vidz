@@ -1,0 +1,17 @@
+---
+// Capture réelle de l'application (sombre), dans la langue du site.
+import dims from '../data/shots.json';
+import { u } from '../data/url';
+import type { Bi } from '../data/apps';
+
+interface Props { id: string; name: string; alt: Bi; eager?: boolean }
+const { id, name, alt, eager = false } = Astro.props;
+const size = (dims as Record<string, number[]>)[`${id}/${name}`];
+if (!size) throw new Error(`capture inconnue : ${id}/${name}`);
+const [w, h] = size;
+---
+<figure class="shot">
+  {(['fr', 'en'] as const).map((l) => (
+    <img lang={l} src={u(`screenshots/${id}/${name}-${l}.webp`)} width={w} height={h} alt={alt[l]} loading={eager ? 'eager' : 'lazy'} decoding="async" />
+  ))}
+</figure>

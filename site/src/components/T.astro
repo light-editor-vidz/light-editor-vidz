@@ -1,0 +1,6 @@
+---
+import type { Bi } from '../data/apps';
+interface Props { t: Bi }
+const { t } = Astro.props;
+---
+<span lang="fr">{t.fr}</span><span lang="en">{t.en}</span>

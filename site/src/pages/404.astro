@@ -1,0 +1,12 @@
+---
+import Base from '../layouts/Base.astro';
+import T from '../components/T.astro';
+import { ui } from '../data/ui';
+import { u } from '../data/url';
+---
+<Base title="404">
+  <section class="wrap" style="padding-top:72px;padding-bottom:128px">
+    <h1 class="h1"><T t={ui.notFound} /></h1>
+    <a href={u()} class="btn btn-fill">LightEditorVidz</a>
+  </section>
+</Base>

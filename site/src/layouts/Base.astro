@@ -1,0 +1,99 @@
+---
+import '@fontsource-variable/bricolage-grotesque';
+import '@fontsource/dm-mono/400.css';
+import '@fontsource/dm-mono/500.css';
+import '../styles/global.css';
+import Logo from '../components/Logo.astro';
+import T from '../components/T.astro';
+import { ui } from '../data/ui';
+import { u } from '../data/url';
+
+interface Props { title?: string; description?: string; path?: string; image?: string }
+const { title, description, path = '', image = 'editor-vidz' } = Astro.props;
+const fullTitle = title ? `${title} · LightEditorVidz` : 'LightEditorVidz';
+const desc = description ?? ui.desc.en;
+const canonical = new URL(u(path), Astro.site).href;
+const ogImage = new URL(u(`logos/png/${image}-512.png`), Astro.site).href;
+---
+<!doctype html>
+<html lang="fr" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={desc} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" type="image/svg+xml" href={u('logos/editor-vidz.svg')} />
+    <link rel="apple-touch-icon" href={u('logos/png/editor-vidz-256.png')} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={desc} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta name="twitter:card" content="summary" />
+    <script is:inline>
+      (function () {
+        var d = document.documentElement, lang, dark = true;
+        try {
+          lang = localStorage.getItem('las-lang');
+          dark = localStorage.getItem('las-theme') !== 'light';
+        } catch (e) {}
+        if (lang !== 'fr' && lang !== 'en') lang = (navigator.language || 'fr').slice(0, 2) === 'en' ? 'en' : 'fr';
+        d.lang = lang;
+        d.setAttribute('data-theme', dark ? 'dark' : 'light');
+      })();
+    </script>
+  </head>
+  <body>
+    <div class="page">
+      <header class="hd" id="hd">
+        <div class="wrap hd-in">
+          <a href={u()} class="brand"><Logo size={34} /><span class="bt">LightEditorVidz</span></a>
+          <nav class="nav">
+            <a href={u('guide/')}><T t={ui.navGuide} /></a>
+            <a href={u('install/')}><T t={ui.navInstall} /></a>
+          </nav>
+          <div class="tools">
+            <button type="button" class="pill-btn" id="lang-btn" aria-label="Language / Langue"><T t={ui.langBtn} /></button>
+            <button type="button" class="pill-btn" id="theme-btn">
+              <span class="if-dark"><T t={ui.themeDark} /></span><span class="if-light"><T t={ui.themeLight} /></span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <slot />
+
+      <footer class="ft">
+        <div class="wrap mono">
+          <span>LightEditorVidz</span>
+          <span><T t={ui.license} /></span>
+        </div>
+      </footer>
+    </div>
+
+    <script>
+      const root = document.documentElement;
+      document.getElementById('lang-btn')!.addEventListener('click', () => {
+        const l = root.lang === 'fr' ? 'en' : 'fr';
+        root.lang = l;
+        try { localStorage.setItem('las-lang', l); } catch {}
+      });
+      document.getElementById('theme-btn')!.addEventListener('click', () => {
+        const dark = root.getAttribute('data-theme') !== 'dark';
+        root.setAttribute('data-theme', dark ? 'dark' : 'light');
+        try { localStorage.setItem('las-theme', dark ? 'dark' : 'light'); } catch {}
+      });
+
+      // Boutons « Copier » : data-copy = texte à copier
+      document.querySelectorAll<HTMLButtonElement>('button.copy').forEach((b) => {
+        b.addEventListener('click', () => {
+          const text = b.dataset.copy ?? '';
+          navigator.clipboard?.writeText(text).catch(() => {});
+          b.classList.add('is-copied');
+          setTimeout(() => b.classList.remove('is-copied'), 1500);
+        });
+      });
+    </script>
+  </body>
+</html>

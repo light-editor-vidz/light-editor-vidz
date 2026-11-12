@@ -6,6 +6,8 @@
 
 Compose scenes on a canvas with text, images, video, audio and shapes, animate them, and export a real `.mp4` — all locally, no cloud, no watermark.
 
+Website: <https://light-editor-vidz.github.io/light-editor-vidz/> (its source is in [`site/`](site)).
+
 ![license](https://img.shields.io/badge/license-MIT-blue) ![platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-lightgrey)
 
 ---

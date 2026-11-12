@@ -1,0 +1,61 @@
+import type { Bi } from './apps';
+
+const b = (fr: string, en: string): Bi => ({ fr, en });
+
+export const ui = {
+  navInstall: b('Installation', 'Installation'),
+  navGuide: b('Guide', 'Guide'),
+  kicker: b('logiciel de bureau / vidéo · audio · image', 'desktop software / video · audio · image'),
+  heroTitle: b('Créer. Retoucher. Sous-titrer.', 'Create. Edit. Subtitle.'),
+  heroSub: b(
+    'Un seul logiciel de bureau pour monter des vidéos par scènes, retoucher un son, une image ou une vidéo, et générer des sous-titres. Open source, sans compte.',
+    'One desktop app to build videos from scenes, edit a sound, an image or a video, and generate subtitles. Open source, no account.',
+  ),
+  ctaGuide: b('Découvrir', 'Explore'),
+  ctaInstall: b('Installer', 'Install'),
+  installIntro: b(
+    "LightEditorVidz s'installe avec une commande, identique sur macOS et Linux. Copiez-la dans un terminal.",
+    'LightEditorVidz installs with one command, identical on macOS and Linux. Copy it into a terminal.',
+  ),
+  rerun: b(
+    'Relancez la même commande pour mettre à jour vers la dernière version.',
+    'Run the same command again to upgrade to the latest release.',
+  ),
+  fullGuide: b("Guide complet d'installation", 'Full installation guide'),
+  installBtn: b('Installer', 'Install'),
+  platforms: b('Plateformes', 'Platforms'),
+  licenseLabel: b('Licence', 'License'),
+  tabs: {
+    overview: b('Présentation', 'Overview'),
+    how: b('Fonctionnement', 'How it works'),
+    features: b('Fonctionnalités', 'Features'),
+    examples: b("Exemples d'utilisation", 'Usage examples'),
+    install: b('Installation', 'Installation'),
+    uninstall: b('Désinstallation', 'Uninstall'),
+  },
+  oneCmd: b('Une commande · macOS et Linux', 'One command · macOS and Linux'),
+  req: b('Prérequis', 'Requirements'),
+  license: b('licence MIT', 'MIT license'),
+  copy: b('Copier', 'Copy'),
+  copied: b('Copié', 'Copied'),
+  langBtn: b('EN', 'FR'),
+  themeDark: b('Clair', 'Light'),
+  themeLight: b('Sombre', 'Dark'),
+  desc: b(
+    'LightEditorVidz : un logiciel de bureau open source pour monter des vidéos, retoucher son, image et vidéo, et générer des sous-titres.',
+    'LightEditorVidz: an open source desktop app to build videos, edit sound, image and video, and generate subtitles.',
+  ),
+  principlesTitle: b('Pensé pour le travail de tous les jours', 'Made for everyday work'),
+  principles: [
+    { t: b('Local', 'Local'), d: b("Vos fichiers restent sur votre machine. Aucun envoi, aucun compte à créer. Seuls les moteurs cloud de sous-titres que vous choisissez reçoivent de l'audio ou du texte, et l'application le dit.", 'Your files stay on your machine. No upload, no account to create. Only the cloud subtitle engines you pick receive audio or text, and the app says so.') },
+    { t: b('Libre et sans filigrane', 'Free, no watermark'), d: b("Licence MIT, pas d'abonnement, pas de filigrane sur vos exports.", 'MIT license, no subscription, no watermark on your exports.') },
+    { t: b('Tout au même endroit', 'Everything in one place'), d: b("Montage par scènes, vues Audio, Image et Vidéo, sous-titres : un seul logiciel, une seule interface, un historique partout.", 'Scene editing, Audio, Image and Video views, subtitles: one app, one interface, a history everywhere.') },
+    { t: b('Toujours à jour', 'Always up to date'), d: b("Les nouvelles versions s'installent depuis l'application, avec la liste des nouveautés ; les téléchargements sont vérifiés.", 'New versions install from inside the app, with the list of what is new; downloads are verified.') },
+  ],
+  galleryTitle: b('En images', 'In pictures'),
+  howTitle: b('Pas à pas', 'Step by step'),
+  shortcutsTitle: b('Raccourcis clavier', 'Keyboard shortcuts'),
+  notesTitle: b('Bon à savoir', 'Good to know'),
+  platformLine: b('Plateformes', 'Platforms'),
+  notFound: b('Page introuvable', 'Page not found'),
+};

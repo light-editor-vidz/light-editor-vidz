@@ -1,0 +1,30 @@
+---
+import Base from '../layouts/Base.astro';
+import T from '../components/T.astro';
+import { apps } from '../data/apps';
+import { ui } from '../data/ui';
+import { u } from '../data/url';
+
+const app = apps[0];
+---
+<Base title="Installation" path="install/" description={ui.installIntro.en}>
+  <section class="wrap" style="padding-top:72px">
+    <h1 class="h1"><T t={ui.navInstall} /></h1>
+    <p class="lede" style="max-width:640px"><T t={ui.installIntro} /></p>
+    <div class="inst-grid">
+      <div class="inst-side" style={`--h:${app.h1}`}>
+        <div class="term">
+          <div class="lbl mono">macOS · Linux</div>
+          <code><i>$ </i><span>{app.command}</span></code>
+          <button type="button" class="copy" data-copy={app.command}>
+            <span class="idle"><T t={ui.copy} /></span><span class="done"><T t={ui.copied} /></span>
+          </button>
+        </div>
+        <p class="plat"><b><T t={ui.platformLine} /> :</b> <T t={app.platform} /></p>
+        <p><T t={ui.rerun} /></p>
+        <a href={u('guide/#install')}><T t={ui.fullGuide} /> →</a>
+      </div>
+    </div>
+  </section>
+  <div style="height:128px"></div>
+</Base>

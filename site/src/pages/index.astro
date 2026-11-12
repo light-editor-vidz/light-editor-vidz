@@ -1,0 +1,80 @@
+---
+import Base from '../layouts/Base.astro';
+import Logo from '../components/Logo.astro';
+import Shot from '../components/Shot.astro';
+import T from '../components/T.astro';
+import { apps } from '../data/apps';
+import type { Bi } from '../data/apps';
+import { ui } from '../data/ui';
+import { u } from '../data/url';
+
+const app = apps[0];
+const b = (fr: string, en: string): Bi => ({ fr, en });
+
+// Ce que fait le logiciel, d'un coup d'œil ; le détail est dans le guide.
+const tools = [
+  { t: b('Montage par scènes', 'Scene editing'), d: b("Texte, images, vidéo, audio et formes sur une timeline, animations, transitions, export mp4.", 'Text, images, video, audio and shapes on a timeline, animations, transitions, mp4 export.') },
+  { t: b('Vue Audio', 'Audio view'), d: b("Coupes, fondus, normalisation, vitesse, filtres, aperçu en direct, export WAV, MP3, FLAC, OGG ou M4A.", 'Cuts, fades, normalisation, speed, filters, live preview, WAV, MP3, FLAC, OGG or M4A export.') },
+  { t: b('Vue Image', 'Image view'), d: b("Recadrage, rotation, retouches, filtres, suppression d'objet, EXIF, historique, export PNG, JPEG, WebP, BMP ou TIFF.", 'Crop, rotate, adjustments, filters, object removal, EXIF, history, PNG, JPEG, WebP, BMP or TIFF export.') },
+  { t: b('Vue Vidéo', 'Video view'), d: b("Découpe, recadrage et formats réseaux, filtres, stabilisation, export MP4, MOV, WebM, AVI ou GIF avec file d'attente.", 'Trim, crop and social formats, filters, stabilisation, MP4, MOV, WebM, AVI or GIF export with a queue.') },
+  { t: b('Sous-titres', 'Subtitles'), d: b("Transcription locale ou cloud, traduction, correction, export .srt, .vtt ou .ass, liés au média dans un projet.", 'Local or cloud transcription, translation, correction, .srt, .vtt or .ass export, linked to the media in a project.') },
+];
+
+const gallery = [
+  { shot: 'editor', cap: b('Le montage par scènes', 'Scene editing') },
+  { shot: 'home', cap: b("L'accueil", 'The home screen') },
+  { shot: 'new', cap: b('Nouveau projet', 'New project') },
+  { shot: 'export', cap: b("L'export", 'Export') },
+];
+---
+<Base description={ui.desc.en}>
+  <section class="wrap hero">
+    <div>
+      <div class="kicker mono"><T t={ui.kicker} /></div>
+      <h1><T t={ui.heroTitle} /></h1>
+      <p><T t={ui.heroSub} /></p>
+      <div class="cta">
+        <a href={u('guide/')} class="btn btn-fill"><T t={ui.ctaGuide} /></a>
+        <a href={u('install/')} class="btn btn-line"><T t={ui.ctaInstall} /></a>
+      </div>
+    </div>
+    <div class="stage" id="stage">
+      <a href={u('guide/')} class="scene on" style={`--h:${app.h1};--h2:${app.h2}`}>
+        <div class="halo"></div>
+        <div><Logo size={230} /></div>
+        <div>
+          <div class="nm">{app.name}</div>
+          <div class="kd mono"><T t={app.kind} /></div>
+        </div>
+      </a>
+    </div>
+  </section>
+  <section class="wrap principles">
+    <h2><T t={ui.principlesTitle} /></h2>
+    <div class="pgrid">
+      {ui.principles.map((p, i) => (
+        <div><div class="pn mono">{'0' + (i + 1)}</div><div class="pt"><T t={p.t} /></div><p><T t={p.d} /></p></div>
+      ))}
+    </div>
+  </section>
+  <section class="wrap principles">
+    <h2><T t={b('Ce que vous pouvez faire', 'What you can do')} /></h2>
+    <div class="pgrid">
+      {tools.map((p, i) => (
+        <div><div class="pn mono">{'0' + (i + 1)}</div><div class="pt"><T t={p.t} /></div><p><T t={p.d} /></p></div>
+      ))}
+    </div>
+  </section>
+  <section class="wrap gallery">
+    <h2><T t={ui.galleryTitle} /></h2>
+    <div class="ggrid">
+      {gallery.map((g) => (
+        <a href={u('guide/')} class="gcard" style={`--h:${app.h1}`}>
+          <Shot id={app.id} name={g.shot} alt={{ fr: `${app.name} : ${g.cap.fr}`, en: `${app.name}: ${g.cap.en}` }} />
+          <div class="gcap"><span><T t={g.cap} /></span></div>
+        </a>
+      ))}
+    </div>
+  </section>
+  <div style="height:128px"></div>
+</Base>
