@@ -23,6 +23,10 @@ import { DEFAULT_SUBTITLE_STYLE } from "./types";
 import type { CropRect, EditorState, SubtitleAnimation, SubtitleStyle, TrimSegment } from "./types";
 import type { StabilizeLevel } from "./hooks/useHistory";
 import { useT } from "./i18n";
+import { useTranslation } from "react-i18next";
+import { History as HistoryIcon } from "lucide-react";
+import HistoryPanel from "../HistoryPanel";
+import { stepLabels, videoStepLabel } from "../../lib/historyLabels";
 import GenerateSubtitlesDialog from "../subtitles/GenerateSubtitlesDialog";
 import { cuesToSrt, remapCues } from "../../lib/subs/linked";
 import i18n from "i18next";
@@ -80,7 +84,16 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
   const [recent, setRecent] = useState<RecentEntry[]>([]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const { editable, set, setLive, endGesture, undo, redo, reset, canUndo, canRedo } = useEditorHistory();
+  const { editable, set, setLive, endGesture, undo, redo, reset, goto, steps, index, canUndo, canRedo } =
+    useEditorHistory();
+  const { t: tr } = useTranslation();
+  const [showHistory, setShowHistory] = useState(false);
+  const historyLabels = useMemo(
+    () => (showHistory ? stepLabels(steps, (a, b) => videoStepLabel(a, b, tr), tr) : []),
+    // `steps` is rebuilt on every render: its length and the current state say when it changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [showHistory, steps.length, editable, tr],
+  );
 
   const showCrop = activePanel === "crop";
   const showFilters = activePanel === "filters";
@@ -491,6 +504,9 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
       if (videoPath) setShowExport(true);
     },
     closeProject: () => void confirmClose().then((ok) => ok && onClose()),
+    toggleHistory: () => {
+      if (videoPath) setShowHistory((s) => !s);
+    },
   });
   useEffect(() => {
     if (!tabActive) return;
@@ -661,6 +677,15 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
             >
               <RedoIcon />
             </button>
+            <button
+              className={`btn-ghost btn-icon${showHistory ? " active" : ""}`}
+              onClick={() => setShowHistory((s) => !s)}
+              aria-pressed={showHistory}
+              title={tr("history.toggle")}
+              aria-label={tr("history.toggle")}
+            >
+              <HistoryIcon size={16} />
+            </button>
             <button className="btn-ghost" onClick={onOpenFile}>
               {t.app_open_video}
             </button>
@@ -818,6 +843,10 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
             onCommit={endGesture}
           />
         </div>
+
+        {showHistory && (
+          <HistoryPanel labels={historyLabels} current={index} onGoto={goto} onClose={() => setShowHistory(false)} />
+        )}
 
         {showExport && (
           <Suspense fallback={null}>

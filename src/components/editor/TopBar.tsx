@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
-import { Redo2, Undo2 } from "lucide-react";
+import { History, Redo2, Undo2 } from "lucide-react";
 import type { Project } from "../../bindings/Project";
 import { describeError, isExportCancelled } from "../../lib/errors";
 import {
@@ -19,6 +19,7 @@ import type { Notice } from "./StatusBanner";
 import { expandLinkedSubtitles } from "../../lib/subs/linked";
 import ExportModal from "./ExportModal";
 import { useRegisterMenuActions } from "../../lib/menuBridge";
+import { markBusy } from "../../lib/busyWork";
 
 interface Props {
   project: Project;
@@ -34,6 +35,9 @@ interface Props {
   canRedo: boolean;
   /** Generates the subtitles of the whole project. */
   onGenerateSubtitles?: () => void;
+  /** Le panneau Historique est affiché. */
+  historyOpen?: boolean;
+  onToggleHistory?: () => void;
 }
 
 export default function TopBar({
@@ -47,9 +51,13 @@ export default function TopBar({
   canUndo,
   canRedo,
   onGenerateSubtitles,
+  historyOpen = false,
+  onToggleHistory,
 }: Props) {
   const { t } = useTranslation();
   const [exporting, setExporting] = useState(false);
+  // Quitter pendant l'export demande confirmation.
+  useEffect(() => (exporting ? markBusy("quit.projectExport") : undefined), [exporting]);
   const [exportProgress, setExportProgress] = useState(0);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportStartedAt, setExportStartedAt] = useState(0);
@@ -154,6 +162,18 @@ export default function TopBar({
         >
           <Redo2 size={15} />
         </button>
+        {onToggleHistory && (
+          <button
+            type="button"
+            className={`sb-ghost icon-square${historyOpen ? " active" : ""}`}
+            onClick={onToggleHistory}
+            aria-pressed={historyOpen}
+            title={t("history.toggle")}
+            aria-label={t("history.toggle")}
+          >
+            <History size={15} />
+          </button>
+        )}
         {onGenerateSubtitles && (
           <button type="button" className="sb-ghost" onClick={onGenerateSubtitles} disabled={exporting}>
             {t("subs.menu")}

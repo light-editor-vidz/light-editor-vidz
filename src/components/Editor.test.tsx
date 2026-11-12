@@ -877,6 +877,34 @@ describe("Editor — annuler / rétablir", () => {
     fireEvent.click(redo);
     expect(elementsOf(await savedProject())[0].group_id).toBeTruthy();
   });
+
+  it("l'historique nomme les étapes et ramène à celle cliquée", async () => {
+    await renderEditor();
+    key("a", { ctrlKey: true });
+    key("g", { ctrlKey: true });
+
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    const panel = screen.getByRole("complementary", { name: "History" });
+    const steps = within(panel).getByRole("list");
+    expect(
+      within(steps)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Opened", "Changed: one (+1)"]);
+
+    fireEvent.click(within(steps).getByRole("button", { name: "Opened" }));
+    expect(elementsOf(await savedProject())[0].group_id).toBeNull();
+    fireEvent.click(within(steps).getByRole("button", { name: "Changed: one (+1)" }));
+    expect(elementsOf(await savedProject())[0].group_id).toBeTruthy();
+  });
+
+  it("Édition > Historique affiche puis masque le panneau", async () => {
+    await renderEditor();
+    act(() => inertBridge.actions.current.toggleHistory?.());
+    expect(screen.getByRole("complementary", { name: "History" })).toBeInTheDocument();
+    act(() => inertBridge.actions.current.toggleHistory?.());
+    expect(screen.queryByRole("complementary", { name: "History" })).not.toBeInTheDocument();
+  });
 });
 
 // ── Champs de saisie ────────────────────────────────────────────────────────

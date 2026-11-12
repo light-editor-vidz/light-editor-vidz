@@ -6,6 +6,7 @@ import {
   canRedo,
   canUndo,
   current,
+  goto,
   newHistory,
   record,
   redo,
@@ -83,5 +84,16 @@ describe("history", () => {
     for (let i = 1; i <= HISTORY_LIMIT + 20; i++) h = record(h, with_({ fadeIn: i }));
     expect(h.steps).toHaveLength(HISTORY_LIMIT);
     expect(current(h).fadeIn).toBe(HISTORY_LIMIT + 20);
+  });
+
+  it("jumps straight to a step, keeping the steps after it", () => {
+    let h = newHistory();
+    h = record(h, with_({ fadeIn: 1 }));
+    h = record(h, with_({ fadeIn: 2 }));
+    h = goto(h, 0);
+    expect(current(h)).toEqual(DEFAULT_SETTINGS);
+    expect(h.steps).toHaveLength(3);
+    expect(current(goto(h, 2)).fadeIn).toBe(2);
+    expect(goto(h, 9)).toBe(h);
   });
 });

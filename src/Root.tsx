@@ -5,6 +5,7 @@ import { suiteMessages, type SuiteLang, type SuiteT } from "./suite/messages";
 import { changelogs } from "./suite/changelogs";
 import { releaseNotes } from "./lib/commands";
 import { runBeforeExit } from "./lib/lifecycle";
+import { confirmQuitWithBusyWork } from "./lib/busyWork";
 import { MenuBridgeProvider } from "./lib/menuBridge";
 
 /** The parts every app of the suite shares (menu bar, update check and banner, About, What's new),
@@ -23,8 +24,9 @@ export default function Root({ children }: { children: ReactNode }) {
     [lang, appT],
   );
 
-  // Pending changes are written before the app restarts on an update.
-  const beforeRestart = useCallback(() => runBeforeExit(), []);
+  // Pending changes are written before the app restarts on an update; running work (exports,
+  // subtitles) is only interrupted once the user agrees.
+  const beforeRestart = useCallback(async () => (await confirmQuitWithBusyWork()) && (await runBeforeExit()), []);
 
   return (
     <SuiteRoot

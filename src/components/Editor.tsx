@@ -55,6 +55,8 @@ import {
   updateCompositionDuration,
 } from "../lib/timeline";
 import { historyReducer, initialHistory } from "../lib/history";
+import HistoryPanel from "./HistoryPanel";
+import { projectStepLabel, stepLabels } from "../lib/historyLabels";
 import { createPlaybackClock, useClockValue } from "../lib/playbackClock";
 import { useAutosave } from "../lib/useAutosave";
 import { registerBeforeExit } from "../lib/lifecycle";
@@ -199,6 +201,13 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
   const canRedo = future.length > 0;
   const handleUndo = useCallback(() => dispatch({ type: "undo" }), []);
   const handleRedo = useCallback(() => dispatch({ type: "redo" }), []);
+  const handleGoto = useCallback((index: number) => dispatch({ type: "goto", index }), []);
+  const [showHistory, setShowHistory] = useState(false);
+  const historyLabels = useMemo(
+    () =>
+      showHistory && project ? stepLabels([...past, project, ...future], (a, b) => projectStepLabel(a, b, t), t) : [],
+    [showHistory, past, project, future, t],
+  );
 
   /** Subtitles of the whole project: its mix is already on the project timeline. */
   function openSubsForProject() {
@@ -569,6 +578,7 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
     redo: handleRedo,
     deleteSelected: handleDeleteSelected,
     duplicateSelected: handleDuplicateSelected,
+    toggleHistory: () => setShowHistory((s) => !s),
   });
   const { setFlags } = useMenuBridge();
   const tabActive = useTabActive();
@@ -627,7 +637,17 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
         canUndo={canUndo}
         canRedo={canRedo}
         onGenerateSubtitles={openSubsForProject}
+        historyOpen={showHistory}
+        onToggleHistory={() => setShowHistory((s) => !s)}
       />
+      {showHistory && (
+        <HistoryPanel
+          labels={historyLabels}
+          current={past.length}
+          onGoto={handleGoto}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
       {banner && <StatusBanner notice={banner} onDismiss={saveError ? undefined : () => setNotice(null)} />}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {subs && (

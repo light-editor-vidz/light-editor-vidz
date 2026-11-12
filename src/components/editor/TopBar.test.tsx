@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { cancelExport, exportProject, exportProjectAudio } from "../../lib/commands";
 import TopBar from "./TopBar";
+import { busyWork } from "../../lib/busyWork";
 import { inertBridge } from "../../lib/menuBridge";
 import type { Project } from "../../bindings/Project";
 
@@ -191,10 +192,13 @@ describe("TopBar — exporting", () => {
     await waitFor(() => expect(mockExport).toHaveBeenCalled());
     act(() => handlers["export-progress"]?.({ payload: 0.5 }));
     expect(await screen.findByRole("button", { name: /Exporting.*50%/ })).toBeInTheDocument();
+    // Quitter pendant l'export demande confirmation.
+    expect(await busyWork()).toContain("quit.projectExport");
 
     await act(async () => {
       release();
     });
+    expect(await busyWork()).not.toContain("quit.projectExport");
   });
 
   it("reports a failed export through a notice, with the reason", async () => {

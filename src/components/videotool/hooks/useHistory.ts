@@ -115,6 +115,20 @@ export function useEditorHistory(initial: EditableState = defaultEditable) {
     );
   }, []);
 
+  /** Jumps straight to step `index` of `steps` (0 = the opened file). */
+  const goto = useCallback((index: number) => {
+    inGesture.current = false;
+    setHist((h) => {
+      const steps = [...h.past, h.current, ...[...h.future].reverse()];
+      if (index < 0 || index >= steps.length || index === h.past.length) return h;
+      return {
+        past: steps.slice(0, index),
+        current: steps[index],
+        future: steps.slice(index + 1).reverse(),
+      };
+    });
+  }, []);
+
   const reset = useCallback((val: EditableState = defaultEditable) => {
     inGesture.current = false;
     setHist({ past: [], current: val, future: [] });
@@ -128,6 +142,10 @@ export function useEditorHistory(initial: EditableState = defaultEditable) {
     undo,
     redo,
     reset,
+    goto,
+    /** Every state in order, from the opened file to the last redoable one; `index` is the current. */
+    steps: [...hist.past, hist.current, ...[...hist.future].reverse()],
+    index: hist.past.length,
     canUndo: hist.past.length > 0,
     canRedo: hist.future.length > 0,
   };

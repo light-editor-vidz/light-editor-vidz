@@ -147,4 +147,26 @@ describe("historyReducer", () => {
   it("ignore les mutations tant qu'aucun projet n'est chargé", () => {
     expect(historyReducer(initialHistory, { type: "mutate", fn: rename("X"), now: 0 })).toBe(initialHistory);
   });
+
+  it("saute directement à une étape passée puis future (goto)", () => {
+    let state = loaded("A");
+    state = historyReducer(state, { type: "mutate", fn: rename("B"), now: 0 });
+    state = historyReducer(state, { type: "mutate", fn: rename("C"), now: 10_000 });
+    state = historyReducer(state, { type: "goto", index: 0 });
+    expect(state.present?.name).toBe("A");
+    expect(state.past).toHaveLength(0);
+    expect(state.future.map((p) => p.name)).toEqual(["B", "C"]);
+    state = historyReducer(state, { type: "goto", index: 2 });
+    expect(state.present?.name).toBe("C");
+    expect(state.past.map((p) => p.name)).toEqual(["A", "B"]);
+    expect(state.future).toHaveLength(0);
+  });
+
+  it("ignore un goto hors limites ou vers l'étape courante", () => {
+    let state = loaded("A");
+    state = historyReducer(state, { type: "mutate", fn: rename("B"), now: 0 });
+    expect(historyReducer(state, { type: "goto", index: 1 })).toBe(state);
+    expect(historyReducer(state, { type: "goto", index: 5 })).toBe(state);
+    expect(historyReducer(state, { type: "goto", index: -1 })).toBe(state);
+  });
 });

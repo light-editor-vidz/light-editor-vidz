@@ -12,8 +12,13 @@ vi.mock("@tauri-apps/api/window", () => ({
   }),
 }));
 
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve([])) }));
+const ask = vi.fn();
+vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: (...args: unknown[]) => ask(...args) }));
+
 import { installCloseGuard } from "./closeGuard";
 import { registerBeforeExit } from "./lifecycle";
+import { markBusy } from "./busyWork";
 
 beforeEach(() => {
   destroy.mockClear();
@@ -51,5 +56,24 @@ describe("installCloseGuard", () => {
     await requestClose();
     off();
     expect(destroy).not.toHaveBeenCalled();
+  });
+
+  it("demande avant d'interrompre un travail en cours, et reste ouverte si on renonce", async () => {
+    await installCloseGuard();
+    const done = markBusy("quit.audioExport");
+    ask.mockResolvedValueOnce(false);
+    const preventDefault = await requestClose();
+    expect(preventDefault).toHaveBeenCalled();
+    expect(ask).toHaveBeenCalled();
+    expect(destroy).not.toHaveBeenCalled();
+
+    ask.mockResolvedValueOnce(true);
+    const task = vi.fn(async () => true);
+    const off = registerBeforeExit(task);
+    await requestClose();
+    off();
+    done();
+    expect(task).toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalled();
   });
 });

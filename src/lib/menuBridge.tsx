@@ -15,6 +15,8 @@ export interface MenuActions {
   openExport?: () => void;
   generateSubtitles?: () => void;
   setImageGrid?: (size: number) => void;
+  /** « Édition > Historique » : affiche ou masque l'historique de la vue. */
+  toggleHistory?: () => void;
   openSettings?: () => void;
   undo?: () => void;
   redo?: () => void;

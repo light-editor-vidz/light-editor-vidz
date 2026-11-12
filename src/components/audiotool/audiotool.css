@@ -79,6 +79,11 @@
   padding: 0;
 }
 
+.at-btn.active {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
 .at-btn.primary {
   border-color: var(--accent);
   background: var(--accent);

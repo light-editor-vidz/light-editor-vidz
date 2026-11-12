@@ -27,6 +27,18 @@ describe("describeError", () => {
     expect(describeError(new Error("boom"))).toBe("boom");
   });
 
+  it("traduit les refus des services cloud de sous-titres, avec la réponse du service", async () => {
+    await i18n.changeLanguage("fr");
+    const err = (code: string) => ({ code, message: "HTTP 401: bad key" });
+    expect(describeError(err("api_key_invalid"))).toBe(
+      "Le fournisseur a refusé la requête : la clé d'API est incorrecte, ou le service n'est pas activé pour elle. Vérifiez-la dans les réglages des sous-titres. (HTTP 401: bad key)",
+    );
+    expect(describeError(err("quota_exceeded"))).toMatch(/^Le quota .*\(HTTP 401: bad key\)$/);
+    expect(describeError(err("provider_unavailable"))).toMatch(/^Le fournisseur rencontre un problème/);
+    await i18n.changeLanguage("en");
+    expect(describeError(err("quota_exceeded"))).toMatch(/^The provider's quota or rate limit was reached/);
+  });
+
   it("traduit une erreur structurée du backend d'après son code", async () => {
     await i18n.changeLanguage("fr");
     const error = { code: "read_project", detail: "No such file", message: "Failed to read project: No such file" };

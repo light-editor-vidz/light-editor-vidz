@@ -73,3 +73,6 @@ export const canRedo = (h: History): boolean => h.index < h.steps.length - 1;
 export const undo = (h: History): History => (canUndo(h) ? { ...h, index: h.index - 1 } : h);
 export const redo = (h: History): History => (canRedo(h) ? { ...h, index: h.index + 1 } : h);
 export const current = (h: History): AudioSettings => h.steps[h.index];
+/** Revient (ou avance) directement à l'étape `index`. */
+export const goto = (h: History, index: number): History =>
+  index >= 0 && index < h.steps.length ? { ...h, index } : h;

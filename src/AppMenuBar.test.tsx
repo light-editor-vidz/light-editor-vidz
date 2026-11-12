@@ -67,20 +67,51 @@ describe("AppMenuBar", () => {
     expect((entry("File", "Open recent") as { enabled?: boolean }).enabled).toBe(false);
   });
 
-  it("has Undo, Redo, Delete and Duplicate in Edit, without accelerators the editor already handles", async () => {
+  it("has Undo, Redo, History, Delete and Duplicate in Edit, without accelerators the editor already handles", async () => {
     await mount();
 
     const edit = lastMenu().find((m) => m.text === "Edit")!;
     expect(edit.items.map((i) => i.text ?? i.item)).toEqual([
       "Undo",
       "Redo",
+      "History",
       "Separator",
       "Delete",
       "Duplicate",
       "Separator",
       "Grid size",
     ]);
-    expect(edit.items.every((i) => !("accelerator" in i) || i.accelerator === undefined)).toBe(true);
+    // History is the only one the views do not handle themselves.
+    const withAccelerator = edit.items.filter((i) => "accelerator" in i && i.accelerator !== undefined);
+    expect(withAccelerator.map((i) => [i.text, i.accelerator])).toEqual([["History", "CmdOrCtrl+Shift+H"]]);
+  });
+
+  it("History is off on the home screen and toggles the history of the tab in front", async () => {
+    await mount();
+    expect((entry("Edit", "History") as { enabled?: boolean }).enabled).toBe(false);
+  });
+
+  it("History and Settings act on an image tab", async () => {
+    inertBridge.flags = { ...inertBridge.flags, inImage: true };
+    const toggleHistory = vi.fn();
+    const openSettings = vi.fn();
+    inertBridge.actions.current.toggleHistory = toggleHistory;
+    inertBridge.actions.current.openSettings = openSettings;
+    try {
+      await mount();
+      const history = entry("Edit", "History") as { enabled?: boolean; action?: () => void };
+      const settings = entry("File", "Settings…") as { enabled?: boolean; action?: () => void };
+      expect(history.enabled).toBe(true);
+      expect(settings.enabled).toBe(true);
+      history.action?.();
+      settings.action?.();
+      expect(toggleHistory).toHaveBeenCalled();
+      expect(openSettings).toHaveBeenCalled();
+    } finally {
+      inertBridge.flags = { ...inertBridge.flags, inImage: false };
+      delete inertBridge.actions.current.toggleHistory;
+      delete inertBridge.actions.current.openSettings;
+    }
   });
 
   it("puts the keyboard shortcuts in Help", async () => {

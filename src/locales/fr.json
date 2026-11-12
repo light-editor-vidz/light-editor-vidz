@@ -465,7 +465,10 @@
     "sourceLangRequired": "Choisissez la langue parlée à traduire.",
     "unknownKey": "Clé d'API inconnue.",
     "unsupportedLanguage": "Cette langue n'est pas prise en charge.",
-    "noProjectAudio": "Ce projet n'a aucun son à transcrire ou à exporter."
+    "noProjectAudio": "Ce projet n'a aucun son à transcrire ou à exporter.",
+    "apiKeyInvalid": "Le fournisseur a refusé la requête : la clé d'API est incorrecte, ou le service n'est pas activé pour elle. Vérifiez-la dans les réglages des sous-titres. ({{detail}})",
+    "quotaExceeded": "Le quota ou la limite de requêtes du fournisseur est atteint. Réessayez plus tard. ({{detail}})",
+    "providerUnavailable": "Le fournisseur rencontre un problème (erreur serveur). Réessayez dans un instant. ({{detail}})"
   },
   "about": {
     "tagline": "Composez des scènes avec vidéo, texte, images, son et formes, puis exportez-les en MP4."
@@ -611,7 +614,8 @@
       "grid": "Grille",
       "exif": "EXIF",
       "export": "Export",
-      "inpaint": "Retirer"
+      "inpaint": "Retirer",
+      "history": "Historique"
     },
     "tool": {
       "crop": "Recadrer",
@@ -625,7 +629,8 @@
       "filters": "Filtres",
       "copy": "Copier l’image",
       "grid": "Afficher la grille",
-      "exif": "Afficher l’EXIF"
+      "exif": "Afficher l’EXIF",
+      "history": "Voir l'historique"
     },
     "topbar": {
       "open": "Ouvrir une image",
@@ -644,7 +649,8 @@
       "grid": "Afficher/masquer la grille",
       "exif": "Métadonnées EXIF",
       "export": "Exporter",
-      "inpaint": "Supprimer un élément"
+      "inpaint": "Supprimer un élément",
+      "history": "Historique"
     },
     "adj": {
       "header": "Corrections",
@@ -933,6 +939,15 @@
       "confirm-many": "Certaines images ont des modifications non exportées. Les fermer quand même ?",
       "confirm-app": "Certaines images ont des modifications non exportées. Quitter quand même ?",
       "title": "Modifications non enregistrées"
+    },
+    "pref": {
+      "title": "Préférences de l'image",
+      "format": "Format d'export par défaut",
+      "quality": "Qualité JPEG par défaut : {{n}}%",
+      "recent": "Images récentes",
+      "clear": "Effacer",
+      "cancel": "Annuler",
+      "save": "Enregistrer"
     }
   },
   "subs": {
@@ -989,12 +1004,91 @@
     "done": "Terminé",
     "addedToProjects_one": "Ajouté à {{count}} projet",
     "addedToProjects_other": "Ajouté à {{count}} projets",
-    "addToProjectFailed": "Ajout à un projet impossible : {{error}}"
+    "addToProjectFailed": "Ajout à un projet impossible : {{error}}",
+    "versions": "Versions",
+    "versionOriginal": "Original ({{lang}})",
+    "versionTranslation": "Traduction ({{lang}})",
+    "use": "Version utilisée",
+    "saveVersion": "Enregistrer cette version…",
+    "translate": {
+      "title": "Traduire",
+      "source": "Langue source",
+      "target": "Langue cible",
+      "pick": "Choisir une langue",
+      "autoDetected": "Détectée : {{lang}}",
+      "run": "Traduire",
+      "again": "Traduire à nouveau",
+      "same": "La langue source et la langue cible sont identiques."
+    },
+    "cloudStt": "{{provider}} reçoit l'audio de ce média pour le transcrire.",
+    "cloudTranslation": "{{provider}} reçoit le texte des sous-titres pour le traduire.",
+    "elapsed": "Écoulé : {{time}}",
+    "remaining": "environ {{time}} restantes"
   },
   "addToProjects": {
     "computer": "Sur mon ordinateur",
     "none": "Choisis où exporter : sur ton ordinateur, dans un projet, ou les deux.",
     "label": "Ajouter à un projet",
     "browse": "Un autre projet…"
+  },
+  "history": {
+    "title": "Historique",
+    "close": "Fermer l'historique",
+    "toggle": "Historique",
+    "initial": "Ouverture",
+    "edit": "Modification",
+    "more": "{{first}} (+{{count}})",
+    "audio": {
+      "cutAdded": "Coupe ajoutée",
+      "cutRemoved": "Coupe supprimée",
+      "cutChanged": "Coupe modifiée",
+      "fadeIn": "Fondu d'entrée",
+      "fadeOut": "Fondu de sortie",
+      "fadeCurve": "Courbe des fondus",
+      "normalize": "Normalisation",
+      "speed": "Vitesse",
+      "filter": "Filtre"
+    },
+    "video": {
+      "cuts": "Coupes",
+      "crop": "Recadrage",
+      "speed": "Vitesse",
+      "muted": "Son coupé",
+      "unmuted": "Son activé",
+      "filter": "Filtre de couleur",
+      "rotation": "Rotation",
+      "straighten": "Redressement",
+      "perspective": "Perspective",
+      "subtitles": "Sous-titres",
+      "stabilize": "Stabilisation"
+    },
+    "project": {
+      "settings": "Réglages du projet",
+      "sceneAdded": "Scène ajoutée : {{name}}",
+      "sceneRemoved": "Scène supprimée : {{name}}",
+      "sceneChanged": "Scène modifiée : {{name}}",
+      "scenesReordered": "Ordre des scènes",
+      "elementAdded": "Ajout : {{name}}",
+      "elementRemoved": "Suppression : {{name}}",
+      "elementMoved": "Déplacement : {{name}}",
+      "elementResized": "Redimensionnement : {{name}}",
+      "elementTimed": "Timing : {{name}}",
+      "elementChanged": "Modification : {{name}}",
+      "elementsReordered": "Ordre des calques : {{name}}",
+      "trackAdded": "Piste audio ajoutée : {{name}}",
+      "trackRemoved": "Piste audio supprimée : {{name}}",
+      "trackChanged": "Piste audio modifiée : {{name}}"
+    }
+  },
+  "quit": {
+    "title": "Travail en cours",
+    "busy": "Quitter maintenant arrêtera :\n{{list}}",
+    "confirm": "Quitter quand même",
+    "cancel": "Continuer",
+    "videoExports": "les exports vidéo de la file d'attente",
+    "audioExport": "l'export audio",
+    "imageExport": "l'export de l'image",
+    "projectExport": "l'export du projet",
+    "subtitles": "la génération des sous-titres"
   }
 }

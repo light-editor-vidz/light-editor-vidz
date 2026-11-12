@@ -1,0 +1,73 @@
+.history-panel {
+  position: fixed;
+  top: 96px;
+  right: 16px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  width: 240px;
+  max-height: min(60vh, 480px);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--shadow);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.history-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.history-panel-close {
+  margin-left: auto;
+  display: inline-flex;
+  padding: 2px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.history-panel-list {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.history-step {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  overflow: hidden;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.history-step:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.history-step.current {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text-primary);
+  font-weight: 600;
+  cursor: default;
+}
+
+.history-step.undone {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}

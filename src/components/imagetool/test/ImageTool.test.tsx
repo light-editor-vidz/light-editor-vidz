@@ -8,6 +8,7 @@ import { closeTab } from "../lib/tauri";
 import { inertBridge, TabActiveProvider } from "../../../lib/menuBridge";
 import { runBeforeExit } from "../../../lib/lifecycle";
 import { editorStub } from "./editorStub";
+import { busyWork } from "../../../lib/busyWork";
 import type { Editor } from "./editorStub";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn(), open: vi.fn(), save: vi.fn() }));
@@ -145,6 +146,77 @@ describe("ImageTool — fermeture", () => {
     await act(async () => inertBridge.actions.current.closeProject?.());
 
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("ImageTool — historique et préférences", () => {
+  it("Édition > Historique et le bouton de la barre affichent le panneau, qui ramène à une étape", async () => {
+    const { editor } = setup({
+      history: [{ key: "hist.open" }, { key: "hist.flip-h" }],
+      historyIndex: 1,
+      canUndo: true,
+    } as Partial<Editor>);
+    await act(async () => {});
+    expect(screen.queryByRole("button", { name: /Flip horizontal/ })).not.toBeInTheDocument();
+
+    act(() => inertBridge.actions.current.toggleHistory?.());
+    fireEvent.click(screen.getByRole("button", { name: /^Open$/ }));
+    expect(editor.handleGotoHistory).toHaveBeenCalledWith(0);
+
+    act(() => inertBridge.actions.current.toggleHistory?.());
+    expect(screen.queryByRole("button", { name: /Flip horizontal/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(screen.getByRole("button", { name: /Flip horizontal/ })).toBeInTheDocument();
+  });
+
+  it("Réglages… ouvre les préférences : format et qualité d'export par défaut, gardés", async () => {
+    setup();
+    await act(async () => {});
+    act(() => inertBridge.actions.current.openSettings?.());
+    expect(screen.getByText("Image preferences", { selector: "h2" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("JPEG", { selector: "input[name=pref-format]" }));
+    fireEvent.change(screen.getByRole("slider"), { target: { value: "70" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const saved = JSON.parse(localStorage.getItem("lciz-prefs") ?? "{}");
+    expect(saved).toMatchObject({ defaultExportFormat: "jpeg", defaultJpegQuality: 70 });
+    expect(screen.queryByText("Image preferences", { selector: "h2" })).not.toBeInTheDocument();
+
+    // L'export part de ces préférences.
+    act(() => inertBridge.actions.current.openExport?.());
+    expect(screen.getByRole("radio", { name: "JPEG" })).toBeChecked();
+    expect(screen.getByText("Quality: 70%")).toBeInTheDocument();
+  });
+
+  it("déclare l'export d'image en cours, pour que quitter demande confirmation", async () => {
+    let finish: (v: string | null) => void = () => {};
+    const { editor } = setup();
+    vi.mocked(editor.handleExport).mockReturnValue(new Promise((r) => (finish = r)));
+    await act(async () => {});
+    act(() => inertBridge.actions.current.openExport?.());
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("export-button"));
+    });
+    expect(await busyWork()).toContain("quit.imageExport");
+    await act(async () => finish("/out.png"));
+    expect(await busyWork()).not.toContain("quit.imageExport");
+  });
+
+  it("les préférences peuvent vider les images récentes, et Annuler ne change rien", async () => {
+    localStorage.setItem("lciz-recent", JSON.stringify(["/a.png"]));
+    setup();
+    await act(async () => {});
+    act(() => inertBridge.actions.current.openSettings?.());
+    fireEvent.click(screen.getByLabelText("JPEG", { selector: "input[name=pref-format]" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(localStorage.getItem("lciz-prefs")).toBeNull();
+
+    act(() => inertBridge.actions.current.openSettings?.());
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(JSON.parse(localStorage.getItem("lciz-recent") ?? "[]")).toEqual([]);
   });
 });
 

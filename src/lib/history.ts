@@ -51,6 +51,8 @@ export type HistoryAction =
   | { type: "mutate"; fn: (project: Project) => Project; key?: string; now: number }
   | { type: "undo" }
   | { type: "redo" }
+  /** Revient (ou avance) directement à l'étape `index` de `[...past, present, ...future]`. */
+  | { type: "goto"; index: number }
   | { type: "saved"; project: Project };
 
 const NO_MUTATION: LastMutation = { key: null, time: 0 };
@@ -92,6 +94,18 @@ export function historyReducer(state: HistoryState, action: HistoryAction): Hist
       if (state.future.length === 0 || !state.present) return state;
       const [next, ...rest] = state.future;
       return { ...state, present: next, past: [...state.past, state.present], future: rest, last: NO_MUTATION };
+    }
+    case "goto": {
+      if (!state.present) return state;
+      const steps = [...state.past, state.present, ...state.future];
+      if (action.index < 0 || action.index >= steps.length || action.index === state.past.length) return state;
+      return {
+        ...state,
+        present: steps[action.index],
+        past: steps.slice(0, action.index),
+        future: steps.slice(action.index + 1),
+        last: NO_MUTATION,
+      };
     }
     case "saved":
       return { ...state, saved: action.project };

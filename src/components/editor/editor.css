@@ -80,6 +80,11 @@
   justify-content: center;
 }
 
+.sb-ghost.icon-square.active {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
 .shortcuts-card {
   max-width: 460px;
   align-items: stretch;

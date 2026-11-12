@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listen } from "@tauri-apps/api/event";
 import AudioTool from "./AudioTool";
+import { busyWork } from "../../lib/busyWork";
 import { inertBridge, TabActiveProvider } from "../../lib/menuBridge";
 import * as commands from "../../lib/audiotool/commands";
 
@@ -322,6 +323,34 @@ describe("AudioTool — réglages et historique", () => {
     act(() => inertBridge.actions.current.redo?.());
     expect(screen.getByRole("button", { name: "Equal power" })).toHaveAttribute("aria-pressed", "true");
   });
+
+  it("l'historique liste les étapes et ramène à celle cliquée", async () => {
+    await openFile();
+    fireEvent.click(screen.getByLabelText("Normalise (peak −1 dBFS)"));
+    fireEvent.click(screen.getByRole("button", { name: "Equal power" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    const panel = screen.getByRole("complementary", { name: "History" });
+    expect(
+      within(panel)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["", "Opened", "Normalisation", "Fade curve"]);
+    fireEvent.click(within(panel).getByRole("button", { name: "Opened" }));
+    expect(screen.getByLabelText("Normalise (peak −1 dBFS)")).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Linear" })).toHaveAttribute("aria-pressed", "true");
+    // Les étapes annulées restent, pour y revenir.
+    fireEvent.click(within(panel).getByRole("button", { name: "Fade curve" }));
+    expect(screen.getByLabelText("Normalise (peak −1 dBFS)")).toBeChecked();
+  });
+
+  it("Édition > Historique affiche puis masque le panneau", async () => {
+    await openFile();
+    act(() => inertBridge.actions.current.toggleHistory?.());
+    expect(screen.getByRole("complementary", { name: "History" })).toBeInTheDocument();
+    act(() => inertBridge.actions.current.toggleHistory?.());
+    expect(screen.queryByRole("complementary", { name: "History" })).not.toBeInTheDocument();
+  });
 });
 
 describe("AudioTool — coupes", () => {
@@ -439,6 +468,19 @@ describe("AudioTool — export", () => {
     });
     expect(document.querySelector(".modal")).toBeNull();
     expect(screen.getByText("Exported: song-edit.wav", { selector: ".at-toast" })).toBeInTheDocument();
+  });
+
+  it("déclare l'export en cours, pour que quitter demande confirmation", async () => {
+    let finish: () => void = () => {};
+    mocked.audioProcess.mockReturnValue(new Promise<void>((r) => (finish = r)));
+    await openFile();
+    const modal = openDialog();
+    await act(async () => {
+      fireEvent.click(confirm(modal));
+    });
+    expect(await busyWork()).toContain("quit.audioExport");
+    await act(async () => finish());
+    expect(await busyWork()).not.toContain("quit.audioExport");
   });
 
   it("envoie les coupes et le format des échantillons WAV", async () => {

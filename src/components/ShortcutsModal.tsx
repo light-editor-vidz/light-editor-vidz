@@ -19,6 +19,7 @@ const SHORTCUTS: [string, string][] = [
   ["topbar.shortcutDeselect", "topbar.keyEscape"],
   ["topbar.shortcutUndo", "Ctrl+Z"],
   ["topbar.shortcutRedo", "Ctrl+Shift+Z"],
+  ["history.toggle", "Ctrl+Shift+H"],
 ];
 
 /** The shortcuts window of the Help menu. */

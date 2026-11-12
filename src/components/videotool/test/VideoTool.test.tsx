@@ -1,5 +1,5 @@
 import "./setup";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -127,6 +127,30 @@ describe("VideoTool — opening a video", () => {
 
     fireEvent.keyDown(window, { key: "y", code: "KeyY", ctrlKey: true });
     await waitFor(() => expect(undo()).toBeEnabled());
+  });
+
+  it("the history lists the steps and jumps back to the clicked one", async () => {
+    setup({ path: "/v/a.mp4" });
+    await screen.findByText("a.mp4");
+    const undo = () => screen.getAllByRole("button").find((b) => b.title.startsWith("Undo"))!;
+    fireEvent.click(screen.getByRole("button", { name: "2x" }));
+    fireEvent.click(screen.getByRole("button", { name: /Sound On/ }));
+    await waitFor(() => expect(undo()).toBeEnabled());
+
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    const panel = screen.getByRole("complementary", { name: "History" });
+    const steps = within(panel).getByRole("list");
+    expect(
+      within(steps)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Opened", "Speed", "Sound off"]);
+
+    fireEvent.click(within(steps).getByRole("button", { name: "Opened" }));
+    await waitFor(() => expect(undo()).toBeDisabled());
+    expect(screen.getByRole("button", { name: /Sound On/ })).toBeInTheDocument();
+    act(() => inertBridge.actions.current.toggleHistory?.());
+    expect(screen.queryByRole("complementary", { name: "History" })).not.toBeInTheDocument();
   });
 
   it("shows the video editor once the preview is ready", async () => {

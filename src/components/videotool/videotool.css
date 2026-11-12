@@ -166,6 +166,11 @@
   border-color: var(--text-secondary);
 }
 
+.vt-root .btn-ghost.active {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
 .vt-root .btn-primary {
   padding: 5px 16px;
   border-radius: 6px;

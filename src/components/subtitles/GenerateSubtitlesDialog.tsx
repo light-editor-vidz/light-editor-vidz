@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { X } from "lucide-react";
+import { markBusy } from "../../lib/busyWork";
 import { describeError } from "../../lib/errors";
 import {
   STT_ENGINES,
@@ -58,6 +59,39 @@ interface Props {
 
 const baseName = (p: string) => p.replace(/\\/g, "/").split("/").pop() ?? p;
 
+type Version = "original" | "translation";
+
+const engineLabel = <T extends string>(list: { value: T; label: string }[], value: T) =>
+  list.find((o) => o.value === value)?.label ?? value;
+
+/** `m:ss`, ou `h:mm:ss` au-delà d'une heure. */
+function formatDuration(seconds: number): string {
+  const secs = Math.max(0, Math.round(seconds));
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+/** Le temps passé dans l'étape en cours, et ce qui reste dès que l'avancement permet de l'estimer. */
+function ElapsedTime({ fraction }: { fraction: number }) {
+  const { t } = useTranslation();
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => setElapsed((Date.now() - start) / 1000), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const remaining = fraction >= 0.03 && fraction < 0.995 && elapsed >= 5 ? (elapsed * (1 - fraction)) / fraction : null;
+  return (
+    <span className="modal-hint" aria-live="off">
+      {t("subs.elapsed", { time: formatDuration(elapsed) })}
+      {remaining !== null && ` · ${t("subs.remaining", { time: formatDuration(remaining) })}`}
+    </span>
+  );
+}
+
 /** The window that generates subtitles from a video, a sound or a whole project. */
 export default function GenerateSubtitlesDialog({ source, label, onClose, onPlace, onAssociate }: Props) {
   const { t } = useTranslation();
@@ -69,6 +103,8 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
   const [keys, setKeys] = useState<Record<string, boolean>>({});
   const [typedKeys, setTypedKeys] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  // Quitter pendant la génération demande confirmation.
+  useEffect(() => (busy ? markBusy("quit.subtitles") : undefined), [busy]);
   const [progress, setProgress] = useState<{ stage: string; fraction: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SubsOutput | null>(null);
@@ -77,11 +113,20 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
   const [save, setSave] = useState(!onPlace && !onAssociate);
   const [format, setFormat] = useState<SubsFormat>("srt");
   const [editing, setEditing] = useState(false);
+  /** La traduction du résultat, gardée à côté de l'original. */
+  const [translation, setTranslation] = useState<SubsOutput | null>(null);
+  /** La version affichée (et corrigée), et celle qui sert : associée, ajoutée, enregistrée. */
+  const [view, setView] = useState<Version>("original");
+  const [use, setUse] = useState<Version>("original");
+  const [trSource, setTrSource] = useState("auto");
+  const [trTarget, setTrTarget] = useState("");
   const cancelled = useRef(false);
   const sessionId = useRef("");
 
   const sttKey = settings ? STT_KEYS[settings.stt_engine] : null;
-  const trKey = settings && target ? TRANSLATION_KEYS[settings.translation_engine] : null;
+  /** La clé du service de traduction choisi (traduction demandée avant ou après la génération). */
+  const translationKey = settings ? TRANSLATION_KEYS[settings.translation_engine] : null;
+  const trKey = target ? translationKey : null;
 
   const refreshKeys = useCallback(async () => {
     const names = [...Object.values(STT_KEYS), ...Object.values(TRANSLATION_KEYS)].flatMap((k) => (k ? [k[0]] : []));
@@ -167,17 +212,59 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
       }
       await refreshKeys();
       await setSubsSettings(settings);
-      let out =
+      const out =
         source.kind === "file"
           ? await generateForFile(source.path, track)
           : source.kind === "media"
             ? await generateForMedia(source.projectDir, source.src, track)
             : await generateForProject(source.projectDir, source.project);
-      if (target && target !== out.language) {
-        out = await translateSubs(out.srt_path, out.srt_content, out.language, target);
-      }
       setResult(out);
+      setTranslation(null);
+      setView("original");
+      setUse("original");
+      setTrTarget(target);
       sessionId.current = crypto.randomUUID();
+      // Une traduction demandée dès le départ s'ajoute à l'original, qui reste disponible.
+      const translated =
+        target && target !== out.language
+          ? await translateSubs(out.srt_path, out.srt_content, out.language, target)
+          : null;
+      if (translated) {
+        setTranslation(translated);
+        setView("translation");
+        setUse("translation");
+      }
+      onAssociate?.((translated ?? out).srt_content, sessionId.current);
+    } catch (e) {
+      if (!cancelled.current) setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** La langue source réelle : celle choisie, ou celle que la transcription a détectée. */
+  const effectiveSource = trSource === "auto" ? (result?.language ?? "") : trSource;
+  const sameLanguage = !!trTarget && trTarget === effectiveSource;
+  const missingTranslationKey =
+    !!translationKey && !keys[translationKey[0]] && !(typedKeys[translationKey[0]] ?? "").trim();
+  const missingTranslationRegion = settings?.translation_engine === "azure" && !settings.azure_translator_region.trim();
+
+  /** Traduit le résultat après coup ; l'original est gardé. */
+  async function runTranslation() {
+    if (!result || !settings || !trTarget) return;
+    setError(null);
+    setProgress(null);
+    cancelled.current = false;
+    setBusy(true);
+    try {
+      const typed = translationKey ? (typedKeys[translationKey[0]] ?? "").trim() : "";
+      if (translationKey && typed) await setApiKey(translationKey[0], typed);
+      await refreshKeys();
+      await setSubsSettings(settings);
+      const out = await translateSubs(result.srt_path, result.srt_content, effectiveSource || null, trTarget);
+      setTranslation(out);
+      setView("translation");
+      setUse("translation");
       onAssociate?.(out.srt_content, sessionId.current);
     } catch (e) {
       if (!cancelled.current) setError(describeError(e));
@@ -191,32 +278,57 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
     await cancelSubs().catch(() => {});
   }
 
-  const cues = useMemo(() => (result ? parseSrt(result.srt_content) : []), [result]);
+  const shown = view === "translation" && translation ? translation : result;
+  const chosen = use === "translation" && translation ? translation : result;
+  const cues = useMemo(() => (shown ? parseSrt(shown.srt_content) : []), [shown]);
+  const chosenCues = useMemo(() => (chosen ? parseSrt(chosen.srt_content) : []), [chosen]);
 
+  function chooseVersion(version: Version) {
+    setUse(version);
+    const picked = version === "translation" && translation ? translation : result;
+    if (picked) onAssociate?.(picked.srt_content, sessionId.current);
+  }
+
+  /** Corrige la version affichée ; si c'est celle qui sert, le média suit. */
   async function applyEdits(texts: string[]) {
-    if (!result) return;
+    if (!shown) return;
     setError(null);
     try {
-      const edited = await updateSubs(result.srt_content, texts);
-      setResult({ ...result, srt_content: edited.srt_content });
-      onAssociate?.(edited.srt_content, sessionId.current);
+      const edited = await updateSubs(shown.srt_content, texts);
+      const next = { ...shown, srt_content: edited.srt_content };
+      if (view === "translation" && translation) setTranslation(next);
+      else setResult(next);
+      if (view === use) onAssociate?.(next.srt_content, sessionId.current);
       setEditing(false);
     } catch (e) {
       setError(describeError(e));
     }
   }
 
+  /** Enregistre la version affichée dans un fichier, sans fermer la fenêtre. */
+  async function saveShown() {
+    if (!shown) return;
+    setError(null);
+    try {
+      await saveSubs(shown.srt_path, t("subs.fileFilter"), format, shown.srt_content);
+    } catch (e) {
+      setError(describeError(e));
+    }
+  }
+
+  const languageName = (code: string) => languages.find((l) => l.code === code)?.name ?? code;
+
   async function apply() {
-    if (!result) return;
+    if (!chosen) return;
     setError(null);
     try {
       // The save comes first: closing its dialog keeps this window open, and "Apply" must then
       // not add the subtitles a second time.
       if (save) {
-        const written = await saveSubs(result.srt_path, t("subs.fileFilter"), format, result.srt_content);
+        const written = await saveSubs(chosen.srt_path, t("subs.fileFilter"), format, chosen.srt_content);
         if (!written) return;
       }
-      if (onPlace && place) onPlace(cues.map(({ start, end, text }) => ({ start, end, text })));
+      if (onPlace && place) onPlace(chosenCues.map(({ start, end, text }) => ({ start, end, text })));
       onClose();
     } catch (e) {
       setError(describeError(e));
@@ -227,6 +339,47 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
   const stageLabel = progress
     ? t(`subs.stage.${progress.stage}`, { defaultValue: progress.stage })
     : t("subs.starting");
+
+  /** La clé d'API d'un service : saisie, ou déjà enregistrée (et alors oubliable). */
+  function keyField(k: [string, string]) {
+    return (
+      <div className="field-group" key={k[0]}>
+        <label className="field-label" htmlFor={`subs-key-${k[0]}`}>
+          {t("subs.apiKey", { provider: k[1] })}
+        </label>
+        <input
+          id={`subs-key-${k[0]}`}
+          className="field-input"
+          type="password"
+          autoComplete="off"
+          placeholder={keys[k[0]] ? t("subs.keyStored") : ""}
+          value={typedKeys[k[0]] ?? ""}
+          onChange={(e) => setTypedKeys((s) => ({ ...s, [k[0]]: e.target.value }))}
+        />
+        {keys[k[0]] && (
+          <button type="button" className="subs-forget" onClick={() => void forgetKey(k[0])}>
+            {t("subs.forgetKey")}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  function regionField() {
+    return (
+      <div className="field-group">
+        <label className="field-label" htmlFor="subs-azure-region">
+          {t("subs.azureRegion")}
+        </label>
+        <input
+          id="subs-azure-region"
+          className="field-input"
+          value={settings?.azure_translator_region ?? ""}
+          onChange={(e) => patch({ azure_translator_region: e.target.value })}
+        />
+      </div>
+    );
+  }
 
   // In the body: no ancestor view (video, audio…) can restyle or clip it.
   return createPortal(
@@ -257,18 +410,139 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
         <div className="modal-body">
           {!settings ? (
             <p className="modal-hint">{t("subs.loading")}</p>
+          ) : busy ? (
+            <div className="subs-progress" role="status">
+              <span>{stageLabel}</span>
+              <progress max={1} value={progress?.fraction ?? 0} />
+              <ElapsedTime key={progress?.stage ?? ""} fraction={progress?.fraction ?? 0} />
+            </div>
           ) : result ? (
             <>
+              {translation && (
+                <div className="subs-tabs" role="tablist" aria-label={t("subs.versions")}>
+                  {(["original", "translation"] as const).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      role="tab"
+                      aria-selected={view === v}
+                      className={`subs-tab${view === v ? " active" : ""}`}
+                      disabled={editing}
+                      onClick={() => setView(v)}
+                    >
+                      {v === "original"
+                        ? t("subs.versionOriginal", { lang: languageName(result.language) })
+                        : t("subs.versionTranslation", { lang: languageName(translation.language) })}
+                    </button>
+                  ))}
+                </div>
+              )}
               <p className="subs-summary">{t("subs.resultCount", { count: cues.length })}</p>
               {editing ? (
                 <CueEditor cues={cues} onApply={(texts) => void applyEdits(texts)} onCancel={() => setEditing(false)} />
               ) : (
                 <>
                   <CueList cues={cues} />
-                  <button type="button" className="subs-forget" onClick={() => setEditing(true)}>
-                    {t("subs.edit.start")}
-                  </button>
+                  <div className="subs-links">
+                    <button type="button" className="subs-forget" onClick={() => setEditing(true)}>
+                      {t("subs.edit.start")}
+                    </button>
+                    <button type="button" className="subs-forget" onClick={() => void saveShown()}>
+                      {t("subs.saveVersion")}
+                    </button>
+                  </div>
                 </>
+              )}
+              {!editing && (
+                <div className="subs-translate">
+                  <span className="field-label">{t("subs.translate.title")}</span>
+                  <div className="subs-translate-row">
+                    <select
+                      className="field-input"
+                      aria-label={t("subs.translate.source")}
+                      value={trSource}
+                      onChange={(e) => setTrSource(e.target.value)}
+                    >
+                      <option value="auto">
+                        {result.language
+                          ? t("subs.translate.autoDetected", { lang: languageName(result.language) })
+                          : t("subs.auto")}
+                      </option>
+                      {languages.map((l) => (
+                        <option key={l.code} value={l.code}>
+                          {l.name}
+                        </option>
+                      ))}
+                    </select>
+                    <span aria-hidden="true">→</span>
+                    <select
+                      className="field-input"
+                      aria-label={t("subs.translate.target")}
+                      value={trTarget}
+                      onChange={(e) => setTrTarget(e.target.value)}
+                    >
+                      <option value="">{t("subs.translate.pick")}</option>
+                      {languages.map((l) => (
+                        <option key={l.code} value={l.code}>
+                          {l.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <select
+                    className="field-input"
+                    aria-label={t("subs.translationEngine")}
+                    value={settings.translation_engine}
+                    onChange={(e) =>
+                      patch({ translation_engine: e.target.value as SubsSettings["translation_engine"] })
+                    }
+                  >
+                    {TRANSLATION_ENGINES.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  {translationKey && keyField(translationKey)}
+                  {settings.translation_engine === "azure" && regionField()}
+                  {settings.translation_engine !== "local" && (
+                    <p className="modal-hint">
+                      {t("subs.cloudTranslation", {
+                        provider: engineLabel(TRANSLATION_ENGINES, settings.translation_engine),
+                      })}
+                    </p>
+                  )}
+                  {sameLanguage && <p className="modal-hint">{t("subs.translate.same")}</p>}
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => void runTranslation()}
+                    disabled={!trTarget || sameLanguage || missingTranslationKey || missingTranslationRegion}
+                  >
+                    {translation ? t("subs.translate.again") : t("subs.translate.run")}
+                  </button>
+                </div>
+              )}
+              {translation && (
+                <div className="field-group">
+                  <label className="field-label" htmlFor="subs-use">
+                    {t("subs.use")}
+                  </label>
+                  <select
+                    id="subs-use"
+                    className="field-input"
+                    value={use}
+                    disabled={editing}
+                    onChange={(e) => chooseVersion(e.target.value as Version)}
+                  >
+                    <option value="original">
+                      {t("subs.versionOriginal", { lang: languageName(result.language) })}
+                    </option>
+                    <option value="translation">
+                      {t("subs.versionTranslation", { lang: languageName(translation.language) })}
+                    </option>
+                  </select>
+                </div>
               )}
               {onPlace && (
                 <label className="subs-check">
@@ -293,11 +567,6 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
                 </select>
               </label>
             </>
-          ) : busy ? (
-            <div className="subs-progress" role="status">
-              <span>{stageLabel}</span>
-              <progress max={1} value={progress?.fraction ?? 0} />
-            </div>
           ) : (
             <>
               <div className="field-group">
@@ -317,6 +586,11 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
                   ))}
                 </select>
               </div>
+              {settings.stt_engine !== "local" && (
+                <p className="modal-hint">
+                  {t("subs.cloudStt", { provider: engineLabel(STT_ENGINES, settings.stt_engine) })}
+                </p>
+              )}
               {settings.stt_engine === "local" && (
                 <div className="field-group">
                   <label className="field-label" htmlFor="subs-model">
@@ -410,46 +684,19 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
                       </option>
                     ))}
                   </select>
+                  {settings.translation_engine !== "local" && (
+                    <p className="modal-hint">
+                      {t("subs.cloudTranslation", {
+                        provider: engineLabel(TRANSLATION_ENGINES, settings.translation_engine),
+                      })}
+                    </p>
+                  )}
                 </div>
               )}
               {[sttKey, trKey].map(
-                (k, i) =>
-                  k &&
-                  !(i === 1 && trKey && sttKey && trKey[0] === sttKey[0]) && (
-                    <div className="field-group" key={k[0]}>
-                      <label className="field-label" htmlFor={`subs-key-${k[0]}`}>
-                        {t("subs.apiKey", { provider: k[1] })}
-                      </label>
-                      <input
-                        id={`subs-key-${k[0]}`}
-                        className="field-input"
-                        type="password"
-                        autoComplete="off"
-                        placeholder={keys[k[0]] ? t("subs.keyStored") : ""}
-                        value={typedKeys[k[0]] ?? ""}
-                        onChange={(e) => setTypedKeys((s) => ({ ...s, [k[0]]: e.target.value }))}
-                      />
-                      {keys[k[0]] && (
-                        <button type="button" className="subs-forget" onClick={() => void forgetKey(k[0])}>
-                          {t("subs.forgetKey")}
-                        </button>
-                      )}
-                    </div>
-                  ),
+                (k, i) => k && !(i === 1 && trKey && sttKey && trKey[0] === sttKey[0]) && keyField(k),
               )}
-              {target && settings.translation_engine === "azure" && (
-                <div className="field-group">
-                  <label className="field-label" htmlFor="subs-azure-region">
-                    {t("subs.azureRegion")}
-                  </label>
-                  <input
-                    id="subs-azure-region"
-                    className="field-input"
-                    value={settings.azure_translator_region}
-                    onChange={(e) => patch({ azure_translator_region: e.target.value })}
-                  />
-                </div>
-              )}
+              {target && settings.translation_engine === "azure" && regionField()}
               {source.kind === "project" && <p className="modal-hint">{t("subs.projectHint")}</p>}
             </>
           )}
@@ -471,7 +718,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
                   type="button"
                   className="btn-primary"
                   onClick={apply}
-                  disabled={nothingChosen || cues.length === 0 || editing}
+                  disabled={nothingChosen || chosenCues.length === 0 || editing}
                 >
                   {onAssociate ? t("subs.done") : t("subs.apply")}
                 </button>

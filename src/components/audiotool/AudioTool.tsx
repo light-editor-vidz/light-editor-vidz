@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { Pause, Play, Redo2, Undo2 } from "lucide-react";
+import { History as HistoryIcon, Pause, Play, Redo2, Undo2 } from "lucide-react";
 import { useRegisterMenuActions, useMenuBridge, useTabActive } from "../../lib/menuBridge";
 import { createPlaybackClock, useClockValue } from "../../lib/playbackClock";
 import { keptDuration, keptSegments, realToVirtual, virtualToReal, MIN_CUT, type Cut } from "../../lib/audiotool/cuts";
@@ -32,6 +32,7 @@ import {
   canRedo,
   canUndo,
   current,
+  goto,
   newHistory,
   record,
   redo,
@@ -45,6 +46,9 @@ import DropZone from "./DropZone";
 import ExportDialog from "./ExportDialog";
 import GenerateSubtitlesDialog from "../subtitles/GenerateSubtitlesDialog";
 import AddToProjects from "../AddToProjects";
+import HistoryPanel from "../HistoryPanel";
+import { markBusy } from "../../lib/busyWork";
+import { audioStepLabel, stepLabels } from "../../lib/historyLabels";
 import { noDestination } from "../../lib/exportDestination";
 import { addOutputToProjects, listMediaSubs, saveMediaSub, stagedExportPath } from "../../lib/subs/commands";
 import { cuesToSrt, remapCues } from "../../lib/subs/linked";
@@ -124,6 +128,8 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
   const [format, setFormat] = useState<ExportFormat>("wav");
   const [wavDepth, setWavDepth] = useState<WavDepth>("float32");
   const [processing, setProcessing] = useState(false);
+  // Quitter pendant l'export demande confirmation.
+  useEffect(() => (processing ? markBusy("quit.audioExport") : undefined), [processing]);
   const [progress, setProgress] = useState(0);
 
   const describe = useCallback((e: unknown) => describeEngineError(e, (key, vars) => String(t(key, vars))), [t]);
@@ -278,6 +284,19 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
     setHistory(h);
     restore(current(h));
   }, [history, restore]);
+  const handleGoto = useCallback(
+    (index: number) => {
+      const h = goto(history, index);
+      setHistory(h);
+      restore(current(h));
+    },
+    [history, restore],
+  );
+  const [showHistory, setShowHistory] = useState(false);
+  const historyLabels = useMemo(
+    () => (showHistory ? stepLabels(history.steps, (a, b) => audioStepLabel(a, b, t), t) : []),
+    [showHistory, history.steps, t],
+  );
 
   const setCuts = useCallback(
     (cuts: Cut[], selected: string | null) => {
@@ -422,6 +441,7 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
     openExport,
     undo: handleUndo,
     redo: handleRedo,
+    toggleHistory: () => setShowHistory((s) => !s),
   });
   const undoable = canUndo(history);
   const redoable = canRedo(history);
@@ -508,6 +528,16 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
           </button>
           <button
             type="button"
+            className={`at-btn icon${showHistory ? " active" : ""}`}
+            aria-pressed={showHistory}
+            onClick={() => setShowHistory((s) => !s)}
+            title={t("history.toggle")}
+            aria-label={t("history.toggle")}
+          >
+            <HistoryIcon size={14} />
+          </button>
+          <button
+            type="button"
             className="at-btn"
             title={t("audioTool.header.openOther")}
             onClick={() => void openAnother()}
@@ -561,6 +591,14 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
         />
       </section>
 
+      {showHistory && (
+        <HistoryPanel
+          labels={historyLabels}
+          current={history.index}
+          onGoto={handleGoto}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
       {exportOpen && (
         <ExportDialog
           format={format}

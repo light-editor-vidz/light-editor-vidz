@@ -18,6 +18,10 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Fichier > Ouvrir un fichier… (Ctrl+O) ouvre un fichier audio dans un onglet Audio ; une vidéo ou une image crée un nouveau projet qui la contient. On peut aussi déposer des fichiers sur la fenêtre. L'ancien « Ouvrir un projet » devient Fichier > Ouvrir un dossier de projet… (Ctrl+Maj+O).
 - Pistes audio : les fondus suivent une courbe linéaire ou à puissance constante, la vitesse va de 0,25× à 4× (la hauteur du son est conservée), et on peut appliquer un filtre passe-bas, passe-haut (12 à 48 dB/octave) ou passe-bande.
 - Export audio seul : le mix de toutes les pistes et du son de vos vidéos, en WAV (16 bits, 24 bits ou 32 bits flottants), MP3, FLAC, OGG Vorbis ou M4A.
+- Panneau Historique dans les vues Audio, Vidéo et Image et dans les projets : chaque étape est listée avec un nom lisible (« Coupe ajoutée », « Recadrage », « Déplacement : Titre »…), et un clic revient — ou avance — à n'importe quelle étape. Édition > Historique (Ctrl+Maj+H) ou bouton Historique à côté d'Annuler / Rétablir.
+- Vue Image : Fichier > Réglages… (Ctrl+Virgule) règle le format d'export et la qualité JPEG par défaut, et efface les images récentes.
+- Les sous-titres peuvent être traduits après leur génération, depuis la langue détectée ou une langue choisie. L'original est gardé à côté de la traduction, dans deux onglets ; chacun se corrige et s'enregistre séparément, et « Version utilisée » décide laquelle est liée au média ou ajoutée au projet. Une traduction demandée avant la génération ne remplace plus l'original.
+- La fenêtre des sous-titres indique quand un moteur cloud reçoit l'audio ou le texte, et affiche le temps écoulé et une estimation du temps restant pendant le travail.
 
 ### Corrigé
 
@@ -27,6 +31,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Fenêtre de sous-titres : fermer la boîte d'enregistrement n'ajoute plus les sous-titres deux fois, la vue Audio peut enregistrer son résultat, la région Azure peut être saisie, une clé d'API enregistrée peut être oubliée, et les erreurs sans code sont lisibles.
 - Vue Image : la copie dans le presse-papiers fonctionne de nouveau et la taille de la grille est de retour (menu Édition).
 - La fenêtre d'export vidéo n'attend plus indéfiniment un travail qui se termine aussitôt.
+- Vue Image : les fenêtres, cartes, bordures et textes gris étaient transparents ; ils retrouvent leurs couleurs.
+- Les erreurs cloud des sous-titres (clé API refusée, quota atteint, service indisponible) sont traduites au lieu de s'afficher en anglais.
 
 ### Modifié
 
@@ -40,6 +46,9 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - La vue Vidéo réessaie avec un aperçu transcodé quand le système ne sait pas décoder une vidéo d'abord jugée lisible.
 - ffmpeg et ffprobe sont désormais livrés avec l'application : rien à installer, sur toutes les plateformes.
 - Les versions sont compilées pour Linux x86_64, Linux arm64 et macOS Apple Silicon (les Mac Intel ne sont plus pris en charge).
+- Exporter depuis les vues Vidéo, Audio et Image : choisissez « Sur mon ordinateur », « Ajouter à un projet », ou les deux. Sans l'ordinateur, aucune fenêtre d'enregistrement ne s'ouvre : le fichier va directement dans la médiathèque de chaque projet coché.
+- Quitter ou redémarrer pour une mise à jour pendant un travail en cours (file d'exports vidéo, export audio, image ou projet, génération de sous-titres) demande d'abord confirmation et liste ce qui s'arrêterait.
+- Les paquets Linux sont construits sur Ubuntu 24.04 et demandent glibc 2.39 ou plus (le moteur de traduction local l'exige).
 
 ## [1.0.2] - 2026-11-02
 

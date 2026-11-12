@@ -300,4 +300,23 @@ describe("useEditorHistory — stabilisation", () => {
     act(() => result.current.undo());
     expect(result.current.editable.stabilize).toBe("off");
   });
+
+  it("lists every step in order and jumps to any of them", () => {
+    const { result } = renderHook(() => useEditorHistory());
+    act(() => result.current.set((p) => ({ ...p, speed: 2 })));
+    act(() => result.current.set((p) => ({ ...p, muted: true })));
+    expect(result.current.steps).toHaveLength(3);
+    expect(result.current.index).toBe(2);
+    act(() => result.current.goto(0));
+    expect(result.current.editable).toEqual(defaultEditable);
+    expect(result.current.index).toBe(0);
+    expect(result.current.steps.map((s) => s.speed)).toEqual([1, 2, 2]);
+    act(() => result.current.goto(2));
+    expect(result.current.editable.muted).toBe(true);
+    act(() => result.current.redo());
+    expect(result.current.index).toBe(2);
+    act(() => result.current.undo());
+    expect(result.current.editable.speed).toBe(2);
+    expect(result.current.editable.muted).toBe(false);
+  });
 });

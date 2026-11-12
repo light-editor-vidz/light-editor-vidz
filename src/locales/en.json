@@ -465,7 +465,10 @@
     "sourceLangRequired": "Choose the spoken language to translate.",
     "unknownKey": "Unknown API key.",
     "unsupportedLanguage": "This language is not supported.",
-    "noProjectAudio": "This project has no sound to transcribe or export."
+    "noProjectAudio": "This project has no sound to transcribe or export.",
+    "apiKeyInvalid": "The provider refused the request: the API key is wrong, or the service is not enabled for it. Check it in the subtitle settings. ({{detail}})",
+    "quotaExceeded": "The provider's quota or rate limit was reached. Try again later. ({{detail}})",
+    "providerUnavailable": "The provider is having trouble (server error). Try again in a moment. ({{detail}})"
   },
   "about": {
     "tagline": "Compose scenes with video, text, images, sound and shapes, and export them to MP4."
@@ -611,7 +614,8 @@
       "grid": "Grid",
       "exif": "EXIF",
       "export": "Export",
-      "inpaint": "Remove"
+      "inpaint": "Remove",
+      "history": "History"
     },
     "tool": {
       "crop": "Crop",
@@ -625,7 +629,8 @@
       "filters": "Filters",
       "copy": "Copy image",
       "grid": "Show grid",
-      "exif": "Show EXIF"
+      "exif": "Show EXIF",
+      "history": "Show history"
     },
     "topbar": {
       "open": "Open an image",
@@ -644,7 +649,8 @@
       "grid": "Toggle grid",
       "exif": "EXIF metadata",
       "export": "Export",
-      "inpaint": "Remove object / inpaint"
+      "inpaint": "Remove object / inpaint",
+      "history": "History"
     },
     "adj": {
       "header": "Adjustments",
@@ -933,6 +939,15 @@
       "confirm-many": "Some images have changes that were not exported. Close them anyway?",
       "confirm-app": "Some images have changes that were not exported. Quit anyway?",
       "title": "Unsaved changes"
+    },
+    "pref": {
+      "title": "Image preferences",
+      "format": "Default export format",
+      "quality": "Default JPEG quality: {{n}}%",
+      "recent": "Recent images",
+      "clear": "Clear",
+      "cancel": "Cancel",
+      "save": "Save"
     }
   },
   "subs": {
@@ -989,12 +1004,91 @@
     "done": "Done",
     "addedToProjects_one": "Added to {{count}} project",
     "addedToProjects_other": "Added to {{count}} projects",
-    "addToProjectFailed": "Could not add to a project: {{error}}"
+    "addToProjectFailed": "Could not add to a project: {{error}}",
+    "versions": "Versions",
+    "versionOriginal": "Original ({{lang}})",
+    "versionTranslation": "Translation ({{lang}})",
+    "use": "Version to use",
+    "saveVersion": "Save this version…",
+    "translate": {
+      "title": "Translate",
+      "source": "Source language",
+      "target": "Target language",
+      "pick": "Choose a language",
+      "autoDetected": "Detected: {{lang}}",
+      "run": "Translate",
+      "again": "Translate again",
+      "same": "The source and target languages are the same."
+    },
+    "cloudStt": "{{provider}} receives the audio of this media to transcribe it.",
+    "cloudTranslation": "{{provider}} receives the text of the subtitles to translate it.",
+    "elapsed": "Elapsed {{time}}",
+    "remaining": "about {{time}} left"
   },
   "addToProjects": {
     "computer": "On my computer",
     "none": "Choose where to export: on your computer, in a project, or both.",
     "label": "Add to a project",
     "browse": "Another project…"
+  },
+  "history": {
+    "title": "History",
+    "close": "Close the history",
+    "toggle": "History",
+    "initial": "Opened",
+    "edit": "Change",
+    "more": "{{first}} (+{{count}})",
+    "audio": {
+      "cutAdded": "Cut added",
+      "cutRemoved": "Cut removed",
+      "cutChanged": "Cut changed",
+      "fadeIn": "Fade in",
+      "fadeOut": "Fade out",
+      "fadeCurve": "Fade curve",
+      "normalize": "Normalisation",
+      "speed": "Speed",
+      "filter": "Filter"
+    },
+    "video": {
+      "cuts": "Cuts",
+      "crop": "Crop",
+      "speed": "Speed",
+      "muted": "Sound off",
+      "unmuted": "Sound on",
+      "filter": "Colour filter",
+      "rotation": "Rotation",
+      "straighten": "Straighten",
+      "perspective": "Perspective",
+      "subtitles": "Subtitles",
+      "stabilize": "Stabilisation"
+    },
+    "project": {
+      "settings": "Project settings",
+      "sceneAdded": "Scene added: {{name}}",
+      "sceneRemoved": "Scene removed: {{name}}",
+      "sceneChanged": "Scene changed: {{name}}",
+      "scenesReordered": "Scenes reordered",
+      "elementAdded": "Added: {{name}}",
+      "elementRemoved": "Removed: {{name}}",
+      "elementMoved": "Moved: {{name}}",
+      "elementResized": "Resized: {{name}}",
+      "elementTimed": "Timing: {{name}}",
+      "elementChanged": "Changed: {{name}}",
+      "elementsReordered": "Layer order: {{name}}",
+      "trackAdded": "Audio track added: {{name}}",
+      "trackRemoved": "Audio track removed: {{name}}",
+      "trackChanged": "Audio track changed: {{name}}"
+    }
+  },
+  "quit": {
+    "title": "Work in progress",
+    "busy": "Quitting now will stop:\n{{list}}",
+    "confirm": "Quit anyway",
+    "cancel": "Keep working",
+    "videoExports": "the video exports in the queue",
+    "audioExport": "the audio export",
+    "imageExport": "the image export",
+    "projectExport": "the project export",
+    "subtitles": "the subtitle generation"
   }
 }

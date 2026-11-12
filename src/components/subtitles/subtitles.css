@@ -133,3 +133,44 @@
 .library-audio-item .library-cc {
   position: static;
 }
+
+.subs-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.subs-tab {
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.subs-tab.active {
+  border-bottom-color: var(--accent);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.subs-links {
+  display: flex;
+  gap: 16px;
+}
+.subs-translate {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.subs-translate-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.subs-translate .btn-secondary {
+  align-self: flex-start;
+}

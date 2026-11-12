@@ -100,12 +100,12 @@ export default function AppMenuBar() {
         kind: "item",
         text: t("topbar.settings"),
         accelerator: "CmdOrCtrl+,",
-        enabled: inEditor,
+        enabled: inEditor || inImage,
         action: call("openSettings"),
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, inEditor, inTab, recents, refreshRecents],
+    [t, inEditor, inImage, inTab, recents, refreshRecents],
   );
 
   // Undo, redo, delete and duplicate are already keys of the editor (Ctrl+Z…): no accelerator here,
@@ -114,6 +114,13 @@ export default function AppMenuBar() {
     () => [
       { kind: "item", text: t("topbar.undo"), enabled: canUndo, action: call("undo") },
       { kind: "item", text: t("topbar.redo"), enabled: canRedo, action: call("redo") },
+      {
+        kind: "item",
+        text: t("history.toggle"),
+        accelerator: "CmdOrCtrl+Shift+H",
+        enabled: inTab,
+        action: call("toggleHistory"),
+      },
       { kind: "separator" },
       { kind: "item", text: t("topbar.delete"), enabled: hasSelection, action: call("deleteSelected") },
       { kind: "item", text: t("topbar.duplicate"), enabled: hasSelection, action: call("duplicateSelected") },
@@ -130,7 +137,7 @@ export default function AppMenuBar() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, canUndo, canRedo, hasSelection, inImage],
+    [t, canUndo, canRedo, hasSelection, inImage, inTab],
   );
 
   const helpExtra = useMemo<MenuSpec[]>(

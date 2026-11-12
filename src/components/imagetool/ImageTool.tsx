@@ -17,6 +17,8 @@ import { EyedropperControls } from "./EyedropperControls";
 import { InpaintingControls } from "./InpaintingControls";
 import { ExifPanel } from "./ExifPanel";
 import { ExportDialog } from "./ExportDialog";
+import { PrefsDialog } from "./PrefsDialog";
+import { markBusy } from "../../lib/busyWork";
 import { FlipControls } from "./FlipControls";
 import { HistoryPanel } from "./HistoryPanel";
 import { ResizeDialog } from "./ResizeDialog";
@@ -156,6 +158,7 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
   const { setFlags } = useMenuBridge();
   const t = useT();
   const [exportOpen, setExportOpen] = useState(false);
+  const [prefsOpen, setPrefsOpen] = useState(false);
   const [resizeOpen, setResizeOpen] = useState(false);
   const [canvasResizeOpen, setCanvasResizeOpen] = useState(false);
   const [notice, setNotice] = useState<ToastNotice | null>(null);
@@ -267,6 +270,10 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
     redo: handleRedo,
     openExport: () => {
       if (image) setExportOpen(true);
+    },
+    openSettings: () => setPrefsOpen(true),
+    toggleHistory: () => {
+      if (image) toggleSidePanel("history");
     },
     setImageGrid: (size: number) => {
       const updated = { ...prefs, gridSize: size };
@@ -633,6 +640,8 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
             onCanvasResizeOpen={onCanvasResizeToggle}
             showExif={showExif}
             onToggleExif={() => toggleSidePanel("exif")}
+            showHistory={showHistory}
+            onToggleHistory={() => toggleSidePanel("history")}
             showGrid={showGrid}
             onToggleGrid={() => setShowGrid((g) => !g)}
             showAdjustments={showAdjustments}
@@ -800,7 +809,14 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
               return;
             }
           }
-          const output = await handleExport(format, quality, staged);
+          // Quitter pendant l'export demande confirmation.
+          const done = markBusy("quit.imageExport");
+          let output: string | null;
+          try {
+            output = await handleExport(format, quality, staged);
+          } finally {
+            done();
+          }
           setExportOpen(false);
           if (output && projects.length > 0) {
             try {
@@ -816,6 +832,20 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
           }
         }}
         onClose={() => setExportOpen(false)}
+      />
+      <PrefsDialog
+        open={prefsOpen}
+        prefs={prefs}
+        onSave={(updated, { clearRecent }) => {
+          savePrefs(updated);
+          setPrefs(updated);
+          if (clearRecent) {
+            clearRecentFiles();
+            setRecentFiles([]);
+          }
+          setPrefsOpen(false);
+        }}
+        onClose={() => setPrefsOpen(false)}
       />
       {notice && <Toast notice={notice} onDone={clearNotice} />}
     </div>
