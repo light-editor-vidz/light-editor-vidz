@@ -7,6 +7,12 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-11-13
+
+### Modifié
+
+- Dépendances mises à jour : i18next 27, react-i18next 18, TypeScript 6.0, et les dernières versions compatibles des autres paquets npm et crates Rust.
+
 ## [1.1.1] - 2026-11-12
 
 ### Corrigé

@@ -1,6 +1,6 @@
 [package]
 name = "light-editor-vidz"
-version = "1.1.1"
+version = "1.1.2"
 description = "Light video editor: compose scenes, text, images and video, export to MP4"
 authors = ["Sikander RAVATE <r.sik@hotmail.fr>"]
 license = "MIT"
