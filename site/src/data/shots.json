@@ -47,10 +47,6 @@
   1000,
   780
  ],
- "subtitles/home": [
-  1000,
-  780
- ],
  "subtitles/result": [
   1000,
   780
@@ -72,10 +68,6 @@
   860
  ],
  "video/layout": [
-  1400,
-  860
- ],
- "video/subtitles": [
   1400,
   860
  ]
