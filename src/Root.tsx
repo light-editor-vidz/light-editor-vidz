@@ -18,7 +18,7 @@ export default function Root({ children }: { children: ReactNode }) {
   const t = useMemo<SuiteT>(
     () => (key, vars) => {
       const own = (suiteMessages[lang] as Record<string, string>)[key];
-      if (own === undefined) return appT(key, vars);
+      if (own === undefined) return appT(key, vars ?? {});
       return vars ? Object.entries(vars).reduce((s, [k, v]) => s.split(`{${k}}`).join(String(v)), own) : own;
     },
     [lang, appT],

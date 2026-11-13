@@ -48,7 +48,7 @@ import GenerateSubtitlesDialog from "../subtitles/GenerateSubtitlesDialog";
 import AddToProjects from "../AddToProjects";
 import HistoryPanel from "../HistoryPanel";
 import { markBusy } from "../../lib/busyWork";
-import { audioStepLabel, stepLabels } from "../../lib/historyLabels";
+import { audioStepLabel, stepLabels, type Translate } from "../../lib/historyLabels";
 import { noDestination } from "../../lib/exportDestination";
 import { addOutputToProjects, listMediaSubs, saveMediaSub, stagedExportPath } from "../../lib/subs/commands";
 import { cuesToSrt, remapCues } from "../../lib/subs/linked";
@@ -132,7 +132,7 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
   useEffect(() => (processing ? markBusy("quit.audioExport") : undefined), [processing]);
   const [progress, setProgress] = useState(0);
 
-  const describe = useCallback((e: unknown) => describeEngineError(e, (key, vars) => String(t(key, vars))), [t]);
+  const describe = useCallback((e: unknown) => describeEngineError(e, (key, vars) => String(t(key, vars ?? {}))), [t]);
   const say = useCallback((text: string, kind: Toast["kind"] = "info") => setToast({ text, kind }), []);
   // Les messages de réussite ou d'avertissement s'effacent seuls ; une erreur reste affichée.
   useEffect(() => {
@@ -293,9 +293,10 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
     [history, restore],
   );
   const [showHistory, setShowHistory] = useState(false);
+  const ht = useCallback<Translate>((key, vars) => t(key, vars ?? {}), [t]);
   const historyLabels = useMemo(
-    () => (showHistory ? stepLabels(history.steps, (a, b) => audioStepLabel(a, b, t), t) : []),
-    [showHistory, history.steps, t],
+    () => (showHistory ? stepLabels(history.steps, (a, b) => audioStepLabel(a, b, ht), ht) : []),
+    [showHistory, history.steps, ht],
   );
 
   const setCuts = useCallback(

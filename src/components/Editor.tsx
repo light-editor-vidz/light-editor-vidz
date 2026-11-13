@@ -56,7 +56,7 @@ import {
 } from "../lib/timeline";
 import { historyReducer, initialHistory } from "../lib/history";
 import HistoryPanel from "./HistoryPanel";
-import { projectStepLabel, stepLabels } from "../lib/historyLabels";
+import { projectStepLabel, stepLabels, type Translate } from "../lib/historyLabels";
 import { createPlaybackClock, useClockValue } from "../lib/playbackClock";
 import { useAutosave } from "../lib/useAutosave";
 import { registerBeforeExit } from "../lib/lifecycle";
@@ -203,10 +203,11 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
   const handleRedo = useCallback(() => dispatch({ type: "redo" }), []);
   const handleGoto = useCallback((index: number) => dispatch({ type: "goto", index }), []);
   const [showHistory, setShowHistory] = useState(false);
+  const ht = useCallback<Translate>((key, vars) => t(key, vars ?? {}), [t]);
   const historyLabels = useMemo(
     () =>
-      showHistory && project ? stepLabels([...past, project, ...future], (a, b) => projectStepLabel(a, b, t), t) : [],
-    [showHistory, past, project, future, t],
+      showHistory && project ? stepLabels([...past, project, ...future], (a, b) => projectStepLabel(a, b, ht), ht) : [],
+    [showHistory, past, project, future, ht],
   );
 
   /** Subtitles of the whole project: its mix is already on the project timeline. */

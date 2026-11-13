@@ -10,5 +10,5 @@ export type T = (key: string, vars?: Record<string, string>) => string;
 /** Traducteur dans la langue `lang`, hors composant. */
 export function getT(lang: Lang): T {
   const t = i18n.getFixedT(lang);
-  return (key, vars) => String(t(`imageTool.${key}`, vars));
+  return (key, vars) => String(t(`imageTool.${key}`, vars ?? {}));
 }

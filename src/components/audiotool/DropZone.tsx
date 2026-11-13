@@ -29,7 +29,7 @@ export default function DropZone({ onOpen, onError }: Props) {
       const path = await audioPickFile();
       if (path) onOpen(path);
     } catch (e) {
-      onError(describeEngineError(e, (key, vars) => String(t(key, vars))));
+      onError(describeEngineError(e, (key, vars) => String(t(key, vars ?? {}))));
     }
   }
 

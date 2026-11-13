@@ -21,7 +21,7 @@ export default function AppMenuBar() {
   const suiteT = useCallback(
     (key: string, vars?: Record<string, string | number>) => {
       const own = (suiteMessages[lang] as Record<string, string>)[key];
-      if (own === undefined) return t(key, vars);
+      if (own === undefined) return t(key, vars ?? {});
       return vars ? Object.entries(vars).reduce((s, [k, v]) => s.split(`{${k}}`).join(String(v)), own) : own;
     },
     [lang, t],

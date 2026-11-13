@@ -26,7 +26,7 @@ import { useT } from "./i18n";
 import { useTranslation } from "react-i18next";
 import { History as HistoryIcon } from "lucide-react";
 import HistoryPanel from "../HistoryPanel";
-import { stepLabels, videoStepLabel } from "../../lib/historyLabels";
+import { stepLabels, videoStepLabel, type Translate } from "../../lib/historyLabels";
 import GenerateSubtitlesDialog from "../subtitles/GenerateSubtitlesDialog";
 import { cuesToSrt, remapCues } from "../../lib/subs/linked";
 import i18n from "i18next";
@@ -88,11 +88,12 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
     useEditorHistory();
   const { t: tr } = useTranslation();
   const [showHistory, setShowHistory] = useState(false);
+  const ht = useCallback<Translate>((key, vars) => tr(key, vars ?? {}), [tr]);
   const historyLabels = useMemo(
-    () => (showHistory ? stepLabels(steps, (a, b) => videoStepLabel(a, b, tr), tr) : []),
+    () => (showHistory ? stepLabels(steps, (a, b) => videoStepLabel(a, b, ht), ht) : []),
     // `steps` is rebuilt on every render: its length and the current state say when it changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [showHistory, steps.length, editable, tr],
+    [showHistory, steps.length, editable, ht],
   );
 
   const showCrop = activePanel === "crop";
