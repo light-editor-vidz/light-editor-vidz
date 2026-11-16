@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-16
+
 ### Added
 
 - Video: a **Split into sequences** button in the right sidebar. The scenes are detected automatically and shown as a row of thumbnails under the whole video. Tick the ones to keep and drag and drop them to reorder; the preview plays the final result (the ticked sequences, in order), and a click on a thumbnail loops that sequence until you press the player's play button or use its seek bar. The sequences you keep are merged into a single video that becomes the one you edit.

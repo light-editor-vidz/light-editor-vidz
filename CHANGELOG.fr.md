@@ -7,6 +7,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-16
+
 ### Ajouté
 
 - Vidéo : un bouton **Découper en séquences** dans la barre latérale droite. Les scènes sont détectées automatiquement et présentées en une rangée de vignettes sous la vidéo entière. Cochez celles à garder et glissez-déposez-les pour les réordonner ; l'aperçu joue le rendu final (les séquences cochées, dans l'ordre), et un clic sur une vignette joue cette séquence en boucle jusqu'à ce que vous appuyiez sur le play du lecteur ou utilisiez sa barre de position. Les séquences gardées sont fusionnées en une seule vidéo, qui devient celle que vous éditez.
