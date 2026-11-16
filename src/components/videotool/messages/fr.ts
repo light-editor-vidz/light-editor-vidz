@@ -27,6 +27,32 @@ export const fr: Translations = {
     "Sur la timeline ci-dessous, faites glisser pour sélectionner les zones à supprimer. Plusieurs sélections possibles.",
   cuts_count: (n: number) => `${n} coupe${n > 1 ? "s" : ""}`,
 
+  audio_extract: "Séparer la piste audio",
+  audio_extract_running: "Séparation de la piste audio…",
+  audio_extract_none: "Cette vidéo n'a pas de piste audio.",
+  audio_extract_error: "Impossible de séparer la piste audio.",
+  // Séquences
+  // Séquences
+  tool_sequences: "Séquences",
+  sequences_split: "Découper en séquences",
+  sequences_title: "Découper en séquences",
+  sequences_hint:
+    "Les scènes sont détectées automatiquement. Cochez celles à garder et glissez-déposez-les pour les réordonner : l'aperçu montre le rendu final. Cliquez sur une vignette pour la jouer en boucle.",
+  sequences_detecting: "Détection des scènes…",
+  sequences_error_detect: "Impossible de détecter les scènes de cette vidéo.",
+  sequences_item: (n: number) => `Séquence ${n}`,
+  sequences_total: (n: number, duration: string) => `${n} retenue${n > 1 ? "s" : ""} · ${duration}`,
+  sequences_play: "Lire cette séquence en boucle",
+  sequences_seek: "Position dans le rendu",
+  sequences_select: "Sélectionner cette séquence",
+  sequences_preview_play: "Lire le rendu",
+  sequences_preview_pause: "Pause",
+  sequences_empty: "Aucune séquence sélectionnée : cochez-en au moins une.",
+  sequences_apply: "Fusionner",
+  sequences_cancel: "Annuler",
+  sequences_merging: "Fusion des séquences…",
+  sequences_error_merge: "Impossible de fusionner les séquences.",
+
   // Filters
   tool_filters: "Filtres",
 

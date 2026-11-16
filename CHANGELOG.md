@@ -7,6 +7,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+
+- Video: a **Split into sequences** button in the right sidebar. The scenes are detected automatically and shown as a row of thumbnails under the whole video. Tick the ones to keep and drag and drop them to reorder; the preview plays the final result (the ticked sequences, in order), and a click on a thumbnail loops that sequence until you press the player's play button or use its seek bar. The sequences you keep are merged into a single video that becomes the one you edit.
+- Video: a **Separate the audio track** button in the Audio section of the right sidebar. The sound is saved next to the video (`<name> (audio).m4a`, or FLAC when the codec cannot be copied) and opens in a tab of the Audio view.
+
+### Fixed
+
+- Video: the thumbnails of the timeline were random noise instead of the images of the video; they are now extracted by ffmpeg.
+- Home screen: the three tool buttons are centred under the logo.
+
 ## [1.1.2] - 2026-11-13
 
 ### Changed

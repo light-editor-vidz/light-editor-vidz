@@ -14,10 +14,10 @@ import { UndoIcon, RedoIcon } from "./components/icons";
 import SubtitleOverlay from "./components/SubtitleOverlay";
 import FilterDefs from "./components/FilterDefs";
 import VignetteOverlay from "./components/VignetteOverlay";
-import { useEditorHistory } from "./hooks/useHistory";
+import { useEditorHistory, type EditableState } from "./hooks/useHistory";
 import { formatTime, getKeptSegments, getVirtualDuration, realToVirtual, virtualToReal } from "./utils/time";
 import { getApi } from "./api";
-import type { RecentEntry } from "./api";
+import type { RecentEntry, Sequence } from "./api";
 import type { SubtitleCue } from "./utils/srt";
 import { DEFAULT_SUBTITLE_STYLE } from "./types";
 import type { CropRect, EditorState, SubtitleAnimation, SubtitleStyle, TrimSegment } from "./types";
@@ -42,6 +42,7 @@ const Filters = lazy(() => import("./components/Filters"));
 const GeometrySettings = lazy(() => import("./components/GeometrySettings"));
 const CropOverlay = lazy(() => import("./components/CropOverlay"));
 const SubtitlesPanel = lazy(() => import("./components/SubtitlesPanel"));
+const SequencesModal = lazy(() => import("./components/SequencesModal"));
 import type { GeneratedSubtitles } from "./components/SubtitlesPanel";
 
 type ActivePanel = "crop" | "filters" | "geometry" | "subtitles" | null;
@@ -58,12 +59,14 @@ interface Props {
   onOpenFile: () => void;
   /** Ouvre ce chemin (un fichier récent) : dans cet onglet s'il est vide. */
   onOpenPath: (path: string) => void;
+  /** Ouvre ce fichier audio dans un onglet de l'outil Audio. */
+  onOpenAudio: (path: string) => void;
   onClose: () => void;
   /** Enregistre ce qui doit être demandé avant de fermer l'onglet (modifications non exportées). */
   registerCloseGuard: (guard: () => Promise<boolean>) => () => void;
 }
 
-export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, registerCloseGuard }: Props) {
+export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, onClose, registerCloseGuard }: Props) {
   const { t } = useT();
   const tabActive = useTabActive();
   const { setFlags } = useMenuBridge();
@@ -76,6 +79,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
   const [isPlaying, setIsPlaying] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
+  const [showSequences, setShowSequences] = useState(false);
   const [generated, setGenerated] = useState<GeneratedSubtitles[]>([]);
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const [filterFrameUrl, setFilterFrameUrl] = useState<string | null>(null);
@@ -217,7 +221,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
   }, [canUndo]);
 
   const loadVideo = useCallback(
-    async (filePath: string, force = false) => {
+    async (filePath: string, force = false, keep?: EditableState) => {
       const id = ++loadId.current;
       forcedPath.current = force ? filePath : null;
       setLoading({ msg: t.loading_preparing, progress: 0 });
@@ -250,7 +254,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
       }
       setIsPlaying(false);
       setActivePanel(null);
-      reset();
+      reset(keep);
       setVideoPath(filePath);
       setGenerated([]);
       getApi()
@@ -269,6 +273,56 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
     },
     [t, reset],
   );
+
+  /**
+   * Fusionne les séquences retenues en une nouvelle vidéo, qui devient la source : les coupes
+   * repartent de zéro, les sous-titres (calés sur l'ancienne ligne de temps) sont abandonnés, le
+   * reste du montage est conservé.
+   */
+  const applySequences = useCallback(
+    async (sequences: Sequence[]) => {
+      if (!videoPath) return;
+      setShowSequences(false);
+      const id = ++loadId.current;
+      setLoading({ msg: t.sequences_merging, progress: 0 });
+      const off = getApi().onPreviewProgress((p) => {
+        if (id === loadId.current) setLoading({ msg: t.sequences_merging, progress: p });
+      });
+      try {
+        const merged = await getApi().mergeSequences(videoPath, sequences);
+        off();
+        if (id !== loadId.current) return; // annulé entre-temps
+        await loadVideo(merged, false, { ...editable, cutSegments: [], subtitles: null });
+      } catch (err) {
+        off();
+        if (id !== loadId.current) return;
+        console.error("Merging the sequences failed:", err);
+        setLoading(null);
+        setToast(t.sequences_error_merge);
+      }
+    },
+    [videoPath, editable, t, loadVideo],
+  );
+
+  /** Sépare la piste audio dans un fichier, puis l'ouvre dans l'outil Audio. */
+  const extractAudio = useCallback(async () => {
+    if (!videoPath) return;
+    videoRef.current?.pause();
+    const id = ++loadId.current;
+    setLoading({ msg: t.audio_extract_running, progress: 0 });
+    try {
+      const file = await getApi().extractAudio(videoPath);
+      if (id !== loadId.current) return; // annulé entre-temps
+      setLoading(null);
+      if (file) onOpenAudio(file);
+      else setToast(t.audio_extract_none);
+    } catch (err) {
+      if (id !== loadId.current) return;
+      console.error("Extracting the audio track failed:", err);
+      setLoading(null);
+      setToast(t.audio_extract_error);
+    }
+  }, [videoPath, t, onOpenAudio]);
 
   const cancelLoad = useCallback(() => {
     loadId.current++;
@@ -396,7 +450,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
   const FRAME = 1 / 30; // the real frame rate is not known to the renderer
 
   useEffect(() => {
-    if (!videoPath || showExport || showGenerate || !tabActive) return;
+    if (!videoPath || showExport || showGenerate || showSequences || !tabActive) return;
     const isTextual = (el: EventTarget | null) => {
       const node = el as HTMLElement | null;
       if (!node) return false;
@@ -477,6 +531,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
     videoPath,
     showExport,
     showGenerate,
+    showSequences,
     tabActive,
     handlePlayPause,
     seekVirtual,
@@ -772,6 +827,11 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
             onFilterToggle={onFilterToggle}
             onGeometryToggle={onGeometryToggle}
             onSubtitlesToggle={onSubtitlesToggle}
+            onExtractAudio={() => void extractAudio()}
+            onSequences={() => {
+              videoRef.current?.pause();
+              setShowSequences(true);
+            }}
           />
 
           {showFilters && (
@@ -837,7 +897,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
             duration={duration}
             currentTime={currentTime}
             cutSegments={editable.cutSegments}
-            videoUrl={videoUrl!}
+            videoPath={videoPath}
             onSeek={seek}
             onCutSegmentsChange={setCutSegments}
             onCutSegmentsChangeLive={setCutSegmentsLive}
@@ -856,6 +916,17 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onClose, regis
               associatedSrt={associatedSrt}
               onClose={closeExport}
               onQueued={onExportQueued}
+            />
+          </Suspense>
+        )}
+
+        {showSequences && videoPath && videoUrl && (
+          <Suspense fallback={null}>
+            <SequencesModal
+              videoUrl={videoUrl}
+              videoPath={videoPath}
+              onCancel={() => setShowSequences(false)}
+              onApply={(sequences) => void applySequences(sequences)}
             />
           </Suspense>
         )}

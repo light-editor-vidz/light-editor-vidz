@@ -11,7 +11,7 @@ interface Props {
   duration: number;
   currentTime: number;
   cutSegments: TrimSegment[];
-  videoUrl: string;
+  videoPath: string;
   onSeek: (time: number) => void;
   onCutSegmentsChange: (segs: TrimSegment[]) => void;
   onCutSegmentsChangeLive: (segs: TrimSegment[]) => void;
@@ -30,7 +30,7 @@ function Timeline({
   duration,
   currentTime,
   cutSegments,
-  videoUrl,
+  videoPath,
   onSeek,
   onCutSegmentsChange,
   onCutSegmentsChangeLive,
@@ -281,7 +281,7 @@ function Timeline({
         {/* Body */}
         <div className="tl-body">
           {/* Filmstrip */}
-          <FilmStrip videoUrl={videoUrl} duration={duration} trackWidth={trackWidth} />
+          <FilmStrip videoPath={videoPath} duration={duration} trackWidth={trackWidth} />
 
           {/* Darkening outside cuts (kept zones stay bright) */}
           <div className="tl-kept-mask" />

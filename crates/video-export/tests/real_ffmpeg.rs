@@ -267,3 +267,116 @@ fn an_unreadable_source_reports_the_reason() {
 
     assert!(matches!(err, FfError::Failed(m) if !m.is_empty()));
 }
+
+/// Un clip de 4 s avec son : 2 s rouges puis 2 s bleues (un changement de plan net à 2 s).
+fn make_two_scene_clip(runner: &ProcessRunner, dir: &Path) -> String {
+    let path = dir.join("scenes.mp4").to_string_lossy().into_owned();
+    let args: Vec<String> = [
+        "-f",
+        "lavfi",
+        "-i",
+        "color=red:s=320x240:r=25:d=2",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=blue:s=320x240:r=25:d=2",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:d=4",
+        "-filter_complex",
+        "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+        "-map",
+        "[v]",
+        "-map",
+        "2:a",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        &path,
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    runner
+        .run(&args, &mut |_| {})
+        .expect("le clip de test se crée");
+    path
+}
+
+#[test]
+fn scenes_are_detected_and_merged_in_the_chosen_order() {
+    use video_export::sequences::{
+        merge_args, parse_scene_times, scene_detect_args, sequences_from_cuts,
+    };
+    let Some(r) = runner() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let src = make_two_scene_clip(&r, dir.path());
+    let log = dir.path().join("scenes.log").to_string_lossy().into_owned();
+
+    r.run(&scene_detect_args(&src, &log), &mut |_| {}).unwrap();
+    let times = parse_scene_times(&std::fs::read_to_string(&log).unwrap_or_default());
+    let sequences = sequences_from_cuts(&times, duration(&r, &src));
+    assert_eq!(sequences.len(), 2, "{times:?}");
+    assert!((sequences[0].end - 2.0).abs() < 0.2, "{sequences:?}");
+
+    // La seconde séquence d'abord, la première supprimée de la fusion.
+    let out = dir.path().join("merged.mp4").to_string_lossy().into_owned();
+    r.run(&merge_args(&src, &out, &[sequences[1]], true), &mut |_| {})
+        .unwrap();
+    assert!((duration(&r, &out) - 2.0).abs() < 0.3);
+
+    let out = dir
+        .path()
+        .join("swapped.mp4")
+        .to_string_lossy()
+        .into_owned();
+    let swapped = [sequences[1], sequences[0]];
+    r.run(&merge_args(&src, &out, &swapped, true), &mut |_| {})
+        .unwrap();
+    assert!((duration(&r, &out) - 4.0).abs() < 0.3);
+    assert!(r
+        .probe(&out)
+        .unwrap()
+        .streams
+        .iter()
+        .any(|s| s.codec_type == "audio"));
+}
+
+#[test]
+fn the_audio_track_is_separated_without_the_video() {
+    use video_export::audio_extract::{extract_args, plan};
+    let Some(r) = runner() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let src = make_clip(&r, dir.path());
+
+    let info = r.probe(&src).unwrap();
+    let audio = info
+        .streams
+        .iter()
+        .find(|s| s.codec_type == "audio")
+        .unwrap();
+    let plan = plan(&audio.codec_name);
+    assert_eq!(plan.ext, "m4a");
+
+    let out = dir
+        .path()
+        .join(format!("src (audio).{}", plan.ext))
+        .to_string_lossy()
+        .into_owned();
+    r.run(&extract_args(&src, &out, plan.copy), &mut |_| {})
+        .unwrap();
+
+    let extracted = r.probe(&out).unwrap();
+    assert!(extracted.streams.iter().all(|s| s.codec_type == "audio"));
+    assert!((duration(&r, &out) - 6.0).abs() < 0.3);
+
+    // Un codec sans conteneur audio propre est ré-encodé en FLAC.
+    let flac = dir.path().join("src.flac").to_string_lossy().into_owned();
+    r.run(&extract_args(&src, &flac, false), &mut |_| {})
+        .unwrap();
+    assert_eq!(r.probe(&flac).unwrap().streams[0].codec_name, "flac");
+}

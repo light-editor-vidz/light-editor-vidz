@@ -45,7 +45,7 @@ function makeProps(
     duration: number;
     currentTime: number;
     cutSegments: TrimSegment[];
-    videoUrl: string;
+    videoPath: string;
     onSeek: (t: number) => void;
     onCutSegmentsChange: (segs: TrimSegment[]) => void;
     onCutSegmentsChangeLive: (segs: TrimSegment[]) => void;
@@ -56,7 +56,7 @@ function makeProps(
     duration: 100,
     currentTime: 0,
     cutSegments: [],
-    videoUrl: "file:///x.mp4",
+    videoPath: "/x.mp4",
     onSeek: vi.fn(),
     onCutSegmentsChange: vi.fn(),
     onCutSegmentsChangeLive: vi.fn(),

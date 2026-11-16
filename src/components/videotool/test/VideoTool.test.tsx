@@ -1,4 +1,5 @@
 import "./setup";
+import { drop } from "./dndCapture";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -6,6 +7,18 @@ import { invoke } from "@tauri-apps/api/core";
 import VideoTool from "../VideoTool";
 import { inertBridge, TabActiveProvider } from "../../../lib/menuBridge";
 import { runBeforeExit } from "../../../lib/lifecycle";
+
+vi.mock("@dnd-kit/core", async () => {
+  const actual = await vi.importActual<typeof import("@dnd-kit/core")>("@dnd-kit/core");
+  const { dnd } = await import("./dndCapture");
+  return {
+    ...actual,
+    DndContext: (props: React.ComponentProps<typeof actual.DndContext>) => {
+      dnd.onDragEnd = props.onDragEnd;
+      return <actual.DndContext {...props} />;
+    },
+  };
+});
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn(), open: vi.fn(), save: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir: vi.fn() }));
@@ -18,6 +31,7 @@ function setup(props: Partial<Parameters<typeof VideoTool>[0]> = {}, active = tr
   const handlers = {
     onOpenFile: vi.fn(),
     onOpenPath: vi.fn(),
+    onOpenAudio: vi.fn(),
     onClose: vi.fn(),
     registerCloseGuard: vi.fn(() => () => {}),
   };
@@ -213,5 +227,94 @@ describe("VideoTool — closing and menu", () => {
 
     expect(inertBridge.actions.current.undo).toBeUndefined();
     expect(inertBridge.actions.current.openExport).toBeUndefined();
+  });
+});
+
+describe("VideoTool — sequences", () => {
+  const scenes = [
+    { start: 0, end: 4 },
+    { start: 4, end: 9 },
+  ];
+
+  it("merges the chosen sequences into one video that becomes the source", async () => {
+    const detectScenes = vi.fn(async () => scenes);
+    const mergeSequences = vi.fn(async () => "/tmp/lev_merge_1.mp4");
+    const { previewVideo } = setup({ path: "/v/a.mp4" });
+    window.electronAPI = { ...window.electronAPI, detectScenes, mergeSequences };
+    await screen.findByText("a.mp4");
+
+    fireEvent.click(screen.getByRole("button", { name: "Split into sequences" }));
+    const dialog = await screen.findByRole("dialog", { name: "Split into sequences" });
+    await within(dialog).findByText("Sequence 1");
+    act(() => drop(0, 1)); // Sequence 1 dropped on Sequence 2
+    fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
+
+    await screen.findByText("lev_merge_1.mp4");
+    expect(mergeSequences).toHaveBeenCalledWith("/v/a.mp4", [
+      { start: 4, end: 9 },
+      { start: 0, end: 4 },
+    ]);
+    expect(previewVideo).toHaveBeenLastCalledWith("/tmp/lev_merge_1.mp4", false);
+    expect(screen.queryByRole("dialog", { name: "Split into sequences" })).toBeNull();
+  });
+
+  it("keeps the opened video and tells when the merge fails", async () => {
+    const mergeSequences = vi.fn(async () => {
+      throw new Error("ffmpeg");
+    });
+    const { previewVideo } = setup({ path: "/v/a.mp4" });
+    window.electronAPI = { ...window.electronAPI, detectScenes: async () => scenes, mergeSequences };
+    await screen.findByText("a.mp4");
+
+    fireEvent.click(screen.getByRole("button", { name: "Split into sequences" }));
+    const dialog = await screen.findByRole("dialog", { name: "Split into sequences" });
+    await within(dialog).findByText("Sequence 1");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
+
+    expect(await screen.findByText("Could not merge the sequences.")).toBeInTheDocument();
+    expect(previewVideo).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("a.mp4")).toBeInTheDocument();
+  });
+});
+
+describe("VideoTool — audio track", () => {
+  it("separates the audio track and opens it in the Audio tool", async () => {
+    const extractAudio = vi.fn(async () => "/v/a (audio).m4a");
+    const { onOpenAudio } = setup({ path: "/v/a.mp4" });
+    window.electronAPI = { ...window.electronAPI, extractAudio };
+    await screen.findByText("a.mp4");
+
+    fireEvent.click(screen.getByRole("button", { name: "Separate the audio track" }));
+
+    await waitFor(() => expect(onOpenAudio).toHaveBeenCalledWith("/v/a (audio).m4a"));
+    expect(extractAudio).toHaveBeenCalledWith("/v/a.mp4");
+    expect(screen.getByText("a.mp4")).toBeInTheDocument(); // the video stays open
+  });
+
+  it("tells when the video has no audio track, and opens nothing", async () => {
+    const { onOpenAudio } = setup({ path: "/v/a.mp4" });
+    window.electronAPI = { ...window.electronAPI, extractAudio: async () => null };
+    await screen.findByText("a.mp4");
+
+    fireEvent.click(screen.getByRole("button", { name: "Separate the audio track" }));
+
+    expect(await screen.findByText("This video has no audio track.")).toBeInTheDocument();
+    expect(onOpenAudio).not.toHaveBeenCalled();
+  });
+
+  it("tells when the separation fails", async () => {
+    const { onOpenAudio } = setup({ path: "/v/a.mp4" });
+    window.electronAPI = {
+      ...window.electronAPI,
+      extractAudio: async () => {
+        throw new Error("ffmpeg");
+      },
+    };
+    await screen.findByText("a.mp4");
+
+    fireEvent.click(screen.getByRole("button", { name: "Separate the audio track" }));
+
+    expect(await screen.findByText("Could not separate the audio track.")).toBeInTheDocument();
+    expect(onOpenAudio).not.toHaveBeenCalled();
   });
 });

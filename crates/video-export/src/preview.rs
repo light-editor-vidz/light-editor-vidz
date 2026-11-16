@@ -70,6 +70,49 @@ pub fn preview_args(input: &str, out: &str) -> Vec<String> {
     .collect()
 }
 
+/// Largeur et hauteur (px) des vignettes de la frise de la timeline.
+pub const THUMB_SIZE: (u32, u32) = (160, 90);
+
+/// Arguments de l'extraction de `count` vignettes réparties sur `duration` secondes, écrites
+/// selon le motif `out_pattern` (`%03d.jpg`). Faite par ffmpeg : le WebView ne sait pas lire
+/// fiablement une image d'une vidéo hors écran (il rend du bruit).
+pub fn thumbnail_args(input: &str, out_pattern: &str, count: u32, duration: f64) -> Vec<String> {
+    let (w, h) = THUMB_SIZE;
+    vec![
+        "-i".into(),
+        input.into(),
+        "-an".into(),
+        "-vf".into(),
+        format!(
+            "fps={count}/{duration:.6},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+        ),
+        "-frames:v".into(),
+        count.to_string(),
+        "-q:v".into(),
+        "5".into(),
+        out_pattern.into(),
+    ]
+}
+
+/// Arguments de l'extraction d'une seule vignette, de l'image à l'instant `time` (secondes).
+pub fn frame_args(input: &str, out: &str, time: f64) -> Vec<String> {
+    let (w, h) = THUMB_SIZE;
+    vec![
+        "-ss".into(),
+        format!("{:.3}", time.max(0.0)),
+        "-i".into(),
+        input.into(),
+        "-an".into(),
+        "-frames:v".into(),
+        "1".into(),
+        "-vf".into(),
+        format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"),
+        "-q:v".into(),
+        "5".into(),
+        out.into(),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +197,21 @@ mod tests {
             a.starts_with("-i /in.avi -c:v libvpx-vp9")
                 && a.ends_with("scale=trunc(iw/2)*2:trunc(ih/2)*2 /out.webm")
         );
+    }
+
+    #[test]
+    fn thumbnails_are_spread_over_the_whole_duration() {
+        let args = thumbnail_args("in.mp4", "t_%03d.jpg", 10, 20.0);
+        assert_eq!(args[1], "in.mp4");
+        assert!(args[4].starts_with("fps=10/20.000000,scale=160:90"));
+        assert_eq!(args[6], "10");
+        assert_eq!(args.last().unwrap(), "t_%03d.jpg");
+    }
+
+    #[test]
+    fn a_single_frame_is_taken_at_the_given_time() {
+        let args = frame_args("in.mp4", "f.jpg", 4.5);
+        assert_eq!(&args[..4], ["-ss", "4.500", "-i", "in.mp4"]);
+        assert_eq!(args.last().unwrap(), "f.jpg");
     }
 }

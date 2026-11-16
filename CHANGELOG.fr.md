@@ -7,6 +7,16 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Unreleased]
 
+### Ajouté
+
+- Vidéo : un bouton **Découper en séquences** dans la barre latérale droite. Les scènes sont détectées automatiquement et présentées en une rangée de vignettes sous la vidéo entière. Cochez celles à garder et glissez-déposez-les pour les réordonner ; l'aperçu joue le rendu final (les séquences cochées, dans l'ordre), et un clic sur une vignette joue cette séquence en boucle jusqu'à ce que vous appuyiez sur le play du lecteur ou utilisiez sa barre de position. Les séquences gardées sont fusionnées en une seule vidéo, qui devient celle que vous éditez.
+- Vidéo : un bouton **Séparer la piste audio** dans la section Audio de la barre latérale droite. Le son est enregistré à côté de la vidéo (`<nom> (audio).m4a`, ou FLAC quand le codec ne peut pas être copié) et s'ouvre dans un onglet de la vue Audio.
+
+### Corrigé
+
+- Vidéo : les vignettes de la timeline affichaient du bruit au lieu des images de la vidéo ; elles sont maintenant extraites par ffmpeg.
+- Écran d'accueil : les trois boutons d'outils sont centrés sous le logo.
+
 ## [1.1.2] - 2026-11-13
 
 ### Modifié

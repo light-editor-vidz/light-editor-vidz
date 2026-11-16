@@ -5,6 +5,7 @@
 use audio_dsp::approval::Approved;
 use audio_dsp::error::CmdError;
 use audio_dsp::recent::{self, RecentFile};
+use base64::Engine as _;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -19,15 +20,19 @@ use video_export::plan::{
     ensure_extension, validate_export_options, ExportOptions, RawExportOptions,
 };
 use video_export::queue::{ExportQueue, JobMeta, JobSnapshot};
+use video_export::sequences::{self, Sequence};
 
 pub const VIDEO_EXTENSIONS: [&str; 7] = ["mp4", "mov", "avi", "mkv", "webm", "flv", "m4v"];
 const RECENT_FILE: &str = "recent-video.json";
+const MERGED_PREFIX: &str = "lev_merge_";
 
 /// La file d'exports et l'aperçu en cours, gérés par Tauri.
 pub struct VideoState {
     queue: ExportQueue<ExportOptions>,
     preview: Mutex<Option<PathBuf>>,
     preview_cancel: Mutex<Arc<AtomicBool>>,
+    /// Les vidéos fusionnées depuis des séquences : supprimées à la fermeture.
+    merged: Mutex<Vec<PathBuf>>,
     capabilities: OnceLock<Capabilities>,
     after_export: AfterExport,
 }
@@ -71,6 +76,7 @@ impl VideoState {
             queue,
             preview: Mutex::new(None),
             preview_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+            merged: Mutex::new(Vec::new()),
             capabilities: OnceLock::new(),
             after_export,
         }
@@ -84,6 +90,9 @@ impl VideoState {
             .unwrap()
             .store(true, Ordering::SeqCst);
         if let Some(p) = self.preview.lock().unwrap().take() {
+            let _ = std::fs::remove_file(p);
+        }
+        for p in self.merged.lock().unwrap().drain(..) {
             let _ = std::fs::remove_file(p);
         }
     }
@@ -290,7 +299,11 @@ pub async fn video_preview<R: Runtime>(
     force: Option<bool>,
 ) -> Result<Preview, CmdError> {
     approved.check_input(&path).map_err(CmdError::from)?;
-    if let Some(file) = recent_file(&app) {
+    // Une vidéo fusionnée est temporaire : elle n'a pas sa place parmi les fichiers récents.
+    let is_merged = Path::new(&path)
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with(MERGED_PREFIX));
+    if let (false, Some(file)) = (is_merged, recent_file(&app)) {
         recent::record(&file, &path);
     }
     // Un transcodage précédent encore en cours écrirait un fichier que personne ne supprimera.
@@ -360,6 +373,245 @@ pub async fn video_preview<R: Runtime>(
         path: out_str,
         transcoded: true,
     })
+}
+
+/// Un drapeau d'annulation neuf, partagé avec « Annuler » de l'aperçu (même écran de chargement).
+fn fresh_cancel(state: &VideoState) -> Arc<AtomicBool> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    *state.preview_cancel.lock().unwrap() = cancel.clone();
+    cancel
+}
+
+/// Découpe la vidéo en séquences, aux changements de plan.
+#[tauri::command]
+pub async fn video_detect_scenes(
+    approved: State<'_, Approved>,
+    state: State<'_, VideoState>,
+    path: String,
+) -> Result<Vec<Sequence>, CmdError> {
+    approved.check_input(&path).map_err(CmdError::from)?;
+    let runner = ProcessRunner::system(fresh_cancel(&state));
+    blocking(move || {
+        let duration = runner
+            .probe(&path)?
+            .duration
+            .filter(|d| *d > 0.0)
+            .ok_or("Cannot read the video duration")?;
+        let work = tempfile_dir().map_err(|e| e.to_string())?;
+        let log = work.join("scenes.log");
+        let result = runner.run(
+            &sequences::scene_detect_args(&path, &log.to_string_lossy()),
+            &mut |_| {},
+        );
+        let times = std::fs::read_to_string(&log).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&work);
+        result.map_err(|e| e.to_string())?;
+        Ok(sequences::sequences_from_cuts(
+            &sequences::parse_scene_times(&times),
+            duration,
+        ))
+    })
+    .await
+}
+
+/// Le contenu d'un fichier JPEG, en data URL.
+fn jpeg_data_url(path: &Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    Ok(format!(
+        "data:image/jpeg;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+/// Les vignettes de la frise de la timeline : `count` images JPEG (data URL) réparties sur la vidéo.
+#[tauri::command]
+pub async fn video_thumbnails(
+    approved: State<'_, Approved>,
+    path: String,
+    count: u32,
+) -> Result<Vec<String>, CmdError> {
+    approved.check_input(&path).map_err(CmdError::from)?;
+    let count = count.clamp(1, 200);
+    let runner = ProcessRunner::system(Arc::new(AtomicBool::new(false)));
+    blocking(move || {
+        let duration = runner
+            .probe(&path)?
+            .duration
+            .filter(|d| *d > 0.0)
+            .ok_or("Cannot read the video duration")?;
+        let work = tempfile_dir().map_err(|e| e.to_string())?;
+        let pattern = work.join("t_%03d.jpg");
+        let result = runner.run(
+            &video_export::preview::thumbnail_args(
+                &path,
+                &pattern.to_string_lossy(),
+                count,
+                duration,
+            ),
+            &mut |_| {},
+        );
+        let mut thumbs = Vec::new();
+        if result.is_ok() {
+            for i in 1..=count {
+                match jpeg_data_url(&work.join(format!("t_{i:03}.jpg"))) {
+                    Ok(url) => thumbs.push(url),
+                    Err(_) => break,
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&work);
+        result.map_err(|e| e.to_string())?;
+        Ok(thumbs)
+    })
+    .await
+}
+
+/// Une vignette (data URL) par instant demandé, dans le même ordre (`""` si une image manque).
+#[tauri::command]
+pub async fn video_frames(
+    approved: State<'_, Approved>,
+    path: String,
+    times: Vec<f64>,
+) -> Result<Vec<String>, CmdError> {
+    approved.check_input(&path).map_err(CmdError::from)?;
+    if times.len() > 200 {
+        return Err(CmdError::from(anyhow::anyhow!("Too many frames requested")));
+    }
+    let runner = ProcessRunner::system(Arc::new(AtomicBool::new(false)));
+    blocking(move || {
+        let work = tempfile_dir().map_err(|e| e.to_string())?;
+        let mut frames = Vec::with_capacity(times.len());
+        for (i, time) in times.iter().enumerate() {
+            let out = work.join(format!("f_{i}.jpg"));
+            let ok = time.is_finite()
+                && runner
+                    .run(
+                        &video_export::preview::frame_args(&path, &out.to_string_lossy(), *time),
+                        &mut |_| {},
+                    )
+                    .is_ok();
+            frames.push(if ok {
+                jpeg_data_url(&out).unwrap_or_default()
+            } else {
+                String::new()
+            });
+        }
+        let _ = std::fs::remove_dir_all(&work);
+        Ok(frames)
+    })
+    .await
+}
+
+/// Sépare la piste audio de la vidéo, dans un fichier à côté d'elle (sinon dans le dossier
+/// temporaire si ce dossier n'est pas inscriptible) ; renvoie son chemin, ou `None` sans piste audio.
+#[tauri::command]
+pub async fn video_extract_audio<R: Runtime>(
+    app: AppHandle<R>,
+    approved: State<'_, Approved>,
+    state: State<'_, VideoState>,
+    path: String,
+) -> Result<Option<String>, CmdError> {
+    approved.check_input(&path).map_err(CmdError::from)?;
+    let runner = ProcessRunner::system(fresh_cancel(&state));
+    let source = PathBuf::from(&path);
+    let out = blocking(move || {
+        let info = runner.probe(&path)?;
+        let Some(audio) = info.streams.iter().find(|s| s.codec_type == "audio") else {
+            return Ok(None);
+        };
+        let plan = video_export::audio_extract::plan(&audio.codec_name);
+        let stem = source
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "audio".into());
+        let dirs = [
+            source.parent().map(Path::to_path_buf),
+            Some(std::env::temp_dir()),
+        ];
+        let mut last_error = String::from("Cannot write the audio file");
+        for dir in dirs.into_iter().flatten() {
+            let out = video_export::audio_extract::free_path(&dir, &stem, plan.ext, |p| p.exists());
+            let result = runner.run(
+                &video_export::audio_extract::extract_args(
+                    &path,
+                    &out.to_string_lossy(),
+                    plan.copy,
+                ),
+                &mut |_| {},
+            );
+            match result {
+                Ok(()) => return Ok(Some(out.to_string_lossy().into_owned())),
+                Err(FfError::Cancelled) => {
+                    let _ = std::fs::remove_file(&out);
+                    return Err("Cancelled".to_string());
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_file(&out);
+                    last_error = e.to_string();
+                }
+            }
+        }
+        Err(last_error)
+    })
+    .await?;
+    if let Some(file) = &out {
+        approved.allow_input(file);
+        authorize(&app, file).map_err(CmdError::from)?;
+    }
+    Ok(out)
+}
+
+/// Fusionne les séquences, dans l'ordre reçu, en une nouvelle vidéo ; renvoie son chemin.
+#[tauri::command]
+pub async fn video_merge_sequences<R: Runtime>(
+    app: AppHandle<R>,
+    approved: State<'_, Approved>,
+    state: State<'_, VideoState>,
+    path: String,
+    sequences: Vec<Sequence>,
+) -> Result<String, CmdError> {
+    approved.check_input(&path).map_err(CmdError::from)?;
+    sequences::validate_sequences(&sequences).map_err(|m| CmdError::from(anyhow::anyhow!(m)))?;
+    let runner = ProcessRunner::system(fresh_cancel(&state));
+    let out = std::env::temp_dir().join(format!(
+        "{MERGED_PREFIX}{}_{}.mp4",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let out_str = out.to_string_lossy().into_owned();
+    let total = sequences::total_duration(&sequences);
+    let emitter = app.clone();
+    let (input, output) = (path.clone(), out_str.clone());
+    let result = blocking(move || {
+        let with_audio = runner
+            .probe(&input)?
+            .streams
+            .iter()
+            .any(|s| s.codec_type == "audio");
+        runner
+            .run(
+                &sequences::merge_args(&input, &output, &sequences, with_audio),
+                &mut |sec| {
+                    let _ = emitter.emit(
+                        "video-preview-progress",
+                        ((sec / total) * 100.0).min(99.0).round() as u32,
+                    );
+                },
+            )
+            .map_err(|e| e.to_string())
+    })
+    .await;
+    if let Err(e) = result {
+        let _ = std::fs::remove_file(&out);
+        return Err(e);
+    }
+    state.merged.lock().unwrap().push(out);
+    approved.allow_input(&out_str);
+    authorize(&app, &out_str).map_err(CmdError::from)?;
+    Ok(out_str)
 }
 
 #[tauri::command]

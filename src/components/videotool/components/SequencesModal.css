@@ -1,0 +1,240 @@
+.vt-root .seq-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vt-root .seq-modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 760px;
+  max-width: 95vw;
+  max-height: 92vh;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.vt-root .seq-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.vt-root .seq-header h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.vt-root .seq-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 18px;
+}
+
+.vt-root .seq-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.vt-root .seq-video {
+  width: 100%;
+  max-height: 38vh;
+  background: #000;
+  border-radius: 8px;
+}
+
+.vt-root .seq-hint,
+.vt-root .seq-message {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vt-root .seq-error {
+  color: var(--trim-cut-border);
+}
+
+.vt-root .seq-spinner {
+  width: 16px;
+  height: 16px;
+}
+
+.vt-root .seq-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vt-root .seq-playpause {
+  width: 32px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.vt-root .seq-playpause:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.vt-root .seq-seek {
+  flex: 1;
+  accent-color: var(--accent, #4f8cff);
+}
+
+.vt-root .seq-time {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: "JetBrains Mono", monospace;
+}
+
+.vt-root .seq-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 8px;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  overflow-x: auto;
+  min-height: 84px;
+}
+
+.vt-root .seq-item {
+  position: relative;
+  flex: 0 0 170px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg-tertiary);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  padding: 8px;
+  color: var(--text-primary);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.vt-root .seq-item.is-selected {
+  border-color: var(--accent, #4f8cff);
+}
+
+.vt-root .seq-item:not(.is-selected):not(.is-placeholder) {
+  opacity: 0.55;
+}
+
+.vt-root .seq-item.is-placeholder {
+  background: transparent;
+  border: 2px dashed var(--text-muted);
+  opacity: 1;
+}
+
+.vt-root .seq-item.is-placeholder > * {
+  visibility: hidden;
+}
+
+.vt-root .seq-overlay {
+  cursor: grabbing;
+  opacity: 1;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  transform: rotate(2deg);
+}
+
+.vt-root .seq-thumb-wrap {
+  position: relative;
+}
+
+.vt-root .seq-play-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 1px;
+  pointer-events: none;
+}
+
+.vt-root .seq-item:hover .seq-play-badge {
+  background: var(--accent, #4f8cff);
+}
+
+.vt-root .seq-item.is-looping {
+  box-shadow: 0 0 0 2px var(--accent, #4f8cff);
+}
+
+.vt-root .seq-item.is-looping .seq-play-badge {
+  background: var(--accent, #4f8cff);
+}
+
+.vt-root .seq-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #000;
+  pointer-events: none;
+}
+
+.vt-root .seq-thumb-empty {
+  background: var(--bg-secondary);
+}
+
+.vt-root .seq-check {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 1;
+  cursor: pointer;
+}
+
+.vt-root .seq-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.vt-root .seq-range {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: "JetBrains Mono", monospace;
+}
+
+.vt-root .seq-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.vt-root .seq-total {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.vt-root .btn-primary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

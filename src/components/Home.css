@@ -208,7 +208,8 @@
 /* Les outils : un bouton par ancienne application, avec son picto. */
 .home-tools {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 150px));
+  grid-template-columns: repeat(3, minmax(120px, 150px));
+  justify-content: center;
   gap: 14px;
 }
 

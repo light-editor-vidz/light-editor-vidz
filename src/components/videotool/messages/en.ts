@@ -24,6 +24,32 @@ export const en = {
   trim_hint: "On the timeline below, drag to select zones to remove. Multiple selections supported.",
   cuts_count: (n: number) => `${n} cut${n > 1 ? "s" : ""}`,
 
+  // Audio track separation
+  audio_extract: "Separate the audio track",
+  audio_extract_running: "Separating the audio track…",
+  audio_extract_none: "This video has no audio track.",
+  audio_extract_error: "Could not separate the audio track.",
+  // Sequences
+  tool_sequences: "Sequences",
+  sequences_split: "Split into sequences",
+  sequences_title: "Split into sequences",
+  sequences_hint:
+    "Scenes are detected automatically. Tick the ones to keep and drag and drop them to reorder: the preview shows the final result. Click a thumbnail to play it on a loop.",
+  sequences_detecting: "Detecting scenes…",
+  sequences_error_detect: "Could not detect the scenes of this video.",
+  sequences_item: (n: number) => `Sequence ${n}`,
+  sequences_total: (n: number, duration: string) => `${n} selected · ${duration}`,
+  sequences_play: "Play this sequence on a loop",
+  sequences_seek: "Position in the result",
+  sequences_select: "Select this sequence",
+  sequences_preview_play: "Play the result",
+  sequences_preview_pause: "Pause",
+  sequences_empty: "No sequence selected: tick at least one.",
+  sequences_apply: "Merge",
+  sequences_cancel: "Cancel",
+  sequences_merging: "Merging the sequences…",
+  sequences_error_merge: "Could not merge the sequences.",
+
   // Filters
   tool_filters: "Filters",
 

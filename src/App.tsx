@@ -154,6 +154,7 @@ function App() {
                 path={tab.path}
                 onOpenFile={() => void openFile()}
                 onOpenPath={(path) => dispatch({ type: "setTabPath", id: tab.id, path })}
+                onOpenAudio={(path) => dispatch({ type: "openAudio", path })}
                 onClose={() => dispatch({ type: "close", id: tab.id })}
                 registerCloseGuard={(guard) => {
                   closeGuards.current.set(tab.id, guard);

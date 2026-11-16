@@ -36,6 +36,8 @@ function makeProps(
     onFilterToggle: () => void;
     onGeometryToggle: () => void;
     onSubtitlesToggle: () => void;
+    onSequences: () => void;
+    onExtractAudio: () => void;
   }> = {},
   flags: Partial<{ showCrop: boolean; showFilters: boolean; showGeometry: boolean; showSubtitles: boolean }> = {},
 ) {
@@ -56,6 +58,8 @@ function makeProps(
     onFilterToggle: vi.fn(),
     onGeometryToggle: vi.fn(),
     onSubtitlesToggle: vi.fn(),
+    onSequences: vi.fn(),
+    onExtractAudio: vi.fn(),
     ...callbacks,
   };
 }
@@ -296,5 +300,23 @@ describe("Toolbar — stabilisation", () => {
       renderBar({ stabilize: "off" }).container.querySelector(".trim-hint + .trim-hint, .stab-options + .trim-hint"),
     ).toBeNull();
     expect(renderBar({ stabilize: "light" }).container.querySelector(".stab-options + .trim-hint")).toBeTruthy();
+  });
+});
+
+describe("Toolbar — sequences", () => {
+  it("has a button that splits the video into sequences", () => {
+    const onSequences = vi.fn();
+    const { getByRole } = r(makeProps({}, { onSequences }));
+    fireEvent.click(getByRole("button", { name: "Split into sequences" }));
+    expect(onSequences).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Toolbar — audio track", () => {
+  it("has a button that separates the audio track", () => {
+    const onExtractAudio = vi.fn();
+    const { getByRole } = r(makeProps({}, { onExtractAudio }));
+    fireEvent.click(getByRole("button", { name: "Separate the audio track" }));
+    expect(onExtractAudio).toHaveBeenCalledTimes(1);
   });
 });

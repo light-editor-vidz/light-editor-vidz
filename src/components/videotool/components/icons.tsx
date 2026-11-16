@@ -100,3 +100,21 @@ export const VideoIcon = (p: IconProps) => (
     <path d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
   </Svg>
 );
+
+export const SequencesIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="6" rx="1" />
+    <rect x="3" y="14" width="8" height="6" rx="1" />
+    <rect x="13" y="14" width="8" height="6" rx="1" />
+  </Svg>
+);
+
+export const AudioSplitIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 10v4" />
+    <path d="M7 7v10" />
+    <path d="M11 4v16" />
+    <path d="M15 8v8" />
+    <path d="M19 11l2 2-2 2" />
+  </Svg>
+);

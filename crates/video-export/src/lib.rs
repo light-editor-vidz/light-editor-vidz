@@ -2,6 +2,7 @@
 //! ne lance ffmpeg ni ne touche au disque, tout est donc testable.
 
 pub mod atempo;
+pub mod audio_extract;
 pub mod export;
 pub mod ffmpeg;
 pub mod filters;
@@ -9,6 +10,7 @@ pub mod hardware;
 pub mod plan;
 pub mod preview;
 pub mod queue;
+pub mod sequences;
 pub mod subtitles;
 pub mod text;
 pub mod video_filters;

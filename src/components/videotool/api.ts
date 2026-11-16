@@ -71,6 +71,11 @@ export interface ExportRequest {
   } | null;
 }
 
+export interface Sequence {
+  start: number;
+  end: number;
+}
+
 export interface VideoApi {
   getPathForFile: (file: File) => string;
   toFileUrl: (filePath: string) => Promise<string>;
@@ -98,6 +103,16 @@ export interface VideoApi {
   clearRecent: () => Promise<void>;
   /** `force`: transcode even when the file looks playable (the webview lacks the codec). */
   previewVideo: (filePath: string, force?: boolean) => Promise<string>;
+  /** Les séquences de la vidéo, coupées à chaque changement de plan. */
+  detectScenes: (path: string) => Promise<Sequence[]>;
+  /** `count` vignettes (data URL) réparties sur la vidéo, pour la frise de la timeline. */
+  videoThumbnails: (path: string, count: number) => Promise<string[]>;
+  /** Une vignette (data URL, `""` si indisponible) par instant demandé. */
+  videoFrames: (path: string, times: number[]) => Promise<string[]>;
+  /** Sépare la piste audio dans un fichier ; son chemin, ou `null` si la vidéo n'a pas de son. */
+  extractAudio: (path: string) => Promise<string | null>;
+  /** Fusionne ces séquences, dans cet ordre, en une nouvelle vidéo : renvoie son chemin. */
+  mergeSequences: (path: string, sequences: Sequence[]) => Promise<string>;
   openSubtitleFile: () => Promise<{ filePath: string; content: string } | null>;
   onPreviewProgress: (callback: (progress: number) => void) => () => void;
   exportVideo: (options: ExportRequest) => Promise<{ success: boolean; outputPath: string }>;
@@ -193,6 +208,11 @@ const tauriApi: VideoApi = {
     });
     return assetUrl(preview.path);
   },
+  detectScenes: (path) => invoke<Sequence[]>("video_detect_scenes", { path }),
+  videoThumbnails: (path, count) => invoke<string[]>("video_thumbnails", { path, count }),
+  videoFrames: (path, times) => invoke<string[]>("video_frames", { path, times }),
+  extractAudio: (path) => invoke<string | null>("video_extract_audio", { path }),
+  mergeSequences: (path, sequences) => invoke<string>("video_merge_sequences", { path, sequences }),
   openSubtitleFile: async () => {
     const r = await invoke<{ path: string; content: string } | null>("video_pick_subtitles");
     return r && { filePath: r.path, content: r.content };

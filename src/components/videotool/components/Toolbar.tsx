@@ -3,7 +3,16 @@ import type { EditorState } from "../types";
 import type { StabilizeLevel } from "../hooks/useHistory";
 import { useT } from "../i18n";
 import { getFilterById } from "../utils/filters";
-import { CubeIcon, StarIcon, SoundOnIcon, SoundOffIcon, CropIcon, SubtitleIcon } from "./icons";
+import {
+  AudioSplitIcon,
+  CubeIcon,
+  SequencesIcon,
+  StarIcon,
+  SoundOnIcon,
+  SoundOffIcon,
+  CropIcon,
+  SubtitleIcon,
+} from "./icons";
 import "./Toolbar.css";
 
 const SPEED_PRESETS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
@@ -25,6 +34,8 @@ interface Props {
   onFilterToggle: () => void;
   onGeometryToggle: () => void;
   onSubtitlesToggle: () => void;
+  onSequences: () => void;
+  onExtractAudio: () => void;
 }
 
 function Toolbar({
@@ -43,6 +54,8 @@ function Toolbar({
   onFilterToggle,
   onGeometryToggle,
   onSubtitlesToggle,
+  onSequences,
+  onExtractAudio,
 }: Props) {
   const { t, lang } = useT();
   const activeFilter = getFilterById(state.filter);
@@ -150,6 +163,11 @@ function Toolbar({
             </>
           )}
         </button>
+        {/* Separate the sound track into a file and open it in the Audio tool */}
+        <button className="tool-toggle-btn extract-audio-btn" onClick={onExtractAudio}>
+          <AudioSplitIcon />
+          {t.audio_extract}
+        </button>
       </div>
 
       <div className="tool-divider" />
@@ -198,6 +216,17 @@ function Toolbar({
           ))}
         </div>
         {state.stabilize !== "off" && <p className="trim-hint">{t.stabilize_hint}</p>}
+      </div>
+
+      <div className="tool-divider" />
+
+      {/* Split into sequences: scenes are detected, then reordered / removed and merged */}
+      <div className="tool-section">
+        <div className="tool-label">{t.tool_sequences}</div>
+        <button className="tool-toggle-btn" onClick={onSequences}>
+          <SequencesIcon />
+          {t.sequences_split}
+        </button>
       </div>
 
       <div className="tool-divider" />
