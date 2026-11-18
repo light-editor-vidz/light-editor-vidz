@@ -28,7 +28,7 @@ jobs:
     outputs:
       release_id: ${{ steps.release.outputs.release_id }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
@@ -66,7 +66,7 @@ jobs:
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, kind: linux, args: "" }
           - { os: macos-latest, target: aarch64-apple-darwin, kind: macos, args: "--target aarch64-apple-darwin" }
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
@@ -165,7 +165,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ github.repository_owner }}/homebrew-tap
           ssh-key: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
