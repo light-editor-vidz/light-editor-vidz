@@ -250,7 +250,7 @@ where
     Rgba<S>: image::Pixel<Subpixel = S>,
     S: Into<f32> + imageproc::definitions::Clamp<f32>,
 {
-    use imageproc::geometric_transformations::{rotate_about_center, Interpolation};
+    use imageproc::geometric_transformations::{rotate_about_center, Border, Interpolation};
     let (w, h) = (img.width(), img.height());
     let zero = Rgba([S::from_raw(0); 4]);
     let mut canvas = ImageBuffer::from_pixel(new_w, new_h, zero);
@@ -262,7 +262,12 @@ where
     );
     // Interpolé en alpha prémultiplié : les coins transparents (noirs) n'assombrissent pas les bords.
     premultiply(&mut canvas);
-    let mut rotated = rotate_about_center(&canvas, rad, Interpolation::Bilinear, zero);
+    let mut rotated = rotate_about_center(
+        &canvas,
+        rad,
+        Interpolation::Bilinear,
+        Border::Constant(zero),
+    );
     unpremultiply(&mut rotated);
     S::into_image(rotated)
 }

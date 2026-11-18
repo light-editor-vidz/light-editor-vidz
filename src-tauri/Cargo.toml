@@ -34,7 +34,7 @@ video-export = { path = "../crates/video-export" }
 anyhow = "1"
 # Vue Image (ex-LightCutImgz)
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff", "rayon"] }
-imageproc = { version = "0.25", default-features = false, features = ["rayon"] }
+imageproc = { version = "0.27", default-features = false, features = ["rayon"] }
 base64 = "0.23"
 rayon = "1"
 uuid = { version = "1", features = ["v4"] }
