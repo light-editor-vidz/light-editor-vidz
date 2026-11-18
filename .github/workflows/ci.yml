@@ -23,7 +23,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: ". -> target"
       - run: npm ci
+      # Les types TS sont générés depuis le modèle Rust (src/bindings, ignoré par git).
+      - run: npm run gen:types
       - run: npm run lint
       - run: npx prettier --check src .github
       - run: npx tsc --noEmit
@@ -59,7 +65,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
         working-directory: src-tauri
       # Les avertissements « unmaintained » viennent de Tauri/GTK : seules les vulnérabilités échouent.
-      - run: cargo install cargo-audit --locked --version 0.21.2 && cargo audit
+      - run: cargo install cargo-audit --locked --version 0.22.2 && cargo audit
   rust-macos:
     name: Rust tests (macOS)
     runs-on: macos-latest
