@@ -7,6 +7,7 @@ use super::open::ImageMeta;
 use super::ops::apply_step;
 use super::steps::Step;
 use crate::imgz::AppState;
+use rayon::prelude::*;
 use std::sync::Arc;
 
 // Patch de 7×7 (demi-côté 3), 200 candidats par pixel inconnu : une moitié tirée près du
@@ -65,7 +66,14 @@ pub fn inpaint_dynamic(img: &DynamicImage, mask: &MaskBox) -> Result<DynamicImag
         return Err("Mask is empty".to_string());
     }
 
-    Ok(by_depth!(fill, img, &mut unknown, iw, ih))
+    let before = unknown.iter().filter(|&&u| u).count();
+    let filled = by_depth!(fill, img, &mut unknown, iw, ih);
+    // Un masque sans aucun pixel connu à son contact ne peut rien recevoir : l'étape serait vide
+    // mais « réussie » (et empilée dans l'historique).
+    if unknown.iter().filter(|&&u| u).count() == before {
+        return Err("Nothing to fill from: the mask touches no known pixel".to_string());
+    }
+    Ok(filled)
 }
 
 /// Remplissage par exemplaires : la zone masquée est comblée avec les pixels des patchs
@@ -135,27 +143,32 @@ where
     Rgba<S>: image::Pixel<Subpixel = S>,
 {
     let mut out = rgba.clone();
-    let mut rng: u64 = 0x00c0_ffee_dead_beef;
     let Some((x0, y0, x1, y1)) = unknown_bounds(unknown, w, h) else {
         return out;
     };
     let max_passes = ((x1 - x0) + (y1 - y0)) as usize + 1;
+    // Pixels restant à remplir : suivi par un compteur, pas par un balayage de toute l'image à
+    // chaque passe (`unknown.iter().any()` coûtait width×height par passe).
+    let mut remaining = (y0..y1)
+        .map(|y| (x0..x1).filter(|&x| unknown[(y * w + x) as usize]).count())
+        .sum::<usize>();
 
     for _ in 0..max_passes {
         // Frontière : pixels inconnus ayant au moins un voisin connu. Seule la boîte du
         // masque est balayée, pas l'image entière.
-        let mut boundary: Vec<(u32, u32, u8)> = Vec::new();
-        for y in y0..y1 {
-            for x in x0..x1 {
-                if !unknown[(y * w + x) as usize] {
-                    continue;
-                }
-                let kn = known_neighbor_count(x, y, w, h, unknown);
-                if kn > 0 {
-                    boundary.push((x, y, kn));
-                }
-            }
-        }
+        let snapshot: &[bool] = unknown;
+        let mut boundary: Vec<(u32, u32, u8)> = (y0..y1)
+            .into_par_iter()
+            .flat_map_iter(|y| {
+                (x0..x1).filter_map(move |x| {
+                    if !snapshot[(y * w + x) as usize] {
+                        return None;
+                    }
+                    let kn = known_neighbor_count(x, y, w, h, snapshot);
+                    (kn > 0).then_some((x, y, kn))
+                })
+            })
+            .collect();
 
         if boundary.is_empty() {
             break;
@@ -164,27 +177,35 @@ where
         // Les plus contraints d'abord (le plus de voisins connus)
         boundary.sort_unstable_by_key(|b| std::cmp::Reverse(b.2));
 
-        for (x, y, _) in boundary {
-            let idx = (y * w + x) as usize;
-            if !unknown[idx] {
-                continue;
-            }
-
-            let px = match find_best_patch(&out, unknown, x, y, w, h, &mut rng) {
-                Some((bx, by)) => *out.get_pixel(bx, by),
-                None => avg_known_neighbors(&out, unknown, x, y, w, h).unwrap_or(Rgba([
-                    S::from_raw(0),
-                    S::from_raw(0),
-                    S::from_raw(0),
-                    S::from_raw(S::MAX),
-                ])),
-            };
-
+        // Tout le front est rempli en parallèle à partir de l'état du début de passe (germe du
+        // générateur dérivé du pixel : résultat identique quel que soit le nombre de cœurs).
+        let filled: Vec<(u32, u32, Rgba<S>)> = boundary
+            .par_iter()
+            .map(|&(x, y, _)| {
+                let mut rng = 0x00c0_ffee_dead_beef_u64
+                    ^ (u64::from(y * w + x) + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+                if rng == 0 {
+                    rng = 1;
+                }
+                let px = match find_best_patch(&out, snapshot, x, y, w, h, &mut rng) {
+                    Some((bx, by)) => *out.get_pixel(bx, by),
+                    None => avg_known_neighbors(&out, snapshot, x, y, w, h).unwrap_or(Rgba([
+                        S::from_raw(0),
+                        S::from_raw(0),
+                        S::from_raw(0),
+                        S::from_raw(S::MAX),
+                    ])),
+                };
+                (x, y, px)
+            })
+            .collect();
+        for (x, y, px) in filled {
             out.put_pixel(x, y, px);
-            unknown[idx] = false;
+            unknown[(y * w + x) as usize] = false;
+            remaining -= 1;
         }
 
-        if !unknown.iter().any(|&u| u) {
+        if remaining == 0 {
             break;
         }
     }
@@ -386,6 +407,23 @@ mod tests {
     }
 
     #[test]
+    fn the_parallel_fill_is_deterministic_and_leaves_no_hole() {
+        let (w, h) = (40u32, 40u32);
+        let base = RgbaImage::from_fn(w, h, |x, y| Rgba([(x * 6) as u8, (y * 6) as u8, 90, 255]));
+        let mut unknown = vec![false; (w * h) as usize];
+        for y in 15..25u32 {
+            for x in 12..28u32 {
+                unknown[(y * w + x) as usize] = true;
+            }
+        }
+        let (mut u1, mut u2) = (unknown.clone(), unknown);
+        let a = do_inpaint(&base, &mut u1, w, h);
+        let b = do_inpaint(&base, &mut u2, w, h);
+        assert_eq!(a.as_raw(), b.as_raw());
+        assert!(u1.iter().all(|&u| !u));
+    }
+
+    #[test]
     fn inpaint_uniform_image_fills_correctly() {
         let w = 20u32;
         let h = 20u32;
@@ -532,13 +570,14 @@ mod tests {
     }
 
     #[test]
-    fn a_fully_masked_image_still_terminates() {
-        // Aucun pixel connu : `find_best_patch` échoue partout et le repli finit le travail.
+    fn a_fully_masked_image_is_refused_instead_of_adding_an_empty_step() {
+        // Aucun pixel connu à partir duquel remplir : l'étape ne ferait rien.
         let h = Harness::with_image(gradient(6, 6));
 
-        run(&h, rect_mask(0, 0, 6, 6)).unwrap();
+        let error = run(&h, rect_mask(0, 0, 6, 6)).unwrap_err();
 
-        assert_eq!(h.history_len(), 2);
+        assert!(error.contains("known pixel"), "{error}");
+        assert_eq!(h.history_len(), 1);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { isLinkedElementId } from "../../lib/subs/linked";
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Undo2, Redo2, Maximize2, Minus, Plus, SkipBack, SkipForward, Play, Pause } from "lucide-react";
 import type { Project } from "../../bindings/Project";
@@ -85,7 +85,7 @@ function activeDurationOf(el: Element, composition: Composition): number {
   return el.duration ?? composition.duration - el.start_time;
 }
 
-export default function CanvasStage({
+function CanvasStage({
   project,
   projectDir,
   composition,
@@ -168,6 +168,10 @@ export default function CanvasStage({
     setMarquee(current);
 
     function onMove(ev: PointerEvent) {
+      if (ev.buttons === 0) {
+        onUp();
+        return;
+      }
       const r = stageRef.current?.getBoundingClientRect();
       if (!r) return;
       const x = ((ev.clientX - r.left) / r.width) * 100;
@@ -184,6 +188,7 @@ export default function CanvasStage({
     function onUp() {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
       setMarquee(null);
       if (current.width < 0.5 && current.height < 0.5) {
         if (!additive) onSelectElement(null, false);
@@ -204,6 +209,7 @@ export default function CanvasStage({
 
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   }
 
   return (
@@ -476,7 +482,7 @@ function SceneLayer({
             selected={selectedIds.includes(el.id)}
             accentColor={ACCENT_BY_TYPE[el.type]}
             stageRef={stageRef}
-            siblings={geometries.filter((_, i) => i !== index)}
+            siblings={() => geometries.filter((_, i) => i !== index)}
             blendMode={el.blend_mode ?? undefined}
             onSelect={(additive) => onSelectElement(el.id, additive)}
             onChange={(patch) => onUpdateElement(el.id, patch)}
@@ -489,3 +495,5 @@ function SceneLayer({
     </div>
   );
 }
+
+export default memo(CanvasStage);

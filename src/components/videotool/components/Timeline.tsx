@@ -3,6 +3,7 @@ import type { TrimSegment } from "../types";
 import { formatTime, parseTimeInput } from "../utils/time";
 import { mergeSegments } from "../utils/timeline";
 import { useT } from "../i18n";
+import { useTabActive } from "../../../lib/menuBridge";
 import FilmStrip from "./FilmStrip";
 import CutEditor from "./CutEditor";
 import "./Timeline.css";
@@ -225,11 +226,14 @@ function Timeline({
     [cutSegments, duration, onCutSegmentsChange],
   );
 
-  // Delete / Backspace removes the selected cut, unless a text field is focused.
+  // Delete / Backspace removes the selected cut, unless a text field is focused, this tab is
+  // hidden (tabs stay mounted) or a modal is open on top.
+  const tabActive = useTabActive();
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId || !tabActive) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (document.querySelector('.modal-backdrop, [aria-modal="true"]')) return;
       const el = e.target as HTMLElement | null;
       if (
         el &&
@@ -242,7 +246,7 @@ function Timeline({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedId, cutSegments, onCutSegmentsChange]);
+  }, [selectedId, tabActive, cutSegments, onCutSegmentsChange]);
 
   const playheadPct = timeToPercent(currentTime);
 

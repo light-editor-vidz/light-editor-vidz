@@ -93,7 +93,8 @@
     "openFile": "Ouvrir un fichier…",
     "openProjectFolder": "Ouvrir un dossier de projet…",
     "closeTab": "Fermer l'onglet",
-    "gridSize": "Taille de la grille"
+    "gridSize": "Taille de la grille",
+    "fpsShort": "{{fps}} i/s"
   },
   "update": {
     "checkForUpdates": "Rechercher une mise à jour",
@@ -195,6 +196,12 @@
     "fontSizeAutoToggle": "Taille automatique adaptée à la boîte de texte (cliquer pour passer à une taille fixe)",
     "color": "Couleur",
     "position": "Position",
+    "widthShort": "L",
+    "heightShort": "H",
+    "width": "Largeur",
+    "height": "Hauteur",
+    "underline": "Souligné",
+    "strikethrough": "Barré",
     "animation": "Animations",
     "fit": "Ajustement",
     "kenBurns": "Ken Burns",
@@ -340,7 +347,10 @@
       "top": "Haut",
       "middle": "Milieu",
       "bottom": "Bas"
-    }
+    },
+    "bold": "Gras",
+    "italic": "Italique",
+    "strokeToggle": "Activer le contour"
   },
   "canvas": {
     "videoDecodeError": "Cette vidéo ne peut pas être lue (format/codec non supporté)",
@@ -402,7 +412,8 @@
     "qualityMedium": "Moyenne",
     "qualityLow": "Basse",
     "confirm": "Exporter",
-    "outputSize": "Sortie : {{width}} × {{height}}"
+    "outputSize": "Sortie : {{width}} × {{height}}",
+    "wav32f": "WAV 32 bits flottant"
   },
   "common": {
     "back": "Retour",
@@ -433,9 +444,11 @@
   },
   "editor": {
     "saveFailed": "Enregistrement impossible : {{error}}",
+    "sceneHidesElements": "{{count}} élément(s) commencent après la fin de cette scène et ne sont plus visibles.",
     "retry": "Réessayer",
     "legacyMissingMedia": "{{count}} média(s) du projet importé sont introuvables (chemins absolus) : ré-importez-les depuis la bibliothèque.",
     "legacyImportFailed": "Import impossible : {{error}}",
+    "recoveredFromBackup": "Le fichier du projet était illisible : la version précédente (sauvegarde) a été ouverte. Le fichier abîmé est conservé sous le nom project.json.corrupt.",
     "openFailed": "Ouverture impossible : {{error}}",
     "legacyPickTitle": "Choisir le JSON de l'ancien projet"
   },
@@ -453,6 +466,8 @@
     "downloadFailed": "Téléchargement impossible : {{detail}}",
     "writeExport": "Écriture de la vidéo exportée impossible : {{detail}}",
     "copyFile": "Copie du fichier impossible : {{detail}}",
+    "pathNotApproved": "« {{detail}} » n’a pas été choisi avec le sélecteur de fichiers ni déposé sur la fenêtre",
+    "hostNotAllowed": "Téléchargement refusé : cet hôte n’est pas autorisé ({{detail}})",
     "apiKeyMissing": "Aucune clé d'API n'est enregistrée pour ce service.",
     "azureRegionMissing": "Saisissez la région de votre ressource Azure Translator.",
     "cancelled": "Annulé.",
@@ -474,6 +489,8 @@
     "tagline": "Composez des scènes avec vidéo, texte, images, son et formes, puis exportez-les en MP4."
   },
   "audioTool": {
+    "overwriteConfirm": "{{name}} existe déjà. Le remplacer ?",
+    "closeConfirm": "Ce son a des modifications non exportées. Le fermer quand même ?",
     "header": {
       "openOther": "Ouvrir un autre fichier",
       "open": "Ouvrir un fichier audio",
@@ -508,7 +525,8 @@
       "delete": "Supprimer la coupe",
       "resize": "Glisser pour redimensionner",
       "count_one": "{{count}} coupe",
-      "count_other": "{{count}} coupes"
+      "count_other": "{{count}} coupes",
+      "timeFormat": "M:SS.d"
     },
     "fade": {
       "title": "Fondu",
@@ -557,7 +575,9 @@
       "loading": "Chargement…",
       "error": "Erreur : {{error}}",
       "unreachable": "Impossible d'accéder au fichier ({{status}})",
-      "previewUnavailable": "Aperçu indisponible pour ce format ; l'export fonctionne."
+      "previewUnavailable": "Aperçu indisponible pour ce format ; l'export fonctionne.",
+      "previewPreparing": "Préparation de l'aperçu…",
+      "previewTooLong": "Fichier trop long pour l'aperçu ; l'export fonctionne."
     },
     "badge": {
       "meta": "{{channels}} can. · {{rate}} Hz · {{duration}}"
@@ -900,7 +920,17 @@
       "too-large": "L’image obtenue serait trop grande (30 000 px par côté et 200 Mpx au maximum).",
       "mask-empty": "Peignez d’abord la zone à supprimer.",
       "zero-size": "La largeur et la hauteur doivent valoir au moins 1 px.",
-      "canvas-smaller": "Le canevas ne peut pas être plus petit que l’image."
+      "canvas-smaller": "Le canevas ne peut pas être plus petit que l’image.",
+      "mask-invalid": "La sélection est invalide. Peignez de nouveau la zone.",
+      "mask-fit": "La sélection ne tient pas dans l’image.",
+      "nothing-to-fill": "Rien à utiliser pour remplir : la sélection ne touche aucun pixel exploitable.",
+      "decode-too-large": "Cette image est trop grande pour être ouverte.",
+      "bad-angle": "Angle de rotation invalide.",
+      "history-range": "Cette étape de l’historique n’est plus disponible.",
+      "history-changed": "L’image a changé pendant l’opération. Réessayez.",
+      "undo-failed": "L’étape de l’historique n’a pas pu être restaurée.",
+      "bad-option": "Option non prise en charge pour cette opération.",
+      "unsupported-format": "Ce format d’image n’est pas pris en charge."
     },
     "open": {
       "failed": "{{n}} fichier(s) n’ont pas pu être ouverts : {{list}}"
@@ -948,7 +978,11 @@
       "clear": "Effacer",
       "cancel": "Annuler",
       "save": "Enregistrer"
-    }
+    },
+    "update": {
+      "dismiss": "Fermer"
+    },
+    "untitled": "Image"
   },
   "subs": {
     "title": "Générer des sous-titres",
@@ -977,6 +1011,7 @@
     "addToProject": "Ajouter au projet en éléments texte",
     "saveFile": "Enregistrer dans un fichier",
     "format": "Format",
+    "vadUnavailable": "La détection de la parole était indisponible : la transcription a été faite sans elle et peut être moins précise.",
     "fileFilter": "Sous-titres",
     "apply": "Appliquer",
     "menu": "Générer des sous-titres…",
@@ -1081,6 +1116,7 @@
     }
   },
   "quit": {
+    "saveFailed": "La fenêtre reste ouverte : un travail n'a pas pu être enregistré. Vérifiez l'erreur dans les onglets ouverts.",
     "title": "Travail en cours",
     "busy": "Quitter maintenant arrêtera :\n{{list}}",
     "confirm": "Quitter quand même",

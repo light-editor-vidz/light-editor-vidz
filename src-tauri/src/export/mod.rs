@@ -6,10 +6,11 @@ use ffmpeg::{
     EncoderSpec, VideoEncoder,
 };
 use scene_core::model::{Element, Project};
-use scene_core::raster::FrameRenderer;
+use scene_core::raster::{FrameRenderer, SharedVideos};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Message d'erreur renvoyé quand l'export est annulé par l'utilisateur (le frontend le
@@ -111,6 +112,10 @@ fn collect_audio_inputs(
     missing: &mut Vec<String>,
 ) -> Vec<AudioMixInput> {
     let mut inputs = collect_project_audio_inputs(project, project_dir, missing);
+    // Un même clip posé plusieurs fois (copies, scènes coupées) n'est sondé qu'une fois : chaque
+    // sonde lançait un processus ffprobe.
+    let mut has_audio: std::collections::HashMap<PathBuf, bool> = Default::default();
+    let mut durations: std::collections::HashMap<PathBuf, Option<f64>> = Default::default();
     for composition in &project.compositions {
         for el in &composition.elements {
             let Element::Video(video_el) = el else {
@@ -124,7 +129,10 @@ fn collect_audio_inputs(
                 // Le renderer signale déjà la source vidéo manquante ; rien à mixer ici.
                 continue;
             };
-            if !has_audio_stream(&source_path) {
+            if !*has_audio
+                .entry(source_path.clone())
+                .or_insert_with(|| has_audio_stream(&source_path))
+            {
                 continue;
             }
             let base = el.base();
@@ -143,7 +151,11 @@ fn collect_audio_inputs(
             };
             let source_duration = video_el
                 .loop_video
-                .then(|| media_duration(&source_path))
+                .then(|| {
+                    *durations
+                        .entry(source_path.clone())
+                        .or_insert_with(|| media_duration(&source_path))
+                })
                 .flatten();
             inputs.push(AudioMixInput {
                 path: source_path,
@@ -163,6 +175,10 @@ fn collect_audio_inputs(
     }
     inputs
 }
+
+/// Limites d'un export : 8K de côté, 240 images par seconde.
+const MAX_EXPORT_SIDE: u32 = 8192;
+const MAX_EXPORT_FPS: u32 = 240;
 
 /// Nombre de rendus parallèles : un par cœur, borné, et limité par la mémoire que représentent
 /// les frames en attente (2 par rendu).
@@ -188,8 +204,10 @@ fn render_worker(
     sender: SyncSender<Vec<u8>>,
     stop: &AtomicBool,
     cancel: &AtomicBool,
+    videos: Arc<SharedVideos>,
 ) -> Vec<String> {
-    let mut renderer = FrameRenderer::new();
+    // Les vidéos sont décodées une seule fois pour tous les workers (frames partagées).
+    let mut renderer = FrameRenderer::with_shared_videos(videos);
     let fps = project.fps as f64;
     let mut idx = first;
     while idx < total_frames && !stop.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
@@ -215,6 +233,7 @@ fn render_and_encode(
 ) -> Result<(), String> {
     let workers = render_worker_count(total_frames, render_project.width, render_project.height);
     let stop = AtomicBool::new(false);
+    let videos = Arc::new(SharedVideos::default());
     let result = std::thread::scope(|scope| -> Result<(), String> {
         let mut receivers = Vec::with_capacity(workers);
         let mut handles = Vec::with_capacity(workers);
@@ -222,6 +241,7 @@ fn render_and_encode(
             let (sender, receiver) = sync_channel::<Vec<u8>>(1);
             receivers.push(receiver);
             let stop = &stop;
+            let videos = videos.clone();
             handles.push(scope.spawn(move || {
                 render_worker(
                     render_project,
@@ -232,6 +252,7 @@ fn render_and_encode(
                     sender,
                     stop,
                     cancel,
+                    videos,
                 )
             }));
         }
@@ -255,7 +276,8 @@ fn render_and_encode(
                 break;
             }
             if last_progress.elapsed() >= PROGRESS_INTERVAL || frame + 1 == total_frames {
-                on_progress((frame + 1) as f32 / total_frames as f32);
+                // 100 % seulement quand le fichier est complet (finalisation `+faststart` encore à faire).
+                on_progress(((frame + 1) as f32 / total_frames as f32).min(0.99));
                 last_progress = Instant::now();
             }
         }
@@ -280,7 +302,7 @@ fn render_and_encode(
         outcome
     });
     result?;
-    encoder.finish()
+    encoder.finish_unless(|| cancel.load(Ordering::Relaxed))
 }
 
 /// Fichier temporaire à côté de la sortie : le fichier final n'apparaît que complet.
@@ -312,6 +334,13 @@ pub fn export_video(
     let width = overrides.width.unwrap_or(project.width).max(2) & !1;
     let height = overrides.height.unwrap_or(project.height).max(2) & !1;
     let fps = overrides.fps.unwrap_or(project.fps).max(1);
+    // Des valeurs absurdes (envoyées par un client, ou un projet corrompu) donneraient un export
+    // interminable, ou un `Pixmap::new(...).expect` qui panique.
+    if width > MAX_EXPORT_SIDE || height > MAX_EXPORT_SIDE || fps > MAX_EXPORT_FPS {
+        return Err(format!(
+            "Export size {width}×{height} at {fps} fps is beyond the supported maximum ({MAX_EXPORT_SIDE} px per side, {MAX_EXPORT_FPS} fps)."
+        ));
+    }
     // Le renderer lit `project.width/height/fps` directement (coordonnées en %) ; on rend
     // donc à la résolution/fps demandés en substituant temporairement ces champs, sans
     // toucher au reste du modèle (project_dir, sources, etc. restent identiques).
@@ -327,6 +356,7 @@ pub fn export_video(
     let mut missing = Vec::new();
     let audio_inputs = collect_audio_inputs(project, project_dir, &mut missing);
     let partial = partial_output_path(output_path);
+    let _tracked = crate::commands::partials::track(&partial);
     let encoder = VideoEncoder::start(&EncoderSpec {
         width,
         height,
@@ -349,7 +379,8 @@ pub fn export_video(
     .and_then(|()| {
         std::fs::rename(&partial, output_path)
             .map_err(|e| format!("Failed to write the exported video: {e}"))
-    });
+    })
+    .inspect(|()| on_progress(1.0));
     if result.is_err() {
         let _ = std::fs::remove_file(&partial);
     }
@@ -378,6 +409,7 @@ pub fn export_audio(
         return Err("The project has no audio to export.".to_string());
     }
     let partial = partial_output_path(output_path);
+    let _tracked = crate::commands::partials::track(&partial);
     let result = run_audio_export(
         &AudioExportSpec {
             audio: &audio_inputs,
@@ -636,6 +668,49 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn absurd_overrides_are_refused_instead_of_exporting_forever_or_panicking() {
+        let project = Project {
+            name: "Absurd".into(),
+            width: 160,
+            height: 90,
+            fps: 10,
+            duration: 0.5,
+            compositions: vec![Composition {
+                id: "c1".into(),
+                name: "Scene 1".into(),
+                start_time: 0.0,
+                duration: 0.5,
+                elements: vec![],
+                transition_in: None,
+                transition_out: None,
+                overlap_next: 0.0,
+            }],
+            audio_tracks: vec![],
+        };
+        let dir = std::env::temp_dir();
+        let out = dir.join("lev_never_written.mp4");
+        for overrides in [
+            ExportOverrides {
+                width: Some(1_000_000),
+                ..Default::default()
+            },
+            ExportOverrides {
+                height: Some(u32::MAX),
+                ..Default::default()
+            },
+            ExportOverrides {
+                fps: Some(100_000),
+                ..Default::default()
+            },
+        ] {
+            let cancel = AtomicBool::new(false);
+            let result = export_video(&project, &dir, &out, overrides, &cancel, |_| {});
+            assert!(result.is_err());
+        }
+        assert!(!out.exists());
     }
 
     #[test]

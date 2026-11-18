@@ -14,7 +14,11 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve([])) }));
 const ask = vi.fn();
-vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: (...args: unknown[]) => ask(...args) }));
+const message = vi.fn((..._args: unknown[]) => Promise.resolve());
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  ask: (...args: unknown[]) => ask(...args),
+  message: (...args: unknown[]) => message(...args),
+}));
 
 import { installCloseGuard } from "./closeGuard";
 import { registerBeforeExit } from "./lifecycle";
@@ -75,5 +79,14 @@ describe("installCloseGuard", () => {
     done();
     expect(task).toHaveBeenCalled();
     expect(destroy).toHaveBeenCalled();
+  });
+
+  it("explique pourquoi la fenêtre reste ouverte quand l'enregistrement échoue", async () => {
+    await installCloseGuard();
+    const off = registerBeforeExit(async () => false);
+    await requestClose();
+    off();
+    expect(destroy).not.toHaveBeenCalled();
+    expect(message).toHaveBeenCalledTimes(1);
   });
 });

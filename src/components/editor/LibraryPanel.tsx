@@ -1,9 +1,8 @@
 import { listen } from "@tauri-apps/api/event";
 import "../subtitles/subtitles.css";
 import { describeError } from "../../lib/errors";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { open } from "@tauri-apps/plugin-dialog";
 import {
   Search,
   Upload,
@@ -29,6 +28,7 @@ import { STYLE_PRESETS, type TextStylePreset } from "../../lib/elements";
 import {
   deleteAsset,
   importAsset,
+  pickAssetSource,
   importStockAsset,
   listAssets,
   searchStockAssets,
@@ -44,6 +44,8 @@ interface Props {
   projectDir: string;
   /** Projet édité : sert à refuser la suppression d'un média encore utilisé. */
   project: Project;
+  /** États d'annulation/rétablissement : Ctrl+Z restaurerait un élément dont le média a disparu. */
+  historyProjects?: Project[];
   onAddTitle: () => void;
   onAddSubtitle: () => void;
   onAddStyledText: (preset: TextStylePreset) => void;
@@ -412,6 +414,7 @@ function MediaLibrary({
   kind,
   projectDir,
   project,
+  historyProjects = [],
   onAdd,
   search,
   onOpenSettings,
@@ -419,6 +422,7 @@ function MediaLibrary({
   kind: AssetKind;
   projectDir: string;
   project: Project;
+  historyProjects?: Project[];
   onAdd: (relativeSrc: string, name: string, subtitlesOn?: boolean) => void;
   search: string;
   onOpenSettings: () => void;
@@ -472,14 +476,8 @@ function MediaLibrary({
 
   async function handleImport() {
     setError(null);
-    const filters =
-      kind === "image"
-        ? [{ name: t("library.filterImages"), extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"] }]
-        : kind === "video"
-          ? [{ name: t("library.filterVideos"), extensions: ["mp4", "m4v", "webm", "mov", "mkv", "avi"] }]
-          : [{ name: t("library.filterAudio"), extensions: ["mp3", "wav", "ogg", "m4a", "aac", "flac", "opus"] }];
-    const path = await open({ multiple: false, filters });
-    if (!path || Array.isArray(path)) return;
+    const path = await pickAssetSource(kind);
+    if (!path) return;
     try {
       const relativeSrc = await importAsset(projectDir, kind, path);
       refresh();
@@ -494,7 +492,7 @@ function MediaLibrary({
   /** Supprime un média de la bibliothèque, sauf s'il est encore utilisé par le projet. */
   async function handleDelete(asset: AssetInfo) {
     setError(null);
-    if (isAssetInUse(project, asset.relative_path)) {
+    if ([project, ...historyProjects].some((p) => isAssetInUse(p, asset.relative_path))) {
       setError(t("library.assetInUse", { name: asset.filename }));
       return;
     }
@@ -605,10 +603,11 @@ function ShapeLibrary({ onAddShape, search }: { onAddShape: (shapeType: ShapeTyp
   );
 }
 
-export default function LibraryPanel({
+function LibraryPanel({
   active,
   projectDir,
   project,
+  historyProjects,
   onAddTitle,
   onAddSubtitle,
   onAddStyledText,
@@ -651,6 +650,7 @@ export default function LibraryPanel({
             kind="video"
             projectDir={projectDir}
             project={project}
+            historyProjects={historyProjects}
             onAdd={onAddVideo}
             search={search}
             onOpenSettings={onOpenSettings}
@@ -661,6 +661,7 @@ export default function LibraryPanel({
             kind="image"
             projectDir={projectDir}
             project={project}
+            historyProjects={historyProjects}
             onAdd={onAddImage}
             search={search}
             onOpenSettings={onOpenSettings}
@@ -671,6 +672,7 @@ export default function LibraryPanel({
             kind="audio"
             projectDir={projectDir}
             project={project}
+            historyProjects={historyProjects}
             onAdd={onAddAudio}
             search={search}
             onOpenSettings={onOpenSettings}
@@ -681,3 +683,30 @@ export default function LibraryPanel({
     </aside>
   );
 }
+
+/** Médias référencés par le projet (clé de comparaison, mise en cache par objet projet). */
+const usedSrcKeys = new WeakMap<Project, string>();
+function usedSrcKey(project: Project): string {
+  let key = usedSrcKeys.get(project);
+  if (key === undefined) {
+    const srcs = new Set<string>(project.audio_tracks.map((track) => track.src));
+    for (const comp of project.compositions) {
+      for (const el of comp.elements) if (el.type === "image" || el.type === "video") srcs.add(el.src);
+    }
+    key = JSON.stringify([...srcs].sort());
+    usedSrcKeys.set(project, key);
+  }
+  return key;
+}
+
+/** Le projet n'y sert qu'à savoir si un média est utilisé : un drag (nouvel objet projet à chaque
+ * image) ne doit pas re-rendre la médiathèque. */
+function libraryPropsEqual(prev: Props, next: Props): boolean {
+  for (const k of Object.keys(next) as (keyof Props)[]) {
+    if (k === "project") continue;
+    if (prev[k] !== next[k]) return false;
+  }
+  return prev.project === next.project || usedSrcKey(prev.project) === usedSrcKey(next.project);
+}
+
+export default memo(LibraryPanel, libraryPropsEqual);

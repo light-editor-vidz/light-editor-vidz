@@ -12,8 +12,8 @@ use crate::subz::pipeline::translate::languages::LANGUAGES;
 use crate::subz::pipeline::{self, TranslationOutput};
 
 #[tauri::command]
-pub fn cancel_pipeline() {
-    cancel::request();
+pub fn cancel_pipeline(operation_id: Option<String>) {
+    cancel::request_for(operation_id.as_deref());
 }
 
 /// The extension a subtitle `format` is saved with. Anything unknown is SRT.

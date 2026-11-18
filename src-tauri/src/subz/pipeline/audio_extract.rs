@@ -226,9 +226,18 @@ pub fn plan_chunks(total: f64, chunk: f64, silences: &[(f64, f64)]) -> Vec<(f64,
         chunks.push((start, cut - start));
         start = cut;
     }
-    chunks.push((start, total - start));
+    let tail = total - start;
+    match chunks.last_mut() {
+        // A tail under the provider's minimum (0.1 s) is rejected with an error that fails the
+        // whole transcription: it joins the previous slice instead.
+        Some(last) if tail < MIN_CHUNK_SECS => last.1 += tail,
+        _ => chunks.push((start, tail)),
+    }
     chunks
 }
+
+/// Shortest slice the cloud providers accept.
+const MIN_CHUNK_SECS: f64 = 0.5;
 
 /// The `(start, end)` of every silence ffmpeg's `silencedetect` reported.
 pub fn parse_silences(log: &str) -> Vec<(f64, f64)> {
@@ -250,23 +259,72 @@ pub fn parse_silences(log: &str) -> Vec<(f64, f64)> {
     silences
 }
 
-/// Pauses of `audio`, used to cut long recordings between two words.
-pub fn find_silences(audio: &Path) -> Vec<(f64, f64)> {
-    let output = Command::new(ffmpeg_path())
+/// Runs a command and captures its output, polling so that a cancellation kills it (silence
+/// detection reads the whole file: minutes on a long recording).
+fn output_cancellable(mut command: Command) -> std::io::Result<Result<std::process::Output>> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut bytes);
+            }
+            bytes
+        })
+    };
+    let out = drain(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let err = drain(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let status = loop {
+        if cancel::is_cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = (out.join(), err.join());
+            return Ok(Err(cancel::check().unwrap_err()));
+        }
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    Ok(Ok(std::process::Output {
+        status,
+        stdout: out.join().unwrap_or_default(),
+        stderr: err.join().unwrap_or_default(),
+    }))
+}
+
+/// Pauses of `audio`, used to cut long recordings between two words. A cancellation is an
+/// error; any other failure just means "no known pause".
+pub fn find_silences(audio: &Path) -> Result<Vec<(f64, f64)>> {
+    let mut command = Command::new(ffmpeg_path());
+    command
         .args(["-nostdin", "-hide_banner", "-nostats", "-i"])
         .arg(input_arg(audio))
-        .args(["-af", "silencedetect=noise=-35dB:d=0.4", "-f", "null", "-"])
-        .stdin(Stdio::null())
-        .output();
-    output.map_or_else(
-        |_| Vec::new(),
-        |o| parse_silences(&String::from_utf8_lossy(&o.stderr)),
-    )
+        .args(["-af", "silencedetect=noise=-35dB:d=0.4", "-f", "null", "-"]);
+    match output_cancellable(command) {
+        Ok(output) => Ok(parse_silences(&String::from_utf8_lossy(&output?.stderr))),
+        Err(_) => Ok(Vec::new()),
+    }
 }
 
 /// Duration of any media file in seconds, read by ffprobe.
 pub fn media_duration_secs(path: &Path) -> Result<f64> {
-    let output = Command::new(ffprobe_path())
+    let mut command = Command::new(ffprobe_path());
+    command
         .args([
             "-v",
             "error",
@@ -275,19 +333,17 @@ pub fn media_duration_secs(path: &Path) -> Result<f64> {
             "-of",
             "csv=p=0",
         ])
-        .arg(input_arg(path))
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                coded(
-                    "ffmpeg_missing",
-                    "ffprobe was not found — install ffmpeg and make sure it is on the PATH",
-                )
-            } else {
-                anyhow::Error::new(e).context("failed to launch ffprobe")
-            }
-        })?;
+        .arg(input_arg(path));
+    let output = output_cancellable(command).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            coded(
+                "ffmpeg_missing",
+                "ffprobe was not found — install ffmpeg and make sure it is on the PATH",
+            )
+        } else {
+            anyhow::Error::new(e).context("failed to launch ffprobe")
+        }
+    })??;
     String::from_utf8_lossy(&output.stdout)
         .trim()
         .parse::<f64>()
@@ -423,6 +479,17 @@ mod tests {
         args.into_iter()
             .map(|a| a.to_string_lossy().to_string())
             .collect()
+    }
+
+    #[test]
+    fn a_tiny_tail_joins_the_previous_chunk_instead_of_being_sent_alone() {
+        let chunks = plan_chunks(600.05, 300.0, &[]);
+        assert_eq!(chunks.len(), 2);
+        assert!(
+            (chunks[1].0 + chunks[1].1 - 600.05).abs() < 1e-9,
+            "{chunks:?}"
+        );
+        assert!(chunks.iter().all(|(_, len)| *len >= MIN_CHUNK_SECS));
     }
 
     #[test]

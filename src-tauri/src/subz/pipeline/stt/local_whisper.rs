@@ -33,6 +33,27 @@ pub struct LocalWhisperEngine {
 }
 
 impl LocalWhisperEngine {
+    fn detect_language(
+        &self,
+        state: &mut whisper_rs::WhisperState,
+        source: &mut WavSource,
+        blocks: &[(f64, f64)],
+    ) -> Option<String> {
+        let mut pcm: Vec<f32> = Vec::new();
+        for (from, to) in language_sample_ranges(blocks, LANGUAGE_SAMPLE_SECS) {
+            let first = (from * SAMPLE_RATE as f64) as usize;
+            let last = ((to * SAMPLE_RATE as f64) as usize).min(source.len());
+            pcm.extend(source.read(first, last).ok()?);
+        }
+        if (pcm.len() as f64) < MIN_LANGUAGE_BLOCK_SECS * SAMPLE_RATE as f64 {
+            return None;
+        }
+        let threads = thread_count() as usize;
+        state.pcm_to_mel(&pcm, threads).ok()?;
+        let (id, _) = state.lang_detect(0, threads).ok()?;
+        whisper_rs::get_lang_str(id).map(str::to_string)
+    }
+
     pub fn new(model_path: impl Into<PathBuf>) -> Self {
         Self {
             model_path: model_path.into(),
@@ -172,6 +193,48 @@ pub fn words_from_tokens(
         .collect()
 }
 
+/// Longest stretch of audio read and transcribed in one go.
+const MAX_HELD_SECS: f64 = 120.0;
+
+/// Cuts every block longer than `max` into equal pieces of at most `max` seconds.
+pub fn split_long_blocks(blocks: Vec<(f64, f64)>, max: f64) -> Vec<(f64, f64)> {
+    blocks
+        .into_iter()
+        .flat_map(|(from, to)| {
+            let pieces = ((to - from) / max).ceil().max(1.0) as usize;
+            let step = (to - from) / pieces as f64;
+            (0..pieces).map(move |i| (from + step * i as f64, from + step * (i + 1) as f64))
+        })
+        .collect()
+}
+
+/// Shortest block (seconds of speech) whose detected language is trusted for the whole file.
+const MIN_LANGUAGE_BLOCK_SECS: f64 = 5.0;
+
+/// Speech used to detect the language: whisper looks at 30 s at most.
+const LANGUAGE_SAMPLE_SECS: f64 = 30.0;
+
+/// The beginning of the blocks, concatenated, up to `max_secs` of speech in all.
+fn language_sample_ranges(blocks: &[(f64, f64)], max_secs: f64) -> Vec<(f64, f64)> {
+    let mut left = max_secs;
+    let mut out = Vec::new();
+    for &(from, to) in blocks {
+        if left <= 0.0 {
+            break;
+        }
+        let take = (to - from).min(left);
+        if take > 0.0 {
+            out.push((from, from + take));
+            left -= take;
+        }
+    }
+    out
+}
+
+fn can_decide_language(block_secs: f64) -> bool {
+    block_secs >= MIN_LANGUAGE_BLOCK_SECS
+}
+
 /// Groups the speech the VAD found (seconds) into blocks to transcribe: speech closer than
 /// [`BLOCK_GAP_SECS`] goes together, up to [`MAX_BLOCK_SECS`], and every block gets a small
 /// margin that never reaches into the neighbouring block.
@@ -309,6 +372,9 @@ impl SttEngine for LocalWhisperEngine {
             },
             None => vec![(0.0, total_secs)],
         };
+        // Never more than a couple of minutes of audio in memory at once (the whole recording as
+        // floats is 460 MB for two hours), whatever the VAD found or did not find.
+        let blocks = split_long_blocks(blocks, MAX_HELD_SECS);
         let work: f64 = blocks
             .iter()
             .map(|(a, b)| b - a)
@@ -321,9 +387,14 @@ impl SttEngine for LocalWhisperEngine {
             .context("failed to create whisper state")?;
         let progress: Progress = Arc::new(Mutex::new(on_progress));
 
-        // Detected on the first block, then kept: the language must not flip between
-        // blocks on a bit of music.
+        // Detected on the first block long enough to tell (a 0.1 s jingle or an "OK!" would
+        // decide wrongly), then kept: the language must not flip between blocks on a bit of music.
         let mut language = self.language.clone();
+        if language.is_none() {
+            // On about 30 s of speech put end to end, not on the first block (a jingle, an "OK!").
+            language = self.detect_language(&mut state, &mut source, &blocks);
+        }
+        let mut last_detected: Option<String> = None;
         let mut segments = Vec::new();
         let mut done = 0.0;
         for &(from, to) in &blocks {
@@ -364,10 +435,15 @@ impl SttEngine for LocalWhisperEngine {
             let offset_cs = (from * 100.0).round() as i64;
             segments.extend(self.read_segments(&state, offset_cs)?);
             if language.is_none() {
-                language =
+                last_detected =
                     whisper_rs::get_lang_str(state.full_lang_id_from_state()).map(str::to_string);
+                if can_decide_language(to - from) {
+                    language = last_detected.clone();
+                }
             }
         }
+        // Only short blocks in the whole file: the last detection is the best there is.
+        let language = language.or(last_detected);
         let mut report = progress.lock().unwrap_or_else(|p| p.into_inner());
         report(1.0);
 
@@ -466,6 +542,14 @@ fn read_wav_mono_f32(path: &Path) -> Result<Vec<f32>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_language_sample_concatenates_blocks_up_to_the_limit() {
+        let blocks = [(0.0, 10.0), (20.0, 45.0), (50.0, 60.0)];
+        let r = language_sample_ranges(&blocks, 30.0);
+        assert_eq!(r, vec![(0.0, 10.0), (20.0, 40.0)]);
+        assert!(language_sample_ranges(&[], 30.0).is_empty());
+    }
+
     use super::*;
 
     /// Writes a WAV with the requested spec and returns its path (the temporary folder is
@@ -494,6 +578,26 @@ mod tests {
         }
         writer.finalize().unwrap();
         (dir, path)
+    }
+
+    #[test]
+    fn long_blocks_are_cut_so_the_audio_held_in_memory_stays_bounded() {
+        let blocks = split_long_blocks(vec![(0.0, 7200.0), (7300.0, 7310.0)], 120.0);
+        assert!(blocks.iter().all(|(a, b)| b - a <= 120.0 + 1e-9));
+        assert_eq!(blocks.len(), 60 + 1);
+        // Aucune seconde perdue ni dupliquée.
+        assert_eq!(blocks.first().unwrap().0, 0.0);
+        assert!((blocks[59].1 - 7200.0).abs() < 1e-6);
+        assert_eq!(blocks[60], (7300.0, 7310.0));
+        assert_eq!(split_long_blocks(vec![(1.0, 2.0)], 120.0), vec![(1.0, 2.0)]);
+    }
+
+    #[test]
+    fn a_short_jingle_does_not_decide_the_language_of_the_whole_file() {
+        assert!(!can_decide_language(0.1));
+        assert!(!can_decide_language(4.9));
+        assert!(can_decide_language(5.0));
+        assert!(can_decide_language(28.0));
     }
 
     #[test]

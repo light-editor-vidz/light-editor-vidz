@@ -1,6 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { useClockValue, type PlaybackClock } from "../../lib/playbackClock";
+import type { PlaybackClock } from "../../lib/playbackClock";
 import {
   MIN_CUT,
   fmtPrecise,
@@ -85,15 +93,17 @@ export default function CutTimeline({
     return () => observer.disconnect();
   }, []);
 
-  const virtual = useClockValue(clock, (time) => time);
-  const playheadX = duration > 0 ? (virtualToReal(virtual, kept) / duration) * size.w : 0;
+  const colors = useRef<{ at: number; bg: string; on: string } | null>(null);
 
   // Les barres ne changent qu'avec le fichier, la taille ou le thème : elles sont dessinées une
   // fois dans une couche hors écran ; chaque image ne coûte alors qu'un `drawImage` et la tête de
   // lecture.
-  useEffect(() => {
+  // La tête de lecture suit l'horloge sans re-rendre le composant : l'abonnement redessine
+  // directement le canvas (un `setState` par image refaisait tout le rendu, coupes comprises).
+  const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || !size.w || !size.h || !waveform.length) return;
+    const playheadX = duration > 0 ? (virtualToReal(clock.get(), kept) / duration) * size.w : 0;
     const dpr = window.devicePixelRatio || 1;
     const pw = Math.round(size.w * dpr);
     const ph = Math.round(size.h * dpr);
@@ -101,8 +111,13 @@ export default function CutTimeline({
       canvas.width = pw;
       canvas.height = ph;
     }
-    const bg = cssVar("--bg-card", "#2a2a2a");
-    const on = cssVar("--accent", "#5c86ff");
+    // `getComputedStyle` à chaque image coûte une résolution de style : les couleurs sont relues au
+    // plus une fois par seconde (un changement de thème est vu dans ce délai).
+    const now = performance.now();
+    if (!colors.current || now - colors.current.at > 1000) {
+      colors.current = { at: now, bg: cssVar("--bg-card", "#2a2a2a"), on: cssVar("--accent", "#5c86ff") };
+    }
+    const { bg, on } = colors.current;
     const key = [waveform.length, waveform[0], waveform[waveform.length - 1], pw, ph, bg, on].join("|");
     if (!layerRef.current || layerRef.current.key !== key) {
       const layer = layerRef.current?.canvas ?? document.createElement("canvas");
@@ -137,7 +152,11 @@ export default function CutTimeline({
     ctx.lineTo(playheadX, size.h);
     ctx.stroke();
     ctx.restore();
-  }, [waveform, size, playheadX]);
+  }, [waveform, size, duration, kept, clock]);
+  useEffect(() => {
+    draw();
+    return clock.subscribe(draw);
+  }, [draw, clock]);
 
   const ticks = useMemo(() => {
     if (!(duration > 0)) return [];
@@ -398,11 +417,15 @@ function CutEditor({
 /** Un champ de temps `m:ss.t` : le texte tapé est laissé tranquille jusqu'à Entrée ou la perte du
  * focus ; un texte invalide, ou laissé tel quel, ne change rien. */
 function TimeField({ label, value, onCommit }: { label: string; value: number; onCommit: (value: number) => void }) {
+  const { t } = useTranslation();
   const [text, setText] = useState(fmtPrecise(value));
   const focused = useRef(false);
+  // Après une validation, le champ reprend la valeur réellement retenue : une saisie bornée (ou
+  // sans effet) ne doit pas laisser le texte tapé affiché à la place.
+  const [settled, setSettled] = useState(0);
   useEffect(() => {
     if (!focused.current) setText(fmtPrecise(value));
-  }, [value]);
+  }, [value, settled]);
   function commit() {
     focused.current = false;
     // Quitter un champ intact rend son texte arrondi : ce n'est pas une édition.
@@ -413,13 +436,14 @@ function TimeField({ label, value, onCommit }: { label: string; value: number; o
       return;
     }
     onCommit(parsed);
+    setSettled((n) => n + 1);
   }
   return (
     <label className="at-cut-field">
       <span>{label}</span>
       <input
         className="at-cut-input"
-        title="M:SS.s"
+        title={t("audioTool.cut.timeFormat")}
         spellCheck={false}
         value={text}
         onFocus={() => (focused.current = true)}

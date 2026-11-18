@@ -4,6 +4,8 @@ import type { EditorState } from "../types";
 import { formatTime, getKeptSegments } from "../utils/time";
 import { getFilterById } from "../utils/filters";
 import { useT } from "../i18n";
+import { engineErrorText } from "../engineError";
+import { useVideoOwner } from "../owner";
 import {
   ASPECTS,
   SOCIAL_PRESETS,
@@ -22,6 +24,8 @@ interface Props {
   onClose: () => void;
   /** Called after the export was added to the queue (the dialog then closes). */
   onQueued?: () => void;
+  /** Un export vers des projets est lancé : cet onglet attend le compte rendu de l'ajout. */
+  onProjectsExport?: () => void;
   /** Le sous-titre qui accompagnera la vidéo dans les projets choisis. */
   associatedSrt?: () => string | null;
 }
@@ -77,7 +81,8 @@ function loadPrefs(): Prefs {
   }
 }
 
-export default function ExportModal({ state, onClose, onQueued, associatedSrt }: Props) {
+export default function ExportModal({ state, onClose, onQueued, onProjectsExport, associatedSrt }: Props) {
+  const owner = useVideoOwner();
   const { t, lang } = useT();
   const [projects, setProjects] = useState<string[]>([]);
   const [toComputer, setToComputer] = useState(true);
@@ -138,6 +143,9 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // Position dans la file : l'export attend derrière les travaux actifs plus anciens (worker unique).
+  const [queuedId, setQueuedId] = useState<number | null>(null);
+  const [ahead, setAhead] = useState(0);
   const [outputPath, setOutputPath] = useState<string | null>(null);
 
   const FORMATS: { id: Format; label: string; desc: string }[] = [
@@ -158,9 +166,27 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
   const destinationMissing = noDestination(toComputer, projects);
 
   useEffect(() => {
-    const off = getApi().onProgress((p: number) => setProgress(p));
+    if (queuedId === null) return;
+    const count = (jobs: { id: number; status: string }[]) => {
+      const mine = jobs.find((j) => j.id === queuedId);
+      setAhead(
+        mine?.status === "queued"
+          ? jobs.filter((j) => j.id < queuedId && (j.status === "queued" || j.status === "running")).length
+          : 0,
+      );
+    };
+    const off = getApi().onQueueUpdate(count);
+    getApi()
+      .queueList()
+      .then(count)
+      .catch(() => {});
     return off;
-  }, []);
+  }, [queuedId]);
+
+  useEffect(() => {
+    const off = getApi(owner).onProgress((p: number) => setProgress(p));
+    return off;
+  }, [owner]);
 
   // Closing mid-export would leave it running with no way to see or stop it.
   const requestClose = () => {
@@ -192,9 +218,20 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
       : null,
   });
 
+  /** L'export n'aura pas lieu : le fichier ne doit plus être ajouté aux projets annoncés. */
+  const forgetAfterExport = async (savePath: string) => {
+    if (projects.length > 0)
+      await getApi(owner)
+        .addAfterExport(savePath, [], null)
+        .catch(() => {});
+  };
+
   const handleExport = async (mode: "now" | "queue" = "now") => {
     setError(null);
     setDone(false);
+    // Progress still reads 100 after a finished export: without this, cancelling the save dialog
+    // of "Export again" would leave the window "exporting" with every button disabled.
+    setProgress(null);
 
     if (!state.videoPath || nothingToExport || destinationMissing) return;
 
@@ -218,6 +255,7 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
 
     if (projects.length > 0) {
       try {
+        onProjectsExport?.();
         await getApi().addAfterExport(savePath, projects, associatedSrt?.() ?? null);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : String(err));
@@ -231,31 +269,26 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
         onQueued?.();
         onClose();
       } catch (err: unknown) {
-        setError(
-          (err instanceof Error ? err.message : String(err)).replace(
-            /^Error invoking remote method '[^']+': (Error: )?/,
-            "",
-          ),
-        );
+        setError(engineErrorText(err instanceof Error ? err.message : String(err), t));
+        await forgetAfterExport(savePath);
       }
       return;
     }
 
     setProgress(0);
+    setQueuedId(null);
+    setAhead(0);
 
     try {
-      const result = await getApi().exportVideo(buildOptions(savePath));
+      const result = await getApi(owner).exportVideo(buildOptions(savePath), setQueuedId);
       setDone(true);
       setOutputPath(result.outputPath);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       // The user pressed "Stop export": not a failure worth an error banner.
-      setError(
-        /cancelled/i.test(message)
-          ? t.export_cancelled
-          : message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ""),
-      );
+      setError(/cancelled/i.test(message) ? t.export_cancelled : engineErrorText(message, t));
       setProgress(null);
+      await forgetAfterExport(savePath);
     }
   };
 
@@ -305,7 +338,11 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
           <div className="summary-row">
             <span className="summary-label">{t.tool_geometry}</span>
             <span className="summary-value">
-              {state.rotation + state.straighten}° / H: {state.perspectiveHorizontal}° / V: {state.perspectiveVertical}°
+              {t.geometry_summary_short(
+                state.rotation + state.straighten,
+                state.perspectiveHorizontal,
+                state.perspectiveVertical,
+              )}
             </span>
           </div>
           <div className="summary-row">
@@ -513,7 +550,9 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
             <div className="progress-bar">
               <div className="progress-fill" style={{ width: `${progress}%` }} />
             </div>
-            <div className="progress-label">{done ? t.export_done : `${progress}%`}</div>
+            <div className="progress-label">
+              {done ? t.export_done : ahead > 0 ? t.export_waiting(ahead) : `${progress}%`}
+            </div>
           </div>
         )}
 
@@ -544,7 +583,7 @@ export default function ExportModal({ state, onClose, onQueued, associatedSrt }:
             <button
               className="btn-ghost"
               onClick={() => {
-                void getApi().cancelFfmpeg();
+                void getApi(owner).cancelFfmpeg();
               }}
             >
               {t.export_stop}

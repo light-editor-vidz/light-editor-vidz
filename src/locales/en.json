@@ -93,7 +93,8 @@
     "openFile": "Open file…",
     "openProjectFolder": "Open project folder…",
     "closeTab": "Close tab",
-    "gridSize": "Grid size"
+    "gridSize": "Grid size",
+    "fpsShort": "{{fps}}fps"
   },
   "update": {
     "checkForUpdates": "Check for updates",
@@ -195,6 +196,12 @@
     "fontSizeAutoToggle": "Auto-fit font size to the text box (click to switch to a fixed size)",
     "color": "Color",
     "position": "Position",
+    "widthShort": "W",
+    "heightShort": "H",
+    "width": "Width",
+    "height": "Height",
+    "underline": "Underline",
+    "strikethrough": "Strikethrough",
     "animation": "Animations",
     "fit": "Fit",
     "kenBurns": "Ken Burns",
@@ -340,7 +347,10 @@
       "top": "Top",
       "middle": "Middle",
       "bottom": "Bottom"
-    }
+    },
+    "bold": "Bold",
+    "italic": "Italic",
+    "strokeToggle": "Toggle stroke"
   },
   "canvas": {
     "videoDecodeError": "This video cannot be played (unsupported format/codec)",
@@ -402,7 +412,8 @@
     "qualityMedium": "Medium",
     "qualityLow": "Low",
     "confirm": "Export",
-    "outputSize": "Output: {{width}} × {{height}}"
+    "outputSize": "Output: {{width}} × {{height}}",
+    "wav32f": "WAV 32-bit float"
   },
   "common": {
     "back": "Back",
@@ -433,9 +444,11 @@
   },
   "editor": {
     "saveFailed": "Could not save: {{error}}",
+    "sceneHidesElements": "{{count}} element(s) start after the end of this scene and are no longer visible.",
     "retry": "Retry",
     "legacyMissingMedia": "{{count}} media file(s) of the imported project cannot be read (absolute paths): import them again from the library.",
     "legacyImportFailed": "Import failed: {{error}}",
+    "recoveredFromBackup": "The project file was unreadable: the previous version (backup) was opened. The damaged file was kept as project.json.corrupt.",
     "openFailed": "Could not open: {{error}}",
     "legacyPickTitle": "Choose the legacy project JSON"
   },
@@ -453,6 +466,8 @@
     "downloadFailed": "Download failed: {{detail}}",
     "writeExport": "Could not write the exported video: {{detail}}",
     "copyFile": "Could not copy the file: {{detail}}",
+    "pathNotApproved": "“{{detail}}” was not chosen with the file picker or dropped on the window",
+    "hostNotAllowed": "Download refused: this host is not allowed ({{detail}})",
     "apiKeyMissing": "No API key is stored for this service.",
     "azureRegionMissing": "Enter the region of your Azure Translator resource.",
     "cancelled": "Cancelled.",
@@ -474,6 +489,8 @@
     "tagline": "Compose scenes with video, text, images, sound and shapes, and export them to MP4."
   },
   "audioTool": {
+    "overwriteConfirm": "{{name}} already exists. Replace it?",
+    "closeConfirm": "This sound has edits that were not exported. Close it anyway?",
     "header": {
       "openOther": "Open another file",
       "open": "Open an audio file",
@@ -508,7 +525,8 @@
       "delete": "Delete cut",
       "resize": "Drag to resize",
       "count_one": "{{count}} cut",
-      "count_other": "{{count}} cuts"
+      "count_other": "{{count}} cuts",
+      "timeFormat": "M:SS.s"
     },
     "fade": {
       "title": "Fade",
@@ -557,7 +575,9 @@
       "loading": "Loading…",
       "error": "Error: {{error}}",
       "unreachable": "Cannot read the file ({{status}})",
-      "previewUnavailable": "Preview unavailable for this format — the export still works."
+      "previewUnavailable": "Preview unavailable for this format — the export still works.",
+      "previewPreparing": "Preparing the preview…",
+      "previewTooLong": "File too long for the preview — the export still works."
     },
     "badge": {
       "meta": "{{channels}}ch · {{rate}}Hz · {{duration}}"
@@ -900,7 +920,17 @@
       "too-large": "The resulting image would be too large (max 30 000 px per side, 200 Mpx).",
       "mask-empty": "Paint over the area to remove first.",
       "zero-size": "Width and height must be at least 1 px.",
-      "canvas-smaller": "The canvas cannot be smaller than the image."
+      "canvas-smaller": "The canvas cannot be smaller than the image.",
+      "mask-invalid": "The selection is invalid. Paint the area again.",
+      "mask-fit": "The selection does not fit the image.",
+      "nothing-to-fill": "Nothing to fill from: the selection touches no usable pixel.",
+      "decode-too-large": "This image is too large to open.",
+      "bad-angle": "Invalid rotation angle.",
+      "history-range": "This history step is no longer available.",
+      "history-changed": "The image changed while the operation was running. Try again.",
+      "undo-failed": "The history step could not be restored.",
+      "bad-option": "Unsupported option for this operation.",
+      "unsupported-format": "This image format is not supported."
     },
     "open": {
       "failed": "{{n}} file(s) could not be opened: {{list}}"
@@ -948,7 +978,11 @@
       "clear": "Clear",
       "cancel": "Cancel",
       "save": "Save"
-    }
+    },
+    "update": {
+      "dismiss": "Dismiss"
+    },
+    "untitled": "Image"
   },
   "subs": {
     "title": "Generate subtitles",
@@ -977,6 +1011,7 @@
     "addToProject": "Add as text elements to the project",
     "saveFile": "Save as a file",
     "format": "Format",
+    "vadUnavailable": "Speech detection was unavailable: the transcription was done without it and may be less precise.",
     "fileFilter": "Subtitles",
     "apply": "Apply",
     "menu": "Generate subtitles…",
@@ -1081,6 +1116,7 @@
     }
   },
   "quit": {
+    "saveFailed": "The window stays open: some work could not be saved. Check the open tabs for the error.",
     "title": "Work in progress",
     "busy": "Quitting now will stop:\n{{list}}",
     "confirm": "Quit anyway",

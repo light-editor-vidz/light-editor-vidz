@@ -1,6 +1,7 @@
 import "./setup";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { getT } from "../lib/i18n";
+import { growMaskBounds, maskBounds, resetMaskBounds } from "../lib/maskBounds";
 import { translateError } from "../lib/errors";
 import { isModalOpen, isTypingTarget } from "../lib/dom";
 import { isValidSize, MAX_PIXELS, MAX_SIDE, parseDim } from "../lib/limits";
@@ -19,6 +20,17 @@ describe("translateError", () => {
     ["Mask is empty", "Paint over the area to remove first."],
     ["Width and height must be greater than 0", "Width and height must be at least 1 px."],
     ["Canvas size (10×10) must be >= image size (20×20)", "The canvas cannot be smaller than the image."],
+    ["Expected 16 mask bytes", "The selection is invalid. Paint the area again."],
+    ["Mask 5×5 at (0,0) doesn't fit image 2×2", "The selection does not fit the image."],
+    [
+      "Nothing to fill from: the mask touches no known pixel",
+      "Nothing to fill from: the selection touches no usable pixel.",
+    ],
+    ["Unsupported format: bmp2", "This image format is not supported."],
+    [
+      "The history changed while the operation was running",
+      "The image changed while the operation was running. Try again.",
+    ],
   ])('translates "%s"', (raw, expected) => {
     expect(translateError(raw, en)).toBe(expected);
   });
@@ -150,5 +162,20 @@ describe("storage resilience", () => {
   it("falls back to the defaults when the stored preferences are unreadable", () => {
     localStorage.setItem("lciz-prefs", "{broken");
     expect(loadPrefs().defaultExportFormat).toBe("png");
+  });
+});
+
+describe("maskBounds", () => {
+  it("covers every stroke, is clamped to the canvas and can be reset", () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 100;
+    canvas.height = 50;
+    expect(maskBounds(canvas)).toBeNull();
+    growMaskBounds(canvas, 10, 10, 4);
+    growMaskBounds(canvas, 98, 20, 4);
+    const b = maskBounds(canvas);
+    expect(b).toEqual({ x0: 5, y0: 5, x1: 100, y1: 25 });
+    resetMaskBounds(canvas);
+    expect(maskBounds(canvas)).toBeNull();
   });
 });

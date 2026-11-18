@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { CSSProperties } from "react";
 import type { ShapeElement } from "../../bindings/ShapeElement";
 
@@ -24,7 +25,7 @@ const STAR_POINTS = starPoints();
  * modèle) et le rayon d'angle est converti en rx/ry pour rester circulaire malgré l'étirement.
  * `aspect` = hauteur / largeur du canvas.
  */
-export default function ShapeView({ element, aspect = 9 / 16 }: { element: ShapeElement; aspect?: number }) {
+function ShapeView({ element, aspect = 9 / 16 }: { element: ShapeElement; aspect?: number }) {
   const { id, shape_type, fill, stroke, stroke_width, border_radius, stroke_dash, gradient_to, gradient_angle } =
     element;
   const fillValue = gradient_to ? `url(#grad-${id})` : fill;
@@ -97,3 +98,5 @@ export default function ShapeView({ element, aspect = 9 / 16 }: { element: Shape
     </svg>
   );
 }
+
+export default memo(ShapeView);

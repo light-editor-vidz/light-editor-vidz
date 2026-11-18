@@ -102,7 +102,7 @@ const stage = () => q(".canvas-stage");
 /** Drags on the empty stage from (x1, y1) to (x2, y2), in stage pixels. */
 function marquee(x1: number, y1: number, x2: number, y2: number, init: PointerEventInit = {}) {
   fireEvent.pointerDown(stage(), { clientX: x1, clientY: y1, ...init });
-  fireEvent.pointerMove(window, { clientX: x2, clientY: y2 });
+  fireEvent.pointerMove(window, { buttons: 1, clientX: x2, clientY: y2 });
   fireEvent.pointerUp(window);
 }
 
@@ -321,7 +321,7 @@ describe("CanvasStage — elements", () => {
     const { onUpdateElement } = setup({ composition: withTwo });
 
     fireEvent.pointerDown(qa(".element-interaction")[0], { clientX: 500, clientY: 500 });
-    fireEvent.pointerMove(window, { clientX: 700, clientY: 500 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 700, clientY: 500 });
     fireEvent.pointerUp(window);
 
     expect(onUpdateElement).toHaveBeenCalledWith("e1", expect.objectContaining({ x: 30 }));
@@ -331,7 +331,7 @@ describe("CanvasStage — elements", () => {
     setup({ composition: composition({ elements: [element({ x: 0.5, y: 0.5 })] }) });
 
     fireEvent.pointerDown(q(".element-interaction"), { clientX: 500, clientY: 500 });
-    fireEvent.pointerMove(window, { clientX: 495, clientY: 495 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 495, clientY: 495 });
 
     expect(qa(".snap-guide-v")).toHaveLength(1);
     expect(qa(".snap-guide-h")).toHaveLength(1);
@@ -400,7 +400,7 @@ describe("CanvasStage — marquee selection", () => {
     setup({ composition: withTwo });
 
     fireEvent.pointerDown(stage(), { clientX: 100, clientY: 100 });
-    fireEvent.pointerMove(window, { clientX: 400, clientY: 300 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 400, clientY: 300 });
 
     const rect = q(".marquee-select");
     expect(rect.style.left).toBe("10%");
@@ -415,7 +415,7 @@ describe("CanvasStage — marquee selection", () => {
     setup({ composition: withTwo });
 
     fireEvent.pointerDown(stage(), { clientX: 400, clientY: 300 });
-    fireEvent.pointerMove(window, { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 100, clientY: 100 });
 
     expect(q(".marquee-select").style.left).toBe("10%");
     fireEvent.pointerUp(window);

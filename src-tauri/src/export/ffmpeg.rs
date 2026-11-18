@@ -343,7 +343,9 @@ fn audio_export_args(spec: &AudioExportSpec) -> Vec<String> {
     args.extend(["-f".to_string(), spec.format.container().to_string()]);
     args.push("-t".to_string());
     args.push(format!("{:.6}", spec.duration));
-    args.push(spec.output_path.to_string_lossy().into_owned());
+    // `file:` : un chemin qui ressemble à une URL (`http://…`) ne doit jamais être interprété comme
+    // telle par ffmpeg.
+    args.push(format!("file:{}", spec.output_path.to_string_lossy()));
     args
 }
 
@@ -466,7 +468,9 @@ fn encoder_args(spec: &EncoderSpec) -> Vec<String> {
             .map(|s| s.to_string()),
     );
     args.push(format!("{:.6}", spec.duration));
-    args.push(spec.output_path.to_string_lossy().into_owned());
+    // `file:` : un chemin qui ressemble à une URL (`http://…`) ne doit jamais être interprété comme
+    // telle par ffmpeg.
+    args.push(format!("file:{}", spec.output_path.to_string_lossy()));
     args
 }
 
@@ -540,7 +544,24 @@ impl VideoEncoder {
         (!status.success()).then(|| format!("ffmpeg failed: {}", tail(&stderr, 2000)))
     }
 
-    pub fn finish(mut self) -> Result<(), String> {
+    #[cfg(test)]
+    pub fn finish(self) -> Result<(), String> {
+        self.finish_unless(|| false)
+    }
+
+    /// Ferme l'entrée et attend la fin de ffmpeg (finalisation `+faststart`, parfois longue sur un
+    /// gros fichier) en interrogeant `cancelled` : s'il devient vrai, ffmpeg est tué et
+    /// `Err(CANCELLED)` renvoyé.
+    pub fn finish_unless(mut self, cancelled: impl Fn() -> bool) -> Result<(), String> {
+        drop(self.stdin.take());
+        while matches!(self.child.try_wait(), Ok(None)) {
+            if cancelled() {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return Err(crate::export::CANCELLED.to_string());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
         match self.failure() {
             Some(message) => Err(message),
             None => Ok(()),
@@ -666,7 +687,7 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["-t", "6.000000"]));
         assert!(args.windows(2).any(|w| w == ["-movflags", "+faststart"]));
         assert!(args.windows(2).any(|w| w == ["-colorspace", "bt709"]));
-        assert_eq!(args.last().map(String::as_str), Some("/tmp/out.part"));
+        assert_eq!(args.last().map(String::as_str), Some("file:/tmp/out.part"));
         assert!(
             !args.contains(&"[aout]".to_string()),
             "pas d'audio sans pistes"
@@ -977,6 +998,29 @@ mod tests {
         .unwrap();
         assert_eq!(info.trim(), "h264,yuv420p,bt709");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cancelling_during_finalisation_kills_the_process_and_reports_it() {
+        let child = Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let mut child = child;
+        let stdin = child.stdin.take();
+        let encoder = VideoEncoder {
+            child,
+            stdin,
+            stderr: None,
+        };
+        let started = std::time::Instant::now();
+        let result = encoder.finish_unless(|| true);
+        assert_eq!(result, Err(crate::export::CANCELLED.to_string()));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert!(!Path::new(&format!("/proc/{pid}")).exists() || cfg!(not(target_os = "linux")));
     }
 
     #[test]

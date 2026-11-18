@@ -1,0 +1,7 @@
+{
+  // Tests (vitest, jsdom) : seuls à avoir besoin des types Node (node:fs, import.meta.dirname).
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "types": ["vite/client", "node"] },
+  "include": ["src"],
+  "exclude": []
+}

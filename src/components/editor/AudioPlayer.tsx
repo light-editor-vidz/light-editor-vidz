@@ -3,6 +3,7 @@ import type { AudioTrack } from "../../bindings/AudioTrack";
 import type { Project } from "../../bindings/Project";
 import { useMediaSource } from "../../lib/useMediaSource";
 import { audioFadeGain, audioSourceTime, isAudioTrackActive, isTrackAudible } from "../../lib/audio";
+import { syncMedia } from "../../lib/mediaSync";
 import { useClockValue, type PlaybackClock } from "../../lib/playbackClock";
 
 interface TrackProps {
@@ -17,10 +18,10 @@ interface TrackProps {
 function SingleAudio({ track, projectDir, projectDuration, clock, playing, audible }: TrackProps) {
   const ref = useRef<HTMLAudioElement>(null);
   const { src: mediaSrc, usingBlob, fallBack } = useMediaSource(projectDir, track.src);
-  const currentTime = useClockValue(clock, (t) => t);
-  const active = isAudioTrackActive(track.start_time, track.duration, currentTime);
-  // Fondus d'entrée/sortie : le volume suit la position dans la piste (comme à l'export).
-  const gain = audible ? audioFadeGain(track, currentTime, projectDuration) : 0;
+  // Seuls l'état « actif » et le volume (qui ne varie que pendant un fondu) font re-rendre la piste :
+  // la position, elle, change à chaque image et est suivie hors de React (abonnement ci-dessous).
+  const active = useClockValue(clock, (t) => isAudioTrackActive(track.start_time, track.duration, t));
+  const gain = useClockValue(clock, (t) => (audible ? audioFadeGain(track, t, projectDuration) : 0));
   const volume = Math.min(1, Math.max(0, track.volume)) * gain;
 
   useEffect(() => {
@@ -43,16 +44,19 @@ function SingleAudio({ track, projectDir, projectDuration, clock, playing, audib
     else audio.pause();
   }, [active, playing, mediaSrc]);
 
-  // Position : recalée seulement si la dérive dépasse 0,25 s.
+  // Position : recalée sur l'horloge à chaque changement de celle-ci, sans re-rendu (voir
+  // `syncMedia` : saut, ajustement de vitesse ou rien).
   useEffect(() => {
-    const audio = ref.current;
-    if (!audio || !active) return;
-    // `track.start_time` est absolu sur la timeline globale (pistes non rattachées aux scènes).
-    const targetTime = audioSourceTime(track, currentTime);
-    if (Math.abs(audio.currentTime - targetTime) > 0.25) {
-      audio.currentTime = Math.max(0, targetTime);
-    }
-  }, [active, currentTime, track, mediaSrc]);
+    if (!active) return;
+    const sync = () => {
+      const audio = ref.current;
+      if (!audio) return;
+      // `track.start_time` est absolu sur la timeline globale (pistes non rattachées aux scènes).
+      syncMedia(audio, audioSourceTime(track, clock.get()), playing, track.speed);
+    };
+    sync();
+    return clock.subscribe(sync);
+  }, [active, playing, clock, track, mediaSrc]);
 
   return <audio ref={ref} src={mediaSrc ?? undefined} preload="auto" onError={() => !usingBlob && fallBack()} />;
 }

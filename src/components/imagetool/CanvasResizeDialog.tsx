@@ -174,7 +174,7 @@ export function CanvasResizeDialog({
 
       {/* Anchor picker */}
       <div className="flex items-center gap-4">
-        <span className="text-slate-300 text-sm w-16 shrink-0">{t("cvs.anchor")}</span>
+        <span className="text-slate-300 text-sm w-16 shrink-0">{t("cvs.anchor-label")}</span>
         <div className="grid grid-cols-3 gap-1">
           {ANCHORS.map((row) =>
             row.map((a) => (

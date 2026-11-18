@@ -37,7 +37,9 @@ export function RotationControls({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (historyIndex === expectedIndex.current) return;
+    // Pendant une de nos propres rotations, l'index change sans que ce soit « quelqu'un d'autre » ;
+    // la position exacte (le budget mémoire peut avoir rogné l'historique) est lue au retour.
+    if (busy.current || historyIndex === expectedIndex.current) return;
     // Quelqu'un d'autre a touché à l'historique (±90°, annuler…) : on repart de zéro.
     expectedIndex.current = historyIndex;
     applied.current = 0;
@@ -51,6 +53,13 @@ export function RotationControls({
     },
     [],
   );
+
+  // Le texte du champ numérique : « - » (début d'un angle négatif) n'est pas encore un nombre, il ne
+  // doit pas être remplacé par 0 pendant la frappe.
+  const [angleText, setAngleText] = useState("0");
+  useEffect(() => {
+    setAngleText((text) => (Number(text) === degrees && text !== "" ? text : String(degrees)));
+  }, [degrees]);
 
   const preview = (value: number) => {
     setDegrees(value);
@@ -68,16 +77,15 @@ export function RotationControls({
     let target: number | null = value;
     while (target !== null) {
       const replace = pushed.current;
-      const before = expectedIndex.current;
-      if (!replace) expectedIndex.current = before + 1;
       const position = await onApplyAngle(target, replace);
       if (position === undefined) {
-        expectedIndex.current = before;
         setDegrees(applied.current);
         onPreviewAngle?.(0);
         pending.current = null;
         break;
       }
+      // L'index que le backend a réellement attribué à cette étape.
+      expectedIndex.current = position;
       pushed.current = true;
       applied.current = target;
       target = pending.current !== applied.current ? pending.current : null;
@@ -136,14 +144,20 @@ export function RotationControls({
           type="number"
           min="-180"
           max="180"
-          value={degrees}
+          value={angleText}
           onChange={(e) => {
-            const value = Number(e.target.value);
+            const raw = e.target.value;
+            setAngleText(raw);
+            if (raw.trim() === "" || raw.trim() === "-") return;
+            const value = Number(raw);
             handleChange(value);
             if (timer.current) clearTimeout(timer.current);
             timer.current = setTimeout(() => void commit(clamp(value)), DEBOUNCE_MS);
           }}
-          onBlur={() => void commit(degrees)}
+          onBlur={() => {
+            setAngleText(String(degrees));
+            void commit(degrees);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter") void commit(degrees);
           }}

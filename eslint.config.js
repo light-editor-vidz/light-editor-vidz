@@ -37,5 +37,17 @@ export default tseslint.config(
       "react-hooks/preserve-manual-memoization": "off",
     },
   },
+  {
+    // `tsconfig.json` déclare les types de Node pour les tests : `process.env` compilerait dans le
+    // code du navigateur, puis planterait à l'exécution. Seuls les tests peuvent lire `process`.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/**/*.test.{ts,tsx}", "src/**/test/**"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        { name: "process", message: "Node's `process` does not exist in the webview." },
+      ],
+    },
+  },
   prettierConfig,
 );

@@ -98,7 +98,21 @@ function trackChanges(prev: AudioTrack[], next: AudioTrack[], t: Translate): str
   return changes;
 }
 
+/** Libellés déjà calculés par paire d'états (les états sont immuables) : l'ouverture du panneau
+ * ou une nouvelle étape ne recompare pas tout l'historique. Invalidé si `t` (langue) change. */
+const stepCache = new WeakMap<Project, WeakMap<Project, { t: Translate; label: string }>>();
+
 export function projectStepLabel(prev: Project, next: Project, t: Translate): string {
+  let byNext = stepCache.get(prev);
+  if (!byNext) stepCache.set(prev, (byNext = new WeakMap()));
+  const hit = byNext.get(next);
+  if (hit && hit.t === t) return hit.label;
+  const label = computeProjectStepLabel(prev, next, t);
+  byNext.set(next, { t, label });
+  return label;
+}
+
+function computeProjectStepLabel(prev: Project, next: Project, t: Translate): string {
   const changes: string[] = [];
   if (prev.name !== next.name || prev.width !== next.width || prev.height !== next.height || prev.fps !== next.fps) {
     changes.push(t("history.project.settings"));

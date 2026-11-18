@@ -10,12 +10,32 @@ fn invalid(message: &str) -> anyhow::Error {
     coded("speed_invalid", &[], message)
 }
 
+/// 128 taps with 128x oversampling is transparent for this use and about
+/// twice as fast as the 256/256 preset, the costliest step of the pipeline.
+fn sinc_params() -> SincInterpolationParameters {
+    SincInterpolationParameters {
+        sinc_len: 128,
+        f_cutoff: 0.95,
+        interpolation: SincInterpolationType::Linear,
+        oversampling_factor: 128,
+        window: WindowFunction::BlackmanHarris2,
+    }
+}
+
+/// Bornes du facteur de vitesse accepté.
+pub const MIN_SPEED: f64 = 0.05;
+pub const MAX_SPEED: f64 = 50.0;
+
 pub fn change_speed(buf: &mut AudioBuffer, factor: f64, job: &Job) -> Result<()> {
     if !factor.is_finite() {
         return Err(invalid("Speed factor must be a finite number"));
     }
     if factor <= 0.0 {
         return Err(invalid("Speed factor must be positive"));
+    }
+    // Un facteur extrême demanderait une allocation géante puis un abandon du processus.
+    if !(MIN_SPEED..=MAX_SPEED).contains(&factor) {
+        return Err(invalid("Speed factor must be between 0.05 and 50"));
     }
     if (factor - 1.0).abs() < 1e-6 {
         return Ok(());
@@ -26,71 +46,88 @@ pub fn change_speed(buf: &mut AudioBuffer, factor: f64, job: &Job) -> Result<()>
         bail!("Cannot change the speed of an empty buffer");
     }
 
-    // 128 taps with 128x oversampling is transparent for this use and about
-    // twice as fast as the 256/256 preset, the costliest step of the pipeline.
-    let params = SincInterpolationParameters {
-        sinc_len: 128,
-        f_cutoff: 0.95,
-        interpolation: SincInterpolationType::Linear,
-        oversampling_factor: 128,
-        window: WindowFunction::BlackmanHarris2,
-    };
-
-    let chunk_size = 1024usize;
     let resample_ratio = 1.0 / factor;
-
-    let mut resampler = SincFixedIn::<f32>::new(resample_ratio, 2.0, params, chunk_size, channels)?;
-
     let expected = (frames as f64 * resample_ratio).round() as usize;
+
+    // Channels are independent for the resampler: one thread per channel (stereo: two cores
+    // instead of one). Each thread consumes its input channel and frees it as soon as its output
+    // is built; only channel 0 reports progress.
+    let inputs: Vec<Vec<f32>> = buf.samples.iter_mut().map(std::mem::take).collect();
+    let results: Vec<Result<Vec<f32>>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = inputs
+            .into_iter()
+            .enumerate()
+            .map(|(c, input)| {
+                scope.spawn(move || resample_channel(input, resample_ratio, expected, c == 0, job))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("resampler thread panicked")))
+            })
+            .collect()
+    });
+    let mut outputs = Vec::with_capacity(channels);
+    for r in results {
+        outputs.push(r?);
+    }
+    buf.samples = outputs;
+    Ok(())
+}
+
+fn resample_channel(
+    input_samples: Vec<f32>,
+    resample_ratio: f64,
+    expected: usize,
+    report: bool,
+    job: &Job,
+) -> Result<Vec<f32>> {
+    let chunk_size = 1024usize;
+    let frames = input_samples.len();
+    let mut resampler = SincFixedIn::<f32>::new(resample_ratio, 2.0, sinc_params(), chunk_size, 1)?;
     // The sinc filter needs half its length of history before it emits the
     // sample matching input frame 0; those leading frames are dropped below.
     let delay = resampler.output_delay();
 
     // One output block, reused for every call.
     let mut block = resampler.output_buffer_allocate(true);
-    let mut output: Vec<Vec<f32>> = (0..channels)
-        .map(|_| Vec::with_capacity(expected + delay + block[0].len()))
-        .collect();
-    let append = |output: &mut Vec<Vec<f32>>, block: &[Vec<f32>], written: usize| {
-        for (dst, src) in output.iter_mut().zip(block) {
-            dst.extend_from_slice(&src[..written]);
-        }
-    };
+    let mut output: Vec<f32> = Vec::with_capacity(expected + delay + block[0].len());
 
     let mut pos = 0usize;
     while pos < frames {
         job.check()?;
-        job.progress(pos as f32 / frames as f32);
+        if report {
+            job.progress(pos as f32 / frames as f32);
+        }
         let end = (pos + chunk_size).min(frames);
-        let input: Vec<&[f32]> = buf.samples.iter().map(|ch| &ch[pos..end]).collect();
+        let input = [&input_samples[pos..end]];
         // A short last chunk is zero-padded by `process_partial_into_buffer`.
         let (_, written) = if end - pos == chunk_size {
             resampler.process_into_buffer(&input, &mut block, None)?
         } else {
             resampler.process_partial_into_buffer(Some(&input), &mut block, None)?
         };
-        append(&mut output, &block, written);
+        output.extend_from_slice(&block[0][..written]);
         pos = end;
     }
+    drop(input_samples);
 
     // Keep flushing silence until the tail that the delay pushed out has come
     // through, otherwise the truncation below eats the end of the audio.
-    while output[0].len() < expected + delay {
+    while output.len() < expected + delay {
         let (_, written) =
             resampler.process_partial_into_buffer(None::<&[Vec<f32>]>, &mut block, None)?;
         if written == 0 {
             break;
         }
-        append(&mut output, &block, written);
+        output.extend_from_slice(&block[0][..written]);
     }
 
-    for ch in output.iter_mut() {
-        ch.drain(..delay.min(ch.len()));
-        ch.truncate(expected);
-    }
-
-    buf.samples = output;
-    Ok(())
+    output.drain(..delay.min(output.len()));
+    output.truncate(expected);
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -113,6 +150,18 @@ mod tests {
                 .collect()],
             sample_rate: sr,
         }
+    }
+
+    #[test]
+    fn an_extreme_speed_is_refused_before_anything_is_allocated() {
+        let mut buf = dc_buf(1000, 1, 0.5);
+        for factor in [0.0001, 1e9, f64::INFINITY] {
+            assert!(
+                change_speed(&mut buf, factor, &Job::detached()).is_err(),
+                "{factor}"
+            );
+        }
+        assert_eq!(buf.num_frames(), 1000);
     }
 
     #[test]

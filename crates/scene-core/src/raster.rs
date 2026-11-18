@@ -20,6 +20,13 @@ use crate::animate::{
     resolve_text_reveal, resolve_wipe, ResolvedTransform,
 };
 pub use crate::color::parse_css_color;
+use crate::color::try_parse_css_color;
+
+/// Une couleur CSS invalide est **ignorée** par le navigateur (pas de remplissage) : transparent, et
+/// non blanc opaque (`""`, `"none"`, `currentColor`… viennent des imports legacy).
+fn css_color_or_transparent(value: &str) -> Color {
+    try_parse_css_color(value).unwrap_or(Color::TRANSPARENT)
+}
 use crate::model::{
     AnimationDirection, AnimationType, BlendMode, Composition, Element, FitMode, FontStyle,
     FontWeight, Project, ShapeType, TextAlign, TextElement, TransitionType, VerticalAlign,
@@ -30,11 +37,13 @@ use crate::video_fx::{effective_size, element_filter_chain, VideoCrop};
 use cosmic_text::{
     Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache, Weight,
 };
+use image::ImageDecoder;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use tiny_skia::{
     Color, FillRule, FilterQuality, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform,
 };
@@ -71,8 +80,12 @@ const SHADOW_BLUR_FRACTION: f32 = 0.005;
 const DEFAULT_BORDER_WIDTH: f64 = 2.0;
 /// Nombre maximal de calques (texte/forme) conservés en cache.
 const LAYER_CACHE_CAPACITY: usize = 48;
+/// Mémoire maximale des calques en cache (par worker).
+const LAYER_CACHE_BYTES: usize = 256 * 1024 * 1024;
 /// Nombre maximal de frames d'un GIF animé décodées (au-delà, les suivantes sont ignorées).
 const MAX_GIF_FRAMES: usize = 600;
+/// Mémoire maximale des frames d'un GIF animé gardées décodées (au-delà : stockage réduit par 2).
+const MAX_GIF_BYTES: usize = 768 * 1024 * 1024;
 
 /// Géométrie et style communs de dessin d'un élément (coordonnées canvas, en pixels).
 #[derive(Clone, Copy)]
@@ -123,30 +136,50 @@ struct Layer {
     origin: (f32, f32),
 }
 
-/// Cache borné (FIFO) de calques, clé = empreinte de toutes les entrées du rendu.
+/// Cache borné (LRU) de calques, clé = empreinte de toutes les entrées du rendu.
 #[derive(Default)]
 struct LayerCache {
     map: HashMap<u64, Option<Rc<Layer>>>,
+    /// Des moins récemment utilisées aux plus récentes.
     order: VecDeque<u64>,
+    bytes: usize,
+}
+
+fn layer_bytes(layer: &Option<Rc<Layer>>) -> usize {
+    layer.as_ref().map_or(0, |l| l.pixmap.data().len())
 }
 
 impl LayerCache {
+    /// LRU borné en entrées **et en octets** : les clés éphémères (typewriter, flou) ne chassent
+    /// plus les calques statiques qui servent à chaque frame, et un projet 4K ne monte pas à
+    /// plusieurs Go.
     fn get_or_insert_with(
         &mut self,
         key: u64,
         render: impl FnOnce() -> Option<Layer>,
     ) -> Option<Rc<Layer>> {
         if let Some(entry) = self.map.get(&key) {
-            return entry.clone();
+            let entry = entry.clone();
+            if let Some(at) = self.order.iter().position(|k| *k == key) {
+                self.order.remove(at);
+                self.order.push_back(key);
+            }
+            return entry;
         }
         let layer = render().map(Rc::new);
-        if self.order.len() >= LAYER_CACHE_CAPACITY {
-            if let Some(oldest) = self.order.pop_front() {
-                self.map.remove(&oldest);
-            }
-        }
+        self.bytes += layer_bytes(&layer);
         self.order.push_back(key);
         self.map.insert(key, layer.clone());
+        // Le calque qui vient d'être rendu reste toujours (il sert à cette frame).
+        while (self.order.len() > LAYER_CACHE_CAPACITY || self.bytes > LAYER_CACHE_BYTES)
+            && self.order.len() > 1
+        {
+            if let Some(oldest) = self.order.pop_front() {
+                if let Some(removed) = self.map.remove(&oldest) {
+                    self.bytes = self.bytes.saturating_sub(layer_bytes(&removed));
+                }
+            }
+        }
         layer
     }
 }
@@ -160,16 +193,39 @@ fn hash_key(parts: &[&dyn std::fmt::Debug]) -> u64 {
 }
 
 /// Image décodée : une ou plusieurs frames (GIF animé), chacune avec sa pyramide de réductions
-/// (niveau 0 = taille d'origine, niveau n = 1/2ⁿ) construite à la demande.
+/// (niveau 0 = taille stockée, niveau n = 1/2ⁿ) construite à la demande. Immuable vu de
+/// l'extérieur (`OnceLock`) : tous les workers d'un export en partagent une seule copie (`Arc`).
 struct Sprite {
     frames: Vec<SpriteFrame>,
     total_ms: u64,
+    /// Taille d'origine de l'image (celle de la mise en page), même si les frames sont stockées
+    /// réduites (`shift`).
     size: (u32, u32),
+    /// Nombre de réductions par 2 déjà appliquées au niveau 0 : un GIF trop lourd est stocké
+    /// à une taille moindre, que le niveau demandé (relatif à `size`) compense.
+    shift: usize,
 }
 
 struct SpriteFrame {
-    levels: Vec<Pixmap>,
+    levels: Vec<OnceLock<Pixmap>>,
     delay_ms: u64,
+}
+
+/// Nombre d'emplacements de la pyramide (2¹⁶ de réduction : bien au-delà du nécessaire).
+const SPRITE_LEVELS: usize = 16;
+
+fn sprite_levels(base: Pixmap) -> Vec<OnceLock<Pixmap>> {
+    let levels: Vec<OnceLock<Pixmap>> = (0..SPRITE_LEVELS).map(|_| OnceLock::new()).collect();
+    let _ = levels[0].set(base);
+    levels
+}
+
+/// Le niveau `n` de la pyramide, construit (et gardé) au premier besoin.
+fn sprite_level(levels: &[OnceLock<Pixmap>], n: usize) -> &Pixmap {
+    if n == 0 {
+        return levels[0].get().expect("niveau 0 toujours présent");
+    }
+    levels[n].get_or_init(|| halve(sprite_level(levels, n - 1)))
 }
 
 impl Sprite {
@@ -177,17 +233,18 @@ impl Sprite {
         let size = (pixmap.width(), pixmap.height());
         Self {
             frames: vec![SpriteFrame {
-                levels: vec![pixmap],
+                levels: sprite_levels(pixmap),
                 delay_ms: 0,
             }],
             total_ms: 0,
             size,
+            shift: 0,
         }
     }
 
     /// Frame à afficher à `time` secondes, réduite autant que possible tout en restant au moins
     /// à la résolution demandée (`scale` = rapport taille affichée / taille d'origine).
-    fn pixmap_at(&mut self, time: f64, scale: f32) -> &Pixmap {
+    fn pixmap_at(&self, time: f64, scale: f32) -> &Pixmap {
         let index = if self.total_ms > 0 {
             let t = ((time.max(0.0) * 1000.0) as u64) % self.total_ms;
             let mut acc = 0;
@@ -201,29 +258,39 @@ impl Sprite {
         } else {
             0
         };
-        let frame = &mut self.frames[index];
+        let frame = &self.frames[index];
         let wanted = if scale > 0.0 && scale < 1.0 {
             (1.0 / scale).log2().floor().max(0.0) as usize
         } else {
             0
-        };
-        while frame.levels.len() <= wanted {
-            let last = frame.levels.last().expect("niveau 0 toujours présent");
-            if last.width() < 2 || last.height() < 2 {
-                break;
-            }
-            let next = halve(last);
-            frame.levels.push(next);
         }
-        let level = wanted.min(frame.levels.len() - 1);
-        &frame.levels[level]
+        .saturating_sub(self.shift);
+        // On s'arrête avant un niveau dont un côté tomberait sous 2 px.
+        let mut level = 0;
+        let mut pixmap = sprite_level(&frame.levels, 0);
+        while level < wanted
+            && level + 1 < SPRITE_LEVELS
+            && pixmap.width() >= 2
+            && pixmap.height() >= 2
+        {
+            level += 1;
+            pixmap = sprite_level(&frame.levels, level);
+        }
+        pixmap
     }
+}
+
+/// Un pixmap de cette taille ; des dimensions impossibles (projet corrompu, valeurs géantes) donnent
+/// une image de 1×1 plutôt qu'une panique qui ferait tomber l'export entier.
+fn pixmap_or_blank(width: u32, height: u32) -> Pixmap {
+    Pixmap::new(width, height)
+        .unwrap_or_else(|| Pixmap::new(1, 1).expect("un pixmap de 1×1 existe toujours"))
 }
 
 /// Réduction par 2 (moyenne 2×2) d'un pixmap pré-multiplié.
 fn halve(src: &Pixmap) -> Pixmap {
     let (w, h) = ((src.width() / 2).max(1), (src.height() / 2).max(1));
-    let mut dst = Pixmap::new(w, h).expect("dimensions non nulles");
+    let mut dst = pixmap_or_blank(w, h);
     let (sw, sh) = (src.width() as usize, src.height() as usize);
     let src_px = src.pixels();
     let dst_px = dst.pixels_mut();
@@ -271,17 +338,36 @@ fn load_sprite(path: &Path) -> Option<Sprite> {
             return Some(sprite);
         }
     }
-    let img = image::open(path).ok()?.to_rgba8();
-    rgba_to_pixmap(&img).map(Sprite::still)
+    // Le navigateur applique l'orientation EXIF (`image-orientation: from-image`), `image::open`
+    // non : une photo de téléphone prise en portrait ressortait couchée à l'export. Le format
+    // est aussi reconnu d'après le contenu, pas l'extension.
+    let mut decoder = image::ImageReader::open(path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?
+        .into_decoder()
+        .ok()?;
+    let orientation = decoder
+        .orientation()
+        .unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut img = image::DynamicImage::from_decoder(decoder).ok()?;
+    img.apply_orientation(orientation);
+    rgba_to_pixmap(&img.to_rgba8()).map(Sprite::still)
 }
 
 fn load_gif(path: &Path) -> Option<Sprite> {
+    load_gif_within(path, MAX_GIF_BYTES)
+}
+
+fn load_gif_within(path: &Path, budget: usize) -> Option<Sprite> {
     use image::AnimationDecoder;
     let file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
     let decoder = image::codecs::gif::GifDecoder::new(file).ok()?;
-    let mut frames = Vec::new();
+    let mut frames: Vec<SpriteFrame> = Vec::new();
     let mut total_ms = 0;
     let mut size = (0, 0);
+    let mut shift = 0;
+    let mut bytes = 0usize;
     for frame in decoder.into_frames().take(MAX_GIF_FRAMES) {
         let frame = frame.ok()?;
         let (num, den) = frame.delay().numer_denom_ms();
@@ -291,13 +377,34 @@ fn load_gif(path: &Path) -> Option<Sprite> {
         } else {
             (num as u64 / den as u64).max(20)
         };
-        let pixmap = rgba_to_pixmap(frame.buffer())?;
-        size = (pixmap.width(), pixmap.height());
+        let mut pixmap = rgba_to_pixmap(frame.buffer())?;
+        if frames.is_empty() {
+            size = (pixmap.width(), pixmap.height());
+        }
+        for _ in 0..shift {
+            pixmap = halve(&pixmap);
+        }
         total_ms += delay_ms;
+        bytes += pixmap.data().len();
         frames.push(SpriteFrame {
-            levels: vec![pixmap],
+            levels: sprite_levels(pixmap),
             delay_ms,
         });
+        // Budget mémoire : au-delà, toutes les frames sont réduites par 2 (un GIF de 30 s en
+        // 720p ferait 2 Go décodé à taille réelle).
+        while bytes > budget
+            && frames[0].levels[0]
+                .get()
+                .is_some_and(|p| p.width() >= 2 && p.height() >= 2)
+        {
+            shift += 1;
+            bytes = 0;
+            for f in frames.iter_mut() {
+                let halved = halve(f.levels[0].get().expect("niveau 0"));
+                bytes += halved.data().len();
+                f.levels = sprite_levels(halved);
+            }
+        }
     }
     if frames.is_empty() {
         return None;
@@ -311,14 +418,39 @@ fn load_gif(path: &Path) -> Option<Sprite> {
         frames,
         total_ms,
         size,
+        shift,
     })
 }
 
+/// Les images décodées, partagées entre les workers d'un export : une copie, pas une par worker.
+/// Références faibles : la mémoire est rendue dès que le dernier worker a fini.
+fn shared_sprite(path: &Path) -> Option<Arc<Sprite>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Weak<Sprite>>>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(sprite) = cache.get(path).and_then(Weak::upgrade) {
+        return Some(sprite);
+    }
+    // Le verrou reste pris pendant le décodage : les autres workers attendent ce même résultat
+    // au lieu de décoder chacun leur copie.
+    let sprite = Arc::new(load_sprite(path)?);
+    cache.retain(|_, weak| weak.strong_count() > 0);
+    cache.insert(path.to_path_buf(), Arc::downgrade(&sprite));
+    Some(sprite)
+}
+
 /// Recadrage et filtre de couleur d'un élément vidéo, tels que ffmpeg les applique au décodage.
+#[derive(Clone)]
 struct VideoFx {
     crop: Option<VideoCrop>,
     chain: String,
 }
+
+/// Ce dont dépend `VideoFx` : tant que c'est identique, la chaîne n'est pas reconstruite (le JSON des
+/// filtres était reparsé à chaque frame, pour chaque vidéo).
+type FxSignature = (Option<String>, Option<VideoCrop>);
 
 impl VideoFx {
     fn of(el: &crate::model::VideoElement) -> Self {
@@ -332,8 +464,134 @@ impl VideoFx {
 
 /// Décodeur de vidéo en cours pour un élément (voir `FrameRenderer::video_frame_at`).
 struct ActiveVideo {
-    stream: VideoStream,
+    video: Arc<SharedVideo>,
     last_used: u64,
+}
+
+/// Nombre de frames décodées gardées pour les workers : ils avancent à peu près de concert (chacun
+/// rend une frame sur N, dans l'ordre), donc quelques dizaines suffisent à ne jamais rouvrir.
+const SHARED_WINDOW_FRAMES: u64 = 64;
+
+/// Un décodeur ffmpeg partagé par tous les workers d'un export : la vidéo est décodée **une
+/// fois** et les frames sont distribuées en `Arc<Pixmap>`. Sans lui, chacun des N workers décodait
+/// tout le flux pour n'en garder qu'une frame sur N.
+struct SharedVideo {
+    source: PathBuf,
+    fps: u32,
+    out_size: (u32, u32),
+    chain: String,
+    state: Mutex<SharedVideoState>,
+}
+
+struct SharedVideoState {
+    stream: VideoStream,
+    window: VecDeque<(u64, Arc<Pixmap>)>,
+}
+
+impl SharedVideo {
+    fn open(
+        source: &Path,
+        fps: u32,
+        start_idx: u64,
+        out_size: (u32, u32),
+        chain: &str,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            source: source.to_path_buf(),
+            fps,
+            out_size,
+            chain: chain.to_string(),
+            state: Mutex::new(SharedVideoState {
+                stream: VideoStream::open(source, fps, start_idx, out_size, chain)?,
+                window: VecDeque::new(),
+            }),
+        })
+    }
+
+    #[cfg(test)]
+    fn size(&self) -> (u32, u32) {
+        self.out_size
+    }
+
+    fn same_stream(&self, source: &Path, fps: u32, out_size: (u32, u32), chain: &str) -> bool {
+        self.source == source && self.fps == fps && self.out_size == out_size && self.chain == chain
+    }
+
+    /// La frame `idx` : déjà décodée (fenêtre), lue en avançant dans le flux, ou — retour en
+    /// arrière après une boucle, saut trop long — après réouverture au bon endroit. Le flux
+    /// terminé reste figé sur sa dernière frame.
+    fn frame(&self, idx: u64) -> Option<Arc<Pixmap>> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, frame)) = state.window.iter().find(|(i, _)| *i == idx) {
+            return Some(frame.clone());
+        }
+        let oldest = state.window.front().map(|(i, _)| *i);
+        let behind = oldest.map_or_else(|| idx < state.stream.start_idx(), |oldest| idx < oldest);
+        let ended_before = state.stream.is_ended() && idx > state.stream.current_idx().unwrap_or(0);
+        if !ended_before && (behind || state.stream.needs_reopen(idx, self.fps as u64 * 2)) {
+            state.stream =
+                VideoStream::open(&self.source, self.fps, idx, self.out_size, &self.chain).ok()?;
+            state.window.clear();
+        }
+        let keep_from = idx.saturating_sub(SHARED_WINDOW_FRAMES);
+        while !state.stream.is_ended() && state.stream.current_idx().is_none_or(|c| c < idx) {
+            let next = state
+                .stream
+                .current_idx()
+                .map_or(state.stream.start_idx(), |c| c + 1);
+            if !state.stream.advance() {
+                break;
+            }
+            if next >= keep_from {
+                // ffmpeg écrit du RGBA droit, le Pixmap est prémultiplié : sans conversion, une vidéo
+                // avec alpha aurait des franges claires.
+                let mut copy = state.stream.frame().clone();
+                premultiply(&mut copy);
+                let frame = Arc::new(copy);
+                state.window.push_back((next, frame));
+                while state.window.len() as u64 > SHARED_WINDOW_FRAMES {
+                    state.window.pop_front();
+                }
+            }
+        }
+        // Frame demandée, ou — flux terminé avant elle — la dernière.
+        state
+            .window
+            .iter()
+            .find(|(i, _)| *i == idx)
+            .or_else(|| state.window.back())
+            .map(|(_, frame)| frame.clone())
+    }
+}
+
+/// Les décodeurs vidéo ouverts, partagés entre les `FrameRenderer` d'un même export (références
+/// faibles : un décodeur s'arrête quand plus aucun worker ne s'en sert).
+#[derive(Default)]
+pub struct SharedVideos {
+    map: Mutex<HashMap<String, Weak<SharedVideo>>>,
+}
+
+impl SharedVideos {
+    fn get_or_open(
+        &self,
+        key: &str,
+        source: &Path,
+        fps: u32,
+        start_idx: u64,
+        out_size: (u32, u32),
+        chain: &str,
+    ) -> Result<Arc<SharedVideo>, String> {
+        let mut map = self.map.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(video) = map.get(key).and_then(Weak::upgrade) {
+            if video.same_stream(source, fps, out_size, chain) {
+                return Ok(video);
+            }
+        }
+        let video = Arc::new(SharedVideo::open(source, fps, start_idx, out_size, chain)?);
+        map.retain(|_, weak| weak.strong_count() > 0);
+        map.insert(key.to_string(), Arc::downgrade(&video));
+        Ok(video)
+    }
 }
 
 /// Moteur de texte : polices et cache de glyphes, plus les tailles « auto » déjà calculées.
@@ -345,17 +603,26 @@ struct TextEngine {
 
 pub struct FrameRenderer {
     text: TextEngine,
-    sprites: HashMap<String, Option<Sprite>>,
+    sprites: HashMap<String, Option<Arc<Sprite>>>,
     layers: LayerCache,
     media_paths: HashMap<String, Option<PathBuf>>,
     probes: HashMap<String, Option<VideoProbe>>,
     videos: HashMap<String, ActiveVideo>,
+    fx_cache: HashMap<String, (FxSignature, VideoFx)>,
+    /// Décodeurs partagés avec les autres workers du même export.
+    shared_videos: Arc<SharedVideos>,
     /// Calque de scène réutilisé d'une frame à l'autre (transitions).
     scene_buffer: Option<Pixmap>,
     frame_counter: u64,
     /// Sources média (image/vidéo) introuvables ou illisibles rencontrées pendant le rendu,
     /// sans doublon — l'appelant les remonte à l'utilisateur.
     pub missing_media: Vec<String>,
+}
+
+/// Partie entière d'un numéro de frame calculé en flottant : `(123/30)*30` vaut `122,99999…`, et
+/// un `floor` brut tombe alors sur la frame précédente (une frame dupliquée puis une sautée).
+fn frame_floor(frames: f64) -> i64 {
+    (frames + 1e-6).floor() as i64
 }
 
 /// Index (1-based) de la frame extraite à afficher pour `local_time` (secondes dans la source).
@@ -370,8 +637,8 @@ fn video_frame_index(
     video_offset: f64,
 ) -> i64 {
     let count = count as i64;
-    let raw_idx = (local_time.max(0.0) * fps as f64).floor() as i64;
-    let start_idx = ((video_offset.max(0.0) * fps as f64).floor() as i64).clamp(0, count - 1);
+    let raw_idx = frame_floor(local_time.max(0.0) * fps as f64);
+    let start_idx = frame_floor(video_offset.max(0.0) * fps as f64).clamp(0, count - 1);
     let span = count - start_idx;
     if loop_video && span > 0 && raw_idx >= count {
         start_idx + (raw_idx - start_idx).rem_euclid(span) + 1
@@ -380,27 +647,46 @@ fn video_frame_index(
     }
 }
 
-/// Famille cosmic-text depuis un `font-family` CSS : première entrée d'une liste, sans guillemets,
-/// familles génériques reconnues, repli sur la police de l'interface.
-fn font_family(name: Option<&str>) -> Family<'_> {
-    let first = name
-        .and_then(|n| n.split(',').next())
+/// Famille cosmic-text depuis un `font-family` CSS : comme le navigateur, la première entrée de la
+/// liste qui existe (famille générique, ou police installée selon `installed`), sans guillemets ;
+/// repli sur la police de l'interface.
+fn font_family<'a>(name: Option<&'a str>, installed: impl Fn(&str) -> bool) -> Family<'a> {
+    let entries = name
+        .into_iter()
+        .flat_map(|n| n.split(','))
         .map(|n| n.trim().trim_matches(|c| c == '"' || c == '\'').trim())
         .filter(|n| !n.is_empty());
-    match first {
-        None => Family::Name(DEFAULT_FONT_FAMILY),
-        Some(n) if n.eq_ignore_ascii_case("sans-serif") => Family::SansSerif,
-        Some(n) if n.eq_ignore_ascii_case("serif") => Family::Serif,
-        Some(n) if n.eq_ignore_ascii_case("monospace") => Family::Monospace,
-        Some(n) if n.eq_ignore_ascii_case("cursive") => Family::Cursive,
-        Some(n) if n.eq_ignore_ascii_case("fantasy") => Family::Fantasy,
-        Some(n) => Family::Name(n),
+    let mut last_named = None;
+    for n in entries {
+        let generic = match n.to_ascii_lowercase().as_str() {
+            "sans-serif" => Some(Family::SansSerif),
+            "serif" => Some(Family::Serif),
+            "monospace" => Some(Family::Monospace),
+            "cursive" => Some(Family::Cursive),
+            "fantasy" => Some(Family::Fantasy),
+            _ => None,
+        };
+        if let Some(family) = generic {
+            return family;
+        }
+        if installed(n) {
+            return Family::Name(n);
+        }
+        last_named.get_or_insert(n);
     }
+    // Aucune ne figure dans la liste des polices : la première est tentée telle quelle (cosmic-text
+    // retombe sur une police par défaut), sinon la police de l'interface.
+    last_named.map_or(Family::Name(DEFAULT_FONT_FAMILY), Family::Name)
 }
 
 /// Attributs cosmic-text (famille/graisse/style) d'un élément texte — partagé entre la mise en
 /// page de mesure (`text_fits_at_size`) et le rendu pour garantir des métriques identiques.
-fn text_attrs(text_el: &TextElement) -> Attrs<'_> {
+fn text_attrs<'a>(
+    text_el: &'a TextElement,
+    font_size_px: f32,
+    canvas_w: f32,
+    installed: impl Fn(&str) -> bool,
+) -> Attrs<'a> {
     let weight = if text_el.font_weight == Some(FontWeight::Bold) {
         Weight(WEIGHT_BOLD)
     } else {
@@ -411,10 +697,19 @@ fn text_attrs(text_el: &TextElement) -> Attrs<'_> {
     } else {
         cosmic_text::Style::Normal
     };
+    // L'espacement de lettres fait partie de la mise en page (cosmic-text le compte en em) : le
+    // retour à la ligne et l'auto-fit en tiennent compte, comme la preview.
+    let letter_spacing_em = letter_spacing_px(text_el, canvas_w) / font_size_px.max(1.0);
     Attrs::new()
-        .family(font_family(text_el.font_family.as_deref()))
+        .family(font_family(text_el.font_family.as_deref(), installed))
         .weight(weight)
         .style(style)
+        .letter_spacing(letter_spacing_em)
+}
+
+/// Espacement entre les lettres (px) : `letter_spacing` est en centièmes de la largeur du canvas.
+fn letter_spacing_px(text_el: &TextElement, canvas_w: f32) -> f32 {
+    (text_el.letter_spacing.unwrap_or(0.0) / 100.0) as f32 * canvas_w
 }
 
 /// Multiplicateur de hauteur de ligne (borné pour ne jamais produire une hauteur nulle, que
@@ -501,10 +796,23 @@ impl Default for FrameRenderer {
 
 impl FrameRenderer {
     pub fn new() -> Self {
-        let mut font_system = FontSystem::new();
-        for data in EMBEDDED_FONTS {
-            font_system.db_mut().load_font_data(data.to_vec());
-        }
+        Self::with_shared_videos(Arc::default())
+    }
+
+    /// Un moteur qui partage ses décodeurs vidéo avec les autres : les workers d'un export
+    /// reçoivent le même `SharedVideos` et décodent chaque vidéo une seule fois à eux tous.
+    pub fn with_shared_videos(shared_videos: Arc<SharedVideos>) -> Self {
+        // Le scan des polices du système coûte des centaines de ms : fait une seule fois pour le
+        // processus, chaque worker d'export en reçoit une copie.
+        static BASE: OnceLock<(String, cosmic_text::fontdb::Database)> = OnceLock::new();
+        let (locale, db) = BASE.get_or_init(|| {
+            let mut font_system = FontSystem::new();
+            for data in EMBEDDED_FONTS {
+                font_system.db_mut().load_font_data(data.to_vec());
+            }
+            (font_system.locale().to_string(), font_system.db().clone())
+        });
+        let font_system = FontSystem::new_with_locale_and_db(locale.clone(), db.clone());
         Self {
             text: TextEngine {
                 font_system,
@@ -516,6 +824,8 @@ impl FrameRenderer {
             media_paths: HashMap::new(),
             probes: HashMap::new(),
             videos: HashMap::new(),
+            fx_cache: HashMap::new(),
+            shared_videos,
             scene_buffer: None,
             frame_counter: 0,
             missing_media: Vec::new(),
@@ -537,17 +847,32 @@ impl FrameRenderer {
             .clone()
     }
 
-    fn sprite(&mut self, project_dir: &Path, relative_src: &str) -> Option<&mut Sprite> {
+    fn sprite(&mut self, project_dir: &Path, relative_src: &str) -> Option<Arc<Sprite>> {
         if !self.sprites.contains_key(relative_src) {
             let loaded = self
                 .media_path(project_dir, relative_src)
-                .and_then(|path| load_sprite(&path));
+                .and_then(|path| shared_sprite(&path));
             if loaded.is_none() {
                 self.note_missing(relative_src);
             }
             self.sprites.insert(relative_src.to_string(), loaded);
         }
-        self.sprites.get_mut(relative_src)?.as_mut()
+        self.sprites.get(relative_src)?.clone()
+    }
+
+    /// Les caractéristiques de la vidéo, sondées une seule fois. À appeler **avant** de fixer
+    /// l'échelle de décodage : sans sonde, le premier flux serait décodé en pleine résolution.
+    fn probe(&mut self, project_dir: &Path, relative_src: &str) -> Option<VideoProbe> {
+        if let Some(p) = self.probes.get(relative_src) {
+            return *p;
+        }
+        let source = self.media_path(project_dir, relative_src);
+        let probe = source.as_deref().and_then(probe_video);
+        if probe.is_none() {
+            self.note_missing(relative_src);
+        }
+        self.probes.insert(relative_src.to_string(), probe);
+        probe
     }
 
     /// Frame décodée de la vidéo de l'élément `key` à `local_time` (secondes dans la source),
@@ -566,45 +891,37 @@ impl FrameRenderer {
         video_offset: f64,
         target_scale: f32,
         fx: &VideoFx,
-    ) -> Option<(&Pixmap, (u32, u32))> {
+    ) -> Option<(Arc<Pixmap>, (u32, u32))> {
         let source = self.media_path(project_dir, relative_src);
-        let probe = match self.probes.get(relative_src) {
-            Some(p) => *p,
-            None => {
-                let probe = source.as_deref().and_then(probe_video);
-                if probe.is_none() {
-                    self.note_missing(relative_src);
-                }
-                self.probes.insert(relative_src.to_string(), probe);
-                probe
-            }
-        }?;
+        let probe = self.probe(project_dir, relative_src)?;
         let source = source?;
         let count = if probe.duration > 0.0 {
-            ((probe.duration * fps as f64).floor() as u32).max(1)
+            (frame_floor(probe.duration * fps as f64) as u32).max(1)
         } else {
             u32::MAX
         };
         let idx = (video_frame_index(local_time, fps, count, loop_video, video_offset) - 1) as u64;
 
-        let reopen = self
-            .videos
-            .get(key)
-            .is_none_or(|v| v.stream.needs_reopen(idx, fps as u64 * 2));
-        if reopen {
-            self.videos.remove(key);
+        if !self.videos.contains_key(key) {
             let scale = target_scale.clamp(0.05, 1.0);
             let (full_w, full_h) = effective_size((probe.width, probe.height), fx.crop);
             let out_size = (
                 ((full_w as f32 * scale).ceil() as u32).max(2),
                 ((full_h as f32 * scale).ceil() as u32).max(2),
             );
-            match VideoStream::open(&source, fps, idx, out_size, &fx.chain) {
-                Ok(stream) => {
+            match self.shared_videos.get_or_open(
+                &format!("{}\n{key}", source.display()),
+                &source,
+                fps,
+                idx,
+                out_size,
+                &fx.chain,
+            ) {
+                Ok(video) => {
                     self.videos.insert(
                         key.to_string(),
                         ActiveVideo {
-                            stream,
+                            video,
                             last_used: self.frame_counter,
                         },
                     );
@@ -617,14 +934,18 @@ impl FrameRenderer {
         }
         let active = self.videos.get_mut(key)?;
         active.last_used = self.frame_counter;
-        let pixmap = active.stream.frame_at(idx)?;
+        let Some(pixmap) = active.video.frame(idx) else {
+            // Sondée mais non décodable : le gris de remplacement doit être signalé à l'utilisateur.
+            self.note_missing(relative_src);
+            return None;
+        };
         Some((pixmap, effective_size((probe.width, probe.height), fx.crop)))
     }
 
     pub fn render_frame(&mut self, project: &Project, project_dir: &Path, t: f64) -> Pixmap {
         let width = project.width.max(1);
         let height = project.height.max(1);
-        let mut canvas = Pixmap::new(width, height).expect("dimensions non nulles");
+        let mut canvas = pixmap_or_blank(width, height);
         canvas.fill(Color::BLACK);
         self.frame_counter += 1;
 
@@ -713,7 +1034,11 @@ impl FrameRenderer {
             Some(m)
         });
 
-        if opacity >= 0.999 && comp_transform.is_identity() && mask.is_none() {
+        // La transition « Blur » floute toute la scène (en unités de longueur, comme les éléments).
+        let unit = width as f32 / LENGTH_UNITS_PER_WIDTH;
+        let scene_blur = comp_in.blur_px.max(comp_out.blur_px) as f32 * unit;
+
+        if opacity >= 0.999 && comp_transform.is_identity() && mask.is_none() && scene_blur <= 0.5 {
             self.draw_elements(canvas, composition, local_time, project_dir, fps);
             return;
         }
@@ -723,9 +1048,12 @@ impl FrameRenderer {
                 buffer.fill(Color::TRANSPARENT);
                 buffer
             }
-            _ => Pixmap::new(width, height).expect("dimensions non nulles"),
+            _ => pixmap_or_blank(width, height),
         };
         self.draw_elements(&mut scene, composition, local_time, project_dir, fps);
+        if scene_blur > 0.5 {
+            box_blur(&mut scene, scene_blur);
+        }
         canvas.draw_pixmap(
             0,
             0,
@@ -815,17 +1143,34 @@ impl FrameRenderer {
                         let orig = sprite.size;
                         let scale = fit_scale(img_el.fit_mode, inner, orig, pan.0 as f32);
                         let pixmap = sprite.pixmap_at(local_element_time, scale.0.max(scale.1));
-                        draw_bitmap(
-                            scene,
-                            Bitmap {
-                                pixmap,
-                                orig_size: orig,
-                            },
-                            img_el.fit_mode,
-                            &ctx,
-                            &style,
-                            pan,
-                        );
+                        let bitmap = Bitmap {
+                            pixmap,
+                            orig_size: orig,
+                        };
+                        if pan == (1.0, 0.0, 0.0) && ctx.blur_px <= 0.5 {
+                            // Image fixe (ni mouvement, ni flou) : le calque est identique d'une
+                            // frame à l'autre, il est rendu une fois (un GIF change de frame, donc
+                            // de pixmap, donc de clé).
+                            let key = hash_key(&[
+                                &(pixmap as *const Pixmap as usize),
+                                &img_el.fit_mode,
+                                &ctx.w.to_bits(),
+                                &ctx.h.to_bits(),
+                                &ctx.unit.to_bits(),
+                                &style.corner_radius.map(f64::to_bits),
+                                &style.border_color,
+                                &style.border_width.map(f64::to_bits),
+                                &style.background,
+                            ]);
+                            let layer = self.layers.get_or_insert_with(key, || {
+                                render_bitmap_layer(bitmap, img_el.fit_mode, &ctx, &style, pan)
+                            });
+                            if let Some(layer) = layer {
+                                composite_layer(scene, &layer, &ctx);
+                            }
+                        } else {
+                            draw_bitmap(scene, bitmap, img_el.fit_mode, &ctx, &style, pan);
+                        }
                     } else {
                         draw_placeholder(scene, img_el.background_color.as_deref(), &ctx);
                     }
@@ -857,11 +1202,17 @@ impl FrameRenderer {
                         let s = fit_scale(video_el.fit_mode, inner, orig, 1.0);
                         (s.0.max(s.1) * 2.0).min(1.0)
                     };
-                    let fx = VideoFx::of(video_el);
+                    let signature: FxSignature = (video_el.color_filter.clone(), video_el.crop);
+                    let fx = match self.fx_cache.get(&key) {
+                        Some((cached, fx)) if *cached == signature => fx.clone(),
+                        _ => {
+                            let fx = VideoFx::of(video_el);
+                            self.fx_cache.insert(key.clone(), (signature, fx.clone()));
+                            fx
+                        }
+                    };
                     let probe_size = self
-                        .probes
-                        .get(&video_el.src)
-                        .and_then(|p| p.as_ref())
+                        .probe(project_dir, &video_el.src)
                         .map(|p| effective_size((p.width, p.height), fx.crop));
                     let target_scale = probe_size.map(frame_scale).unwrap_or(1.0);
                     let frame = self.video_frame_at(
@@ -879,7 +1230,7 @@ impl FrameRenderer {
                         draw_bitmap(
                             scene,
                             Bitmap {
-                                pixmap,
+                                pixmap: &pixmap,
                                 orig_size: orig,
                             },
                             video_el.fit_mode,
@@ -930,9 +1281,18 @@ impl FrameRenderer {
             Some((AnimationType::LineReveal, progress)) => {
                 let total_lines = text_el.content.split('\n').count();
                 let visible = ((total_lines as f64) * progress).round().max(0.0) as usize;
+                // Comme la preview : le contenu est tronqué (puis mis en page, donc recentré),
+                // il n'est pas masqué ligne par ligne.
                 (
-                    std::borrow::Cow::Borrowed(text_el.content.as_str()),
-                    Some(visible),
+                    std::borrow::Cow::Owned(
+                        text_el
+                            .content
+                            .split('\n')
+                            .take(visible)
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    ),
+                    None,
                 )
             }
             _ => (std::borrow::Cow::Borrowed(text_el.content.as_str()), None),
@@ -941,7 +1301,9 @@ impl FrameRenderer {
         let canvas_w = scene.width() as f32;
         let font_size_px = match text_el.font_size {
             Some(fs) => ((fs / 100.0) as f32 * canvas_w).max(1.0),
-            None => self.text.autofit_font_size_px(text_el, ctx.w, ctx.h),
+            None => self
+                .text
+                .autofit_font_size_px(text_el, ctx.w, ctx.h, canvas_w),
         };
 
         let key = hash_key(&[
@@ -1005,12 +1367,20 @@ impl TextEngine {
         content: &str,
         font_size_px: f32,
         w_px: f32,
+        canvas_w: f32,
     ) -> (Buffer, f32, f32) {
         let line_height_px = font_size_px * line_height_factor(text_el);
         let metrics = Metrics::new(font_size_px, line_height_px);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
         buffer.set_size(Some(w_px), None);
-        let attrs = text_attrs(text_el);
+        let db = self.font_system.db();
+        let attrs = text_attrs(text_el, font_size_px, canvas_w, |wanted| {
+            db.faces().any(|face| {
+                face.families
+                    .iter()
+                    .any(|(n, _)| n.eq_ignore_ascii_case(wanted))
+            })
+        });
         buffer.set_text(content, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut self.font_system, false);
         let lines = buffer.layout_runs().count();
@@ -1029,15 +1399,23 @@ impl TextEngine {
         font_size_px: f32,
         w_px: f32,
         h_px: f32,
+        canvas_w: f32,
     ) -> bool {
-        let (_, total_height, widest) = self.measure(text_el, &text_el.content, font_size_px, w_px);
+        let (_, total_height, widest) =
+            self.measure(text_el, &text_el.content, font_size_px, w_px, canvas_w);
         total_height <= h_px + 0.5 && widest <= w_px + 0.5
     }
 
     /// Recherche par dichotomie la plus grande taille de police (px) qui tient dans la boîte
     /// `w_px`×`h_px` — implémente `font_size: None` (auto-fit). Résultat mis en cache : il ne
     /// dépend que du texte complet, de la police et de la boîte (11 mises en page par calcul).
-    fn autofit_font_size_px(&mut self, text_el: &TextElement, w_px: f32, h_px: f32) -> f32 {
+    fn autofit_font_size_px(
+        &mut self,
+        text_el: &TextElement,
+        w_px: f32,
+        h_px: f32,
+        canvas_w: f32,
+    ) -> f32 {
         let key = hash_key(&[
             &text_el.content,
             &text_el.font_family,
@@ -1046,20 +1424,21 @@ impl TextEngine {
             &line_height_factor(text_el).to_bits(),
             &w_px.to_bits(),
             &h_px.to_bits(),
+            &letter_spacing_px(text_el, canvas_w).to_bits(),
         ]);
         if let Some(size) = self.autofit.get(&key) {
             return *size;
         }
         let mut lo = 2.0f32;
         let mut hi = h_px.max(lo + 1.0);
-        let size = if !self.text_fits_at_size(text_el, lo, w_px, h_px) {
+        let size = if !self.text_fits_at_size(text_el, lo, w_px, h_px, canvas_w) {
             // Même la taille minimale déborde (boîte trop petite / contenu trop long) : on
             // reste sur ce plancher plutôt que de produire un texte invisible (taille 0).
             lo
         } else {
             for _ in 0..10 {
                 let mid = (lo + hi) / 2.0;
-                if self.text_fits_at_size(text_el, mid, w_px, h_px) {
+                if self.text_fits_at_size(text_el, mid, w_px, h_px, canvas_w) {
                     lo = mid;
                 } else {
                     hi = mid;
@@ -1089,7 +1468,6 @@ fn paint_glyphs(
     target: &mut Pixmap,
     color: CosmicColor,
     offset: (f32, f32),
-    letter_spacing_px: f32,
     h_offset: &dyn Fn(&cosmic_text::LayoutRun) -> f32,
     visible_lines: Option<usize>,
     mut line_bounds: Option<&mut Vec<(f32, f32, f32)>>,
@@ -1099,11 +1477,11 @@ fn paint_glyphs(
         if visible_lines.is_some_and(|max| run.line_i >= max) {
             continue;
         }
-        let mut cumulative_spacing = h_offset(&run) + offset.0;
+        // L'espacement de lettres est déjà dans la position de chaque glyphe (mise en page).
+        let origin_x = h_offset(&run) + offset.0;
         let (mut min_x, mut max_x) = (f32::MAX, f32::MIN);
         for glyph in run.glyphs {
-            let physical = glyph.physical((cumulative_spacing, offset.1 + run.line_y), 1.0);
-            cumulative_spacing += letter_spacing_px;
+            let physical = glyph.physical((origin_x, offset.1 + run.line_y), 1.0);
             min_x = min_x.min(physical.x as f32);
             max_x = max_x.max(physical.x as f32 + glyph.w);
             engine.swash_cache.with_pixels(
@@ -1116,6 +1494,9 @@ fn paint_glyphs(
                     if ix < 0 || iy < 0 || ix >= target_w || iy >= target_h {
                         return;
                     }
+                    // cosmic-text remplace l'alpha de la couleur par la couverture du glyphe : on
+                    // la réapplique, sinon `rgba(…, 0.85)` sortirait opaque (et `rgba(…, 0)` noir).
+                    let alpha = (u32::from(gcolor.a()) * u32::from(color.a()) + 127) / 255;
                     blend_pixel(
                         target,
                         ix as u32,
@@ -1123,7 +1504,7 @@ fn paint_glyphs(
                         gcolor.r(),
                         gcolor.g(),
                         gcolor.b(),
-                        gcolor.a(),
+                        alpha as u8,
                     );
                 },
             );
@@ -1150,7 +1531,16 @@ fn render_text_layer(
 ) -> Option<Layer> {
     let (w_px, h_px) = (ctx.w, ctx.h);
     let line_height_px = font_size_px * line_height_factor(text_el);
-    let (buffer, total_text_height, _) = engine.measure(text_el, content, font_size_px, w_px);
+    let (buffer, total_text_height, widest) =
+        engine.measure(text_el, content, font_size_px, w_px, canvas_w);
+    // Un mot plus large que la boîte (une URL) déborde : le calque s'élargit du côté où la preview
+    // le laisse déborder, au lieu de le couper.
+    let extra_w = (widest - w_px).max(0.0).ceil();
+    let (overflow_left, overflow_right) = match text_el.alignment {
+        TextAlign::Left => (0.0, extra_w),
+        TextAlign::Center => ((extra_w / 2.0).floor(), (extra_w / 2.0).ceil()),
+        TextAlign::Right => (extra_w, 0.0),
+    };
 
     // Position verticale du texte dans la boîte (négative si le texte est plus haut qu'elle).
     let v_in_box = match text_el.vertical_alignment {
@@ -1161,7 +1551,7 @@ fn render_text_layer(
     let halo = ctx.halo();
     let overflow_top = (-v_in_box).max(0.0).ceil();
     let overflow_bottom = (v_in_box + total_text_height - h_px).max(0.0).ceil();
-    let layer_w = (w_px.ceil() + 2.0 * halo).max(1.0) as u32;
+    let layer_w = (w_px.ceil() + 2.0 * halo + overflow_left + overflow_right).max(1.0) as u32;
     let layer_h = (h_px.ceil() + overflow_top + overflow_bottom + 2.0 * halo).max(1.0) as u32;
     let mut layer = Pixmap::new(layer_w, layer_h)?;
     let box_top = halo + overflow_top;
@@ -1170,25 +1560,26 @@ fn render_text_layer(
     // seulement derrière les glyphes.
     if let Some(bg) = text_el.background_color.as_deref() {
         let mut paint = Paint::default();
-        paint.set_color(parse_css_color(bg));
-        if let Some(rect) = Rect::from_xywh(halo, box_top, w_px.ceil(), h_px.ceil()) {
+        paint.set_color(css_color_or_transparent(bg));
+        if let Some(rect) = Rect::from_xywh(halo + overflow_left, box_top, w_px.ceil(), h_px.ceil())
+        {
             layer.fill_rect(rect, &paint, Transform::identity(), None);
         }
     }
 
-    let color = parse_css_color(&text_el.color);
-    let letter_spacing_px = (text_el.letter_spacing.unwrap_or(0.0) / 100.0) as f32 * canvas_w;
+    let color = css_color_or_transparent(&text_el.color);
 
     // Décalage horizontal par ligne selon l'alignement (cosmic-text pose chaque run à gauche par
     // défaut) ; la largeur effective inclut l'espacement de lettres ajouté entre les glyphes.
     let alignment = text_el.alignment;
     let h_offset = move |run: &cosmic_text::LayoutRun| -> f32 {
-        let run_width = run.line_w + letter_spacing_px * run.glyphs.len().saturating_sub(1) as f32;
-        halo + match alignment {
-            TextAlign::Left => 0.0,
-            TextAlign::Center => ((w_px - run_width) / 2.0).max(0.0),
-            TextAlign::Right => (w_px - run_width).max(0.0),
-        }
+        let run_width = run.line_w;
+        halo + overflow_left
+            + match alignment {
+                TextAlign::Left => 0.0,
+                TextAlign::Center => ((w_px - run_width) / 2.0).max(0.0),
+                TextAlign::Right => (w_px - run_width).max(0.0),
+            }
     };
     let text_origin_y = box_top + v_in_box;
 
@@ -1200,9 +1591,8 @@ fn render_text_layer(
             engine,
             &buffer,
             &mut shadow_layer,
-            cosmic_color(parse_css_color(shadow_color)),
+            cosmic_color(css_color_or_transparent(shadow_color)),
             (offset, text_origin_y + offset),
-            letter_spacing_px,
             &h_offset,
             visible_lines,
             None,
@@ -1226,7 +1616,6 @@ fn render_text_layer(
         &mut layer,
         cosmic_color(color),
         (0.0, text_origin_y),
-        letter_spacing_px,
         &h_offset,
         visible_lines,
         Some(&mut line_bounds),
@@ -1266,7 +1655,7 @@ fn render_text_layer(
     }
     Some(Layer {
         pixmap: layer,
-        origin: (-halo, -box_top),
+        origin: (-(halo + overflow_left), -box_top),
     })
 }
 
@@ -1281,8 +1670,11 @@ fn box_pass(
     mut set: impl FnMut(i32, tiny_skia::PremultipliedColorU8),
     len: i32,
     radius: i32,
+    prefix: &mut Vec<(u32, u32, u32, u32)>,
 ) {
-    let mut prefix: Vec<(u32, u32, u32, u32)> = Vec::with_capacity(len as usize + 1);
+    // `prefix` est réutilisé d'une ligne à l'autre : une allocation par ligne et par passe coûtait
+    // 3×(H+W) allocations par flou.
+    prefix.clear();
     prefix.push((0, 0, 0, 0));
     let mut acc = (0u32, 0u32, 0u32, 0u32);
     for i in 0..len {
@@ -1328,8 +1720,10 @@ fn box_blur(pixmap: &mut Pixmap, sigma_px: f32) {
         return;
     }
     let mut tmp = vec![transparent(); (width * height) as usize];
+    let mut prefix: Vec<(u32, u32, u32, u32)> = Vec::with_capacity(width as usize + 1);
     for _ in 0..3 {
-        let src: Vec<tiny_skia::PremultipliedColorU8> = pixmap.pixels().to_vec();
+        // Horizontal : pixmap -> tmp (pas de copie intermédiaire), puis vertical : tmp -> pixmap.
+        let src = pixmap.pixels();
         for y in 0..height {
             let row = (y * width) as usize;
             box_pass(
@@ -1337,16 +1731,56 @@ fn box_blur(pixmap: &mut Pixmap, sigma_px: f32) {
                 |x, p| tmp[row + x as usize] = p,
                 width,
                 radius,
+                &mut prefix,
             );
         }
-        let pixels = pixmap.pixels_mut();
-        for x in 0..width {
-            box_pass(
-                |y| tmp[(y * width + x) as usize],
-                |y, p| pixels[(y * width + x) as usize] = p,
-                height,
-                radius,
+        box_pass_vertical(
+            &tmp,
+            pixmap.pixels_mut(),
+            width as usize,
+            height as usize,
+            radius as usize,
+        );
+    }
+}
+
+/// Passe verticale parcourue ligne par ligne (accès séquentiels) : une fenêtre glissante de
+/// sommes par colonne remplace le parcours colonne par colonne, défavorable au cache.
+fn box_pass_vertical(
+    src: &[tiny_skia::PremultipliedColorU8],
+    dst: &mut [tiny_skia::PremultipliedColorU8],
+    w: usize,
+    h: usize,
+    radius: usize,
+) {
+    let mut sums = vec![(0u32, 0u32, 0u32, 0u32); w];
+    let add = |sums: &mut [(u32, u32, u32, u32)], y: usize, sign: i64| {
+        for (s, p) in sums.iter_mut().zip(&src[y * w..(y + 1) * w]) {
+            let f = |acc: u32, v: u8| (acc as i64 + sign * v as i64) as u32;
+            *s = (
+                f(s.0, p.red()),
+                f(s.1, p.green()),
+                f(s.2, p.blue()),
+                f(s.3, p.alpha()),
             );
+        }
+    };
+    for y in 0..=radius.min(h - 1) {
+        add(&mut sums, y, 1);
+    }
+    for y in 0..h {
+        let count = (y + radius).min(h - 1) - y.saturating_sub(radius) + 1;
+        let count = count as u32;
+        let avg = |v: u32| ((v + count / 2) / count) as u8;
+        for (d, s) in dst[y * w..(y + 1) * w].iter_mut().zip(&sums) {
+            *d = tiny_skia::PremultipliedColorU8::from_rgba(avg(s.0), avg(s.1), avg(s.2), avg(s.3))
+                .unwrap_or_else(transparent);
+        }
+        if y + 1 + radius < h {
+            add(&mut sums, y + 1 + radius, 1);
+        }
+        if y >= radius {
+            add(&mut sums, y - radius, -1);
         }
     }
 }
@@ -1511,18 +1945,18 @@ fn render_shape_layer(shape_el: &crate::model::ShapeElement, ctx: &DrawCtx) -> O
             tiny_skia::Point::from_xy(0.5 - dx, 0.5 - dy),
             tiny_skia::Point::from_xy(0.5 + dx, 0.5 + dy),
             vec![
-                tiny_skia::GradientStop::new(0.0, parse_css_color(&shape_el.fill)),
-                tiny_skia::GradientStop::new(1.0, parse_css_color(gradient_to)),
+                tiny_skia::GradientStop::new(0.0, css_color_or_transparent(&shape_el.fill)),
+                tiny_skia::GradientStop::new(1.0, css_color_or_transparent(gradient_to)),
             ],
             tiny_skia::SpreadMode::Pad,
             Transform::from_row(w, 0.0, 0.0, h, pad, pad),
         ) {
             paint.shader = shader;
         } else {
-            paint.set_color(parse_css_color(&shape_el.fill));
+            paint.set_color(css_color_or_transparent(&shape_el.fill));
         }
     } else {
-        paint.set_color(parse_css_color(&shape_el.fill));
+        paint.set_color(css_color_or_transparent(&shape_el.fill));
     }
     // Un chemin ouvert (ligne) n'a pas de remplissage : seul son contour est visible.
     if shape_el.shape_type != ShapeType::Line {
@@ -1539,7 +1973,7 @@ fn render_shape_layer(shape_el: &crate::model::ShapeElement, ctx: &DrawCtx) -> O
     // preview) ; les autres formes n'ont de contour que si `stroke` est défini.
     let stroke_paint = if shape_el.stroke != "none" {
         let mut p = Paint::default();
-        p.set_color(parse_css_color(&shape_el.stroke));
+        p.set_color(css_color_or_transparent(&shape_el.stroke));
         p.anti_alias = true;
         Some(p)
     } else if shape_el.shape_type == ShapeType::Line {
@@ -1615,17 +2049,28 @@ fn draw_bitmap(
     style: &MediaStyle,
     pan: (f64, f64, f64),
 ) {
+    if let Some(layer) = render_bitmap_layer(bitmap, fit_mode, ctx, style, pan) {
+        composite_layer(scene, &layer, ctx);
+    }
+}
+
+/// Le calque (fond, image ajustée et rognée, bordure, flou) d'une image ou d'une frame vidéo.
+fn render_bitmap_layer(
+    bitmap: Bitmap,
+    fit_mode: FitMode,
+    ctx: &DrawCtx,
+    style: &MediaStyle,
+    pan: (f64, f64, f64),
+) -> Option<Layer> {
     let Bitmap { pixmap, orig_size } = bitmap;
     let (w, h, unit) = (ctx.w, ctx.h, ctx.unit);
     if w < 1.0 || h < 1.0 || pixmap.width() == 0 || pixmap.height() == 0 {
-        return;
+        return None;
     }
     let halo = ctx.halo();
     let layer_w = (w.ceil() + 2.0 * halo).max(1.0) as u32;
     let layer_h = (h.ceil() + 2.0 * halo).max(1.0) as u32;
-    let Some(mut layer) = Pixmap::new(layer_w, layer_h) else {
-        return;
-    };
+    let mut layer = Pixmap::new(layer_w, layer_h)?;
 
     let bw = style.border_px(unit);
     let radius = style.corner_radius.unwrap_or(0.0) as f32 * unit;
@@ -1639,7 +2084,7 @@ fn draw_bitmap(
         let clip_path = pb.finish();
         if let (Some(bg), Some(path)) = (style.background, clip_path.as_ref()) {
             let mut paint = Paint::default();
-            paint.set_color(parse_css_color(bg));
+            paint.set_color(css_color_or_transparent(bg));
             layer.fill_path(path, &paint, FillRule::Winding, Transform::identity(), None);
         }
 
@@ -1647,8 +2092,15 @@ fn draw_bitmap(
         let (sx, sy) = fit_scale(fit_mode, (inner_w, inner_h), orig_size, pan_scale as f32);
         let scaled_w = orig_size.0 as f32 * sx;
         let scaled_h = orig_size.1 as f32 * sy;
-        let offset_x = inner_x + (inner_w - scaled_w) / 2.0 + (pan_dx_pct / 100.0) as f32 * inner_w;
-        let offset_y = inner_y + (inner_h - scaled_h) / 2.0 + (pan_dy_pct / 100.0) as f32 * inner_h;
+        // Le pourcentage du pan porte sur la boîte de l'<img> de la preview : la boîte du
+        // conteneur pour contain/cover/stretch, mais l'image elle-même (dimensions mises à
+        // l'échelle) pour fit-width et fit-height, où l'une des dimensions suit l'image.
+        let (pan_w, pan_h) = match fit_mode {
+            FitMode::FitWidth | FitMode::FitHeight => (scaled_w, scaled_h),
+            _ => (inner_w, inner_h),
+        };
+        let offset_x = inner_x + (inner_w - scaled_w) / 2.0 + (pan_dx_pct / 100.0) as f32 * pan_w;
+        let offset_y = inner_y + (inner_h - scaled_h) / 2.0 + (pan_dy_pct / 100.0) as f32 * pan_h;
         // `pixmap` peut être une réduction de la source : l'échelle part de sa propre taille.
         let img_transform = Transform::from_translate(offset_x, offset_y).pre_scale(
             scaled_w / pixmap.width() as f32,
@@ -1687,7 +2139,7 @@ fn draw_bitmap(
             }
             if let Some(ring) = pb.finish() {
                 let mut paint = Paint::default();
-                paint.set_color(parse_css_color(color));
+                paint.set_color(css_color_or_transparent(color));
                 paint.anti_alias = true;
                 layer.fill_path(
                     &ring,
@@ -1703,14 +2155,10 @@ fn draw_bitmap(
     if ctx.blur_px > 0.5 {
         box_blur(&mut layer, ctx.blur_px);
     }
-    composite_layer(
-        scene,
-        &Layer {
-            pixmap: layer,
-            origin: (-halo, -halo),
-        },
-        ctx,
-    );
+    Some(Layer {
+        pixmap: layer,
+        origin: (-halo, -halo),
+    })
 }
 
 fn premultiply(pixmap: &mut Pixmap) {
@@ -1734,7 +2182,7 @@ fn draw_placeholder(scene: &mut Pixmap, background: Option<&str>, ctx: &DrawCtx)
     };
     let mut paint = Paint::default();
     let mut color = background
-        .map(parse_css_color)
+        .map(css_color_or_transparent)
         .unwrap_or(Color::from_rgba8(40, 40, 48, 255));
     color.set_alpha(color.alpha() * ctx.opacity);
     paint.set_color(color);
@@ -1996,23 +2444,33 @@ mod tests {
     fn autofit_font_size_shrinks_for_smaller_boxes() {
         let text_el = text("t1", "Bonjour tout le monde", None);
         let mut renderer = FrameRenderer::new();
-        let large = renderer.text.autofit_font_size_px(&text_el, 400.0, 400.0);
-        let small = renderer.text.autofit_font_size_px(&text_el, 80.0, 40.0);
+        let large = renderer
+            .text
+            .autofit_font_size_px(&text_el, 400.0, 400.0, 800.0);
+        let small = renderer
+            .text
+            .autofit_font_size_px(&text_el, 80.0, 40.0, 800.0);
         assert!(
             large > small,
             "une boîte plus petite doit produire une taille de police plus petite (large={large}, small={small})"
         );
-        assert!(renderer.text.text_fits_at_size(&text_el, small, 80.0, 40.0));
+        assert!(renderer
+            .text
+            .text_fits_at_size(&text_el, small, 80.0, 40.0, 800.0));
     }
 
     #[test]
     fn autofit_result_is_cached() {
         let text_el = text("t1", "Bonjour", None);
         let mut renderer = FrameRenderer::new();
-        let first = renderer.text.autofit_font_size_px(&text_el, 300.0, 100.0);
+        let first = renderer
+            .text
+            .autofit_font_size_px(&text_el, 300.0, 100.0, 800.0);
         assert_eq!(renderer.text.autofit.len(), 1);
         assert_eq!(
-            renderer.text.autofit_font_size_px(&text_el, 300.0, 100.0),
+            renderer
+                .text
+                .autofit_font_size_px(&text_el, 300.0, 100.0, 800.0),
             first
         );
         assert_eq!(renderer.text.autofit.len(), 1);
@@ -2084,6 +2542,110 @@ mod tests {
         assert!(
             lowest > 10,
             "le texte doit déborder de sa boîte (dernière ligne: {lowest})"
+        );
+    }
+
+    #[test]
+    fn an_invalid_fill_colour_draws_nothing_instead_of_opaque_white() {
+        for invalid in ["", "none", "currentColor", "not-a-colour"] {
+            let mut rect = shape("r", ShapeType::Rectangle, invalid);
+            rect.base = base("r", 0.0, 0.0, 100.0, 100.0);
+            let frame = render(&project_with(40, 40, 1.0, vec![Element::Shape(rect)]), 0.0);
+            assert_eq!(frame.pixel(20, 20).unwrap().red(), 0, "fill {invalid:?}");
+        }
+    }
+
+    fn brightest_red(frame: &Pixmap) -> u8 {
+        frame.pixels().iter().map(|p| p.red()).max().unwrap_or(0)
+    }
+
+    #[test]
+    fn the_alpha_of_the_text_colour_is_kept_by_the_export() {
+        let render_with = |color: &str| {
+            let mut el = text("t1", "WWWW", Some(12.0));
+            el.color = color.into();
+            el.base = base("t1", 10.0, 10.0, 80.0, 60.0);
+            brightest_red(&render(
+                &project_with(400, 200, 1.0, vec![Element::Text(el)]),
+                0.0,
+            ))
+        };
+        let opaque = render_with("rgba(255,255,255,1)");
+        let half = render_with("rgba(255,255,255,0.5)");
+        let invisible = render_with("rgba(255,255,255,0)");
+        assert!(opaque > 240, "{opaque}");
+        assert!((100..=160).contains(&half), "texte à 50 % : {half}");
+        assert_eq!(invisible, 0, "un texte à alpha 0 ne doit rien dessiner");
+    }
+
+    #[test]
+    fn text_with_an_invalid_colour_is_transparent_like_the_browser() {
+        for color in ["", "none", "currentColor", "not-a-color"] {
+            let mut el = text("t1", "WWWW", Some(12.0));
+            el.color = color.into();
+            el.base = base("t1", 10.0, 10.0, 80.0, 60.0);
+            let frame = render(&project_with(400, 200, 1.0, vec![Element::Text(el)]), 0.0);
+            assert_eq!(
+                brightest_red(&frame),
+                0,
+                "couleur {color:?} : rien ne doit être dessiné"
+            );
+        }
+    }
+
+    #[test]
+    fn the_alpha_of_the_shadow_colour_is_kept_by_the_export() {
+        let with_shadow = |shadow: &str| {
+            let mut el = text("t1", "WWWW", Some(12.0));
+            el.color = "rgba(0,0,0,0)".into();
+            el.text_shadow = Some(shadow.into());
+            el.base = base("t1", 10.0, 10.0, 80.0, 60.0);
+            brightest_red(&render(
+                &project_with(400, 200, 1.0, vec![Element::Text(el)]),
+                0.0,
+            ))
+        };
+        let strong = with_shadow("rgba(255,255,255,1)");
+        let faint = with_shadow("rgba(255,255,255,0.3)");
+        assert!(
+            faint < strong / 2,
+            "ombre translucide {faint} vs opaque {strong}"
+        );
+    }
+
+    #[test]
+    fn a_word_wider_than_its_box_is_not_clipped_on_the_right() {
+        let mut el = text("t1", "W", Some(8.0));
+        el.base = base("t1", 0.0, 0.0, 3.0, 30.0); // boîte de 6 px, un glyphe d'environ 16 px
+        let frame = render(&project_with(200, 100, 1.0, vec![Element::Text(el)]), 0.0);
+        let rightmost = (0..frame.width())
+            .rev()
+            .find(|x| (0..frame.height()).any(|y| is_lit(frame.pixel(*x, y).unwrap())))
+            .unwrap_or(0);
+        assert!(
+            rightmost > 8,
+            "le mot déborde de sa boîte au lieu d'être coupé ({rightmost})"
+        );
+    }
+
+    #[test]
+    fn letter_spacing_takes_part_in_the_line_wrapping() {
+        let mut engine = FrameRenderer::new();
+        let plain = text("t1", "AAAA BBBB", Some(5.0));
+        let mut spaced = plain.clone();
+        spaced.letter_spacing = Some(2.0); // 2 % de la largeur du canvas par lettre
+        let (_, plain_height, _) = engine.text.measure(&plain, "AAAA BBBB", 20.0, 200.0, 800.0);
+        let (_, spaced_height, widest) =
+            engine
+                .text
+                .measure(&spaced, "AAAA BBBB", 20.0, 200.0, 800.0);
+        assert!(
+            spaced_height > plain_height,
+            "avec l'espacement le texte passe sur deux lignes ({plain_height} vs {spaced_height})"
+        );
+        assert!(
+            widest <= 200.5,
+            "aucune ligne ne déborde de la boîte ({widest})"
         );
     }
 
@@ -2375,7 +2937,7 @@ mod tests {
 
     #[test]
     fn sprite_picks_a_reduced_level_for_small_displays() {
-        let mut sprite = Sprite::still(solid_pixmap(64, 64, [255, 0, 0, 255]));
+        let sprite = Sprite::still(solid_pixmap(64, 64, [255, 0, 0, 255]));
         assert_eq!(sprite.pixmap_at(0.0, 1.0).width(), 64);
         assert_eq!(sprite.pixmap_at(0.0, 0.25).width(), 16);
         assert_eq!(sprite.pixmap_at(0.0, 0.3).width(), 32);
@@ -2399,6 +2961,129 @@ mod tests {
         );
         let late = renderer.render_frame(&project, &dir, 2.0);
         assert!(late.pixel(60, 30).unwrap().red() > 200);
+    }
+
+    #[test]
+    fn line_reveal_recentres_the_visible_lines_like_the_preview() {
+        let first_ink_row = |content: &str, animated: bool| {
+            let mut el = text("t1", content, Some(8.0));
+            el.vertical_alignment = VerticalAlign::Middle;
+            if animated {
+                el.base.animations = vec![Animation {
+                    animation_type: AnimationType::LineReveal,
+                    direction: AnimationDirection::In,
+                    duration: 2.0,
+                    easing: Easing::Linear,
+                    with_fade: false,
+                }];
+            }
+            let frame = render(&project_with(200, 200, 2.0, vec![Element::Text(el)]), 0.9);
+            (0..200u32).find(|y| (0..200u32).any(|x| is_lit(frame.pixel(x, *y).unwrap())))
+        };
+        // À 45 %, une ligne sur deux est révélée : elle est centrée comme un texte d'une ligne.
+        assert_eq!(first_ink_row("WWW\nWWW", true), first_ink_row("WWW", false));
+    }
+
+    #[test]
+    fn a_fit_width_pan_moves_by_a_share_of_the_image_not_of_the_box() {
+        let dir = temp_dir("panfit");
+        image::RgbaImage::from_pixel(100, 50, image::Rgba([255, 0, 0, 255]))
+            .save(dir.join("wide.png"))
+            .unwrap();
+        let img = ImageElement {
+            base: base("i1", 0.0, 0.0, 100.0, 100.0),
+            src: "wide.png".into(),
+            fit_mode: FitMode::FitWidth,
+            background_color: None,
+            image_pan: Some(ImagePan {
+                pan_type: ImagePanType::PanUp,
+                intensity: 1.0,
+                progress_start: None,
+                progress_end: None,
+            }),
+            corner_radius: None,
+            border_color: None,
+            border_width: None,
+        };
+        let project = project_with(200, 200, 2.0, vec![Element::Image(img)]);
+        let frame = FrameRenderer::new().render_frame(&project, &dir, 0.0);
+        let top = (0..200u32)
+            .find(|y| frame.pixel(100, *y).unwrap().red() > 128)
+            .unwrap();
+        // Zoom 1,15 : image 230×115, centrée (haut à 42,5), décalée de 8 % de sa hauteur (9,2 px).
+        // 8 % de la boîte (16 px) donnerait 58.
+        assert!((50..=54).contains(&top), "haut de l'image : {top}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_layer_cache_keeps_what_is_used_and_respects_its_byte_budget() {
+        let layer = |side: u32| {
+            Some(Layer {
+                pixmap: Pixmap::new(side, side).unwrap(),
+                origin: (0.0, 0.0),
+            })
+        };
+        let mut cache = LayerCache::default();
+        // Le calque statique est redemandé à chaque frame : il survit aux clés éphémères.
+        cache.get_or_insert_with(0, || layer(4));
+        for key in 1..=(LAYER_CACHE_CAPACITY as u64 * 2) {
+            cache.get_or_insert_with(key, || layer(4));
+            cache.get_or_insert_with(0, || panic!("le calque statique doit rester en cache"));
+        }
+        assert!(cache.map.len() <= LAYER_CACHE_CAPACITY);
+        // Un calque énorme évince les autres plutôt que de dépasser le budget.
+        let mut cache = LayerCache::default();
+        for key in 0..4u64 {
+            cache.get_or_insert_with(key, || layer(5_000)); // 100 Mo chacun
+        }
+        assert!(
+            cache.bytes <= LAYER_CACHE_BYTES + 100_000_000,
+            "{}",
+            cache.bytes
+        );
+        assert!(cache.map.len() <= 3);
+    }
+
+    #[test]
+    fn impossible_project_dimensions_do_not_panic_the_renderer() {
+        let project = project_with(0, 0, 1.0, vec![]);
+        let frame = FrameRenderer::new().render_frame(&project, &std::env::temp_dir(), 0.0);
+        assert!(frame.width() >= 1 && frame.height() >= 1);
+    }
+
+    #[test]
+    fn the_blur_transition_blurs_the_whole_scene_at_export() {
+        // Un rectangle blanc à bord net : à mi-transition, le bord doit avoir un dégradé.
+        let mut rect = shape("r", ShapeType::Rectangle, "rgba(255,255,255,1)");
+        rect.base = base("r", 0.0, 0.0, 50.0, 100.0);
+        let mut project = project_with(200, 100, 3.0, vec![Element::Shape(rect)]);
+        project.compositions[0].transition_in = Some(Transition {
+            transition_type: TransitionType::Blur,
+            duration: 1.0,
+            easing: Easing::Linear,
+        });
+        let mut renderer = FrameRenderer::new();
+        let dir = std::env::temp_dir();
+        let partial_edge = |frame: &Pixmap| {
+            (80..120)
+                .filter(|x| {
+                    let r = frame.pixel(*x, 50).unwrap().red();
+                    r > 20 && r < 235
+                })
+                .count()
+        };
+        let mid = renderer.render_frame(&project, &dir, 0.5);
+        let settled = renderer.render_frame(&project, &dir, 2.0);
+        assert!(
+            partial_edge(&mid) > 4,
+            "bord flouté : {}",
+            partial_edge(&mid)
+        );
+        assert!(
+            partial_edge(&settled) <= 1,
+            "bord net une fois la transition finie"
+        );
     }
 
     #[test]
@@ -2618,6 +3303,52 @@ mod tests {
     }
 
     #[test]
+    fn the_first_video_stream_is_decoded_at_the_displayed_size_not_in_full_resolution() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("videoscale");
+        make_test_video(&dir, "red", "640x480", 1);
+        let project = project_with(64, 64, 1.0, vec![Element::Video(video("v1", "video.mp4"))]);
+        let mut renderer = FrameRenderer::new();
+        // Premier appel : la vidéo n'a pas encore été sondée.
+        renderer.render_frame(&project, &dir, 0.0);
+        let (w, h) = renderer.videos.values().next().unwrap().video.size();
+        assert!(
+            w < 640 && h < 480,
+            "frames décodées en {w}×{h} au lieu de la taille affichée"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn workers_share_a_single_decoder_per_video_and_render_the_same_frames() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("videoshared");
+        make_test_video(&dir, "red", "64x64", 2);
+        let project = project_with(64, 64, 2.0, vec![Element::Video(video("v1", "video.mp4"))]);
+        let shared = Arc::new(SharedVideos::default());
+        let mut workers = [
+            FrameRenderer::with_shared_videos(shared.clone()),
+            FrameRenderer::with_shared_videos(shared.clone()),
+        ];
+        let mut reference = FrameRenderer::new();
+        // Chaque worker rend une frame sur deux, comme dans l'export.
+        for frame in 0..16u64 {
+            let t = frame as f64 / 10.0;
+            let got = workers[(frame % 2) as usize].render_frame(&project, &dir, t);
+            let expected = reference.render_frame(&project, &dir, t);
+            assert_eq!(got.data(), expected.data(), "frame {frame}");
+        }
+        let a = &workers[0].videos.values().next().unwrap().video;
+        let b = &workers[1].videos.values().next().unwrap().video;
+        assert!(Arc::ptr_eq(a, b), "un seul décodeur pour les deux workers");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn video_decoder_is_closed_once_the_element_is_inactive() {
         if !ffmpeg_available() {
             return;
@@ -2722,6 +3453,100 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn write_gif(path: &Path, frames: u32, side: u32) {
+        use image::codecs::gif::GifEncoder;
+        let mut encoder = GifEncoder::new(std::fs::File::create(path).unwrap());
+        for i in 0..frames {
+            let frame = image::Frame::from_parts(
+                image::RgbaImage::from_pixel(side, side, image::Rgba([(i * 10) as u8, 0, 0, 255])),
+                0,
+                0,
+                image::Delay::from_numer_denom_ms(100, 1),
+            );
+            encoder.encode_frame(frame).unwrap();
+        }
+    }
+
+    #[test]
+    fn workers_share_one_decoded_copy_of_an_animated_gif() {
+        let dir = temp_dir("gifshare");
+        write_gif(&dir.join("a.gif"), 4, 16);
+        let first = shared_sprite(&dir.join("a.gif")).unwrap();
+        let second = shared_sprite(&dir.join("a.gif")).unwrap();
+        assert!(Arc::ptr_eq(&first, &second), "une seule copie en mémoire");
+        drop((first, second));
+        // Plus personne ne la tient : la mémoire est rendue, une relecture refait un décodage.
+        assert!(shared_sprite(&dir.join("a.gif")).is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_heavy_gif_is_stored_reduced_to_stay_within_its_byte_budget() {
+        let dir = temp_dir("gifbudget");
+        let path = dir.join("big.gif");
+        write_gif(&path, 10, 32);
+        // 10 frames de 32×32×4 = 40 Ko : un budget de 12 Ko impose deux réductions par 2.
+        let sprite = load_gif_within(&path, 12 * 1024).unwrap();
+        assert!(
+            sprite.shift >= 1,
+            "frames={} shift={}",
+            sprite.frames.len(),
+            sprite.shift
+        );
+        let stored: usize = sprite
+            .frames
+            .iter()
+            .map(|f| f.levels[0].get().unwrap().data().len())
+            .sum();
+        assert!(stored <= 12 * 1024, "{stored} octets gardés");
+        // La mise en page reste celle de l'image d'origine, et la demande d'échelle la compense.
+        assert_eq!(sprite.size, (32, 32));
+        assert!(sprite.pixmap_at(0.0, 1.0).width() < 32);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_portrait_photo_stored_sideways_is_drawn_upright() {
+        // Un JPEG 40×20 portant l'orientation 6 (rotation de 90°) s'affiche en 20×40 : la bande
+        // rouge du haut de l'image stockée passe à droite.
+        let dir = temp_dir("exif");
+        let mut rgb = image::RgbImage::from_pixel(40, 20, image::Rgb([0, 0, 255]));
+        for x in 0..40 {
+            for y in 0..4 {
+                rgb.put_pixel(x, y, image::Rgb([255, 0, 0]));
+            }
+        }
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgb8(rgb)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        // APP1 EXIF minimal : Orientation = 6.
+        let exif: [u8; 26] = [
+            b'I', b'I', 0x2A, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0,
+            0, 0,
+        ];
+        let mut segment = vec![0xFF, 0xE1];
+        let length = (2 + 6 + exif.len()) as u16;
+        segment.extend_from_slice(&length.to_be_bytes());
+        segment.extend_from_slice(b"Exif\0\0");
+        segment.extend_from_slice(&exif);
+        bytes.splice(2..2, segment);
+        std::fs::write(dir.join("photo.jpg"), &bytes).unwrap();
+
+        let sprite = load_sprite(&dir.join("photo.jpg")).unwrap();
+
+        assert_eq!(sprite.size, (20, 40), "dimensions après orientation");
+        let pixmap = sprite.pixmap_at(0.0, 1.0);
+        let right = pixmap.pixel(18, 20).unwrap();
+        let left = pixmap.pixel(1, 20).unwrap();
+        assert!(right.red() > 200 && right.blue() < 100, "{right:?}");
+        assert!(left.blue() > 150, "{left:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn animated_gif_frames_follow_the_timeline() {
         use image::codecs::gif::GifEncoder;
@@ -2770,6 +3595,21 @@ mod tests {
     }
 
     #[test]
+    fn video_frame_index_is_exact_despite_floating_point_truncation() {
+        // `(123.0 / 30.0) * 30.0` vaut 122,99999… : un floor brut donnait la frame précédente.
+        for fps in [24_u32, 25, 30, 50, 60] {
+            for frame in 0..2000_u32 {
+                let t = frame as f64 / fps as f64;
+                assert_eq!(
+                    video_frame_index(t, fps, 100_000, false, 0.0),
+                    i64::from(frame) + 1,
+                    "frame {frame} at {fps} fps"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn video_frame_index_clamps_to_the_last_frame_without_loop() {
         assert_eq!(video_frame_index(5.0, 30, 60, false, 0.0), 60);
         assert_eq!(video_frame_index(0.0, 30, 60, false, 0.0), 1);
@@ -2784,13 +3624,30 @@ mod tests {
 
     #[test]
     fn font_family_handles_css_lists_and_generic_names() {
-        assert!(matches!(font_family(None), Family::Name("Manrope")));
-        assert!(matches!(font_family(Some("  ")), Family::Name("Manrope")));
+        let none = |_: &str| false;
+        assert!(matches!(font_family(None, none), Family::Name("Manrope")));
         assert!(matches!(
-            font_family(Some("\"Inter\", sans-serif")),
+            font_family(Some("  "), none),
+            Family::Name("Manrope")
+        ));
+        // Inter est installée : la première de la liste gagne.
+        assert!(matches!(
+            font_family(Some("\"Inter\", sans-serif"), |n| n == "Inter"),
             Family::Name("Inter")
         ));
-        assert!(matches!(font_family(Some("monospace")), Family::Monospace));
+        // Inter manque : on passe à l'entrée suivante, comme le navigateur.
+        assert!(matches!(
+            font_family(Some("\"Inter\", sans-serif"), none),
+            Family::SansSerif
+        ));
+        assert!(matches!(
+            font_family(Some("Missing, Georgia, serif"), |n| n == "Georgia"),
+            Family::Name("Georgia")
+        ));
+        assert!(matches!(
+            font_family(Some("monospace"), none),
+            Family::Monospace
+        ));
     }
 
     #[test]

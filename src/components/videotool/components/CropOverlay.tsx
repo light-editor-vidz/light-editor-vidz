@@ -1,6 +1,8 @@
 import { useRef, useEffect, useCallback, useMemo, useState } from "react";
 import type { CropRect } from "../types";
 import { useT } from "../i18n";
+import { useTabActive } from "../../../lib/menuBridge";
+import { isModalOpen, isTyping } from "../../editor/useEditorShortcuts";
 import { useVideoRect } from "../hooks/useVideoRect";
 import { aspectValue, fitAspect, resizeLocked } from "../utils/crop";
 import { ASPECTS, type Aspect } from "../utils/presets";
@@ -47,14 +49,20 @@ export default function CropOverlay({ videoRef, crop, onChangeLive, onCommit, on
     onCommit();
   };
 
-  // Enter key applies
+  // Enter key applies — from this view only: not while typing in a field (Enter validates that
+  // field), not from a hidden tab (tabs stay mounted), not under a modal.
+  const tabActive = useTabActive();
   useEffect(() => {
+    if (!tabActive) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Enter") onApply();
+      if (e.key !== "Enter") return;
+      if (isTyping(document.activeElement, "Enter") || document.activeElement?.tagName === "BUTTON") return;
+      if (isModalOpen()) return;
+      onApply();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onApply]);
+  }, [onApply, tabActive]);
 
   const toD = (r: CropRect) => ({
     x: displayRect.x + r.x * displayRect.scale,
@@ -186,7 +194,7 @@ export default function CropOverlay({ videoRef, crop, onChangeLive, onCommit, on
         onPointerDown={(e) => e.stopPropagation()}
         onClick={onApply}
       >
-        {t.crop_apply} <kbd>Enter</kbd>
+        {t.crop_apply} <kbd>{t.key_enter}</kbd>
       </button>
     </div>
   );

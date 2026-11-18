@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import { useCrop } from "./hooks/useCrop";
 import type { CropApi } from "./hooks/useCrop";
@@ -79,6 +79,27 @@ export function CropOverlay({
     return () => window.removeEventListener("keydown", handler);
   }, [onApply, onCancel]);
 
+  // Le calque est redessiné quand sa taille d'affichage change (zoom) ou que le ratio de pixels de
+  // l'écran change (autre moniteur) : sinon les poignées restaient étirées et la zone cliquable
+  // ne correspondait plus à ce qui est dessiné.
+  const [layoutTick, setLayoutTick] = useState(0);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const bump = () => setLayoutTick((n) => n + 1);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(bump) : null;
+    observer?.observe(canvas);
+    const dprQuery =
+      typeof window.matchMedia === "function"
+        ? window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`)
+        : null;
+    dprQuery?.addEventListener?.("change", bump);
+    return () => {
+      observer?.disconnect();
+      dprQuery?.removeEventListener?.("change", bump);
+    };
+  }, []);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -152,7 +173,7 @@ export function CropOverlay({
       ctx.fillRect(x, y, HANDLE_SIZE, HANDLE_SIZE);
       ctx.strokeRect(x, y, HANDLE_SIZE, HANDLE_SIZE);
     }
-  }, [cropRect, imageWidth, imageHeight]);
+  }, [cropRect, imageWidth, imageHeight, layoutTick]);
 
   return (
     <div className="absolute inset-0">

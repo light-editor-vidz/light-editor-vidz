@@ -238,6 +238,16 @@ pub fn validate_export_options(raw: RawExportOptions) -> Result<ExportOptions, S
         }
     }
     segments.sort_by(|a, b| a.start.total_cmp(&b.start));
+    // Des segments qui se chevauchent dupliqueraient du contenu et fausseraient la progression :
+    // ils sont fusionnés.
+    let mut merged: Vec<Segment> = Vec::with_capacity(segments.len());
+    for seg in segments {
+        match merged.last_mut() {
+            Some(last) if seg.start <= last.end => last.end = last.end.max(seg.end),
+            _ => merged.push(seg),
+        }
+    }
+    let segments = merged;
 
     let crop = match raw.crop {
         Some(c) => Some(Crop {
@@ -489,28 +499,28 @@ pub fn escape_for_ffmpeg_filter(p: &str) -> String {
     out
 }
 
-/// Passe 1 de la stabilisation : les segments conservés, joints, analysés par `vidstabdetect` qui
-/// écrit le mouvement dans `trf`. Vidéo seule. `accuracy=15` est la valeur par défaut de vid.stab :
-/// le ffmpeg macOS écrit à 9 des données qu'il ne sait pas relire.
-pub fn build_detect_graph(segments: &[Segment], trf: &str, level: &str) -> String {
+/// Passe 1 de la stabilisation : chaque segment conservé est analysé SEPAREMENT par son propre
+/// `vidstabdetect` (sortie `[vo{i}]`, résultat `trfs[i]`), vidéo seule : mesurer sur les images
+/// concaténées comparerait la dernière image avant une coupe à la première après, et ce saut
+/// fausserait le lissage autour de chaque raccord. Les résultats sont ensuite fusionnés par
+/// [`merge_trf`]. `accuracy=15` est la valeur par défaut de vid.stab : le ffmpeg macOS écrit à 9
+/// des données qu'il ne sait pas relire.
+pub fn build_detect_graph(segments: &[Segment], trfs: &[String], level: &str) -> String {
     let (shakiness, _) = stabilize_params(level);
-    let mut parts: Vec<String> = segments
+    segments
         .iter()
+        .zip(trfs)
         .enumerate()
-        .map(|(i, s)| {
+        .map(|(i, (s, trf))| {
             format!(
-                "[0:v]trim=start={:.3}:end={:.3},setpts=PTS-STARTPTS[v{i}]",
-                s.start, s.end
+                "[0:V]trim=start={:.3}:end={:.3},setpts=PTS-STARTPTS,vidstabdetect=shakiness={shakiness}:accuracy=15:result={}[vo{i}]",
+                s.start,
+                s.end,
+                escape_for_ffmpeg_filter(trf)
             )
         })
-        .collect();
-    let inputs: String = (0..segments.len()).map(|i| format!("[v{i}]")).collect();
-    parts.push(format!("{inputs}concat=n={}:v=1:a=0[vc]", segments.len()));
-    parts.push(format!(
-        "[vc]vidstabdetect=shakiness={shakiness}:accuracy=15:result={}[vo]",
-        escape_for_ffmpeg_filter(trf)
-    ));
-    parts.join(";")
+        .collect::<Vec<_>>()
+        .join(";")
 }
 
 /// Le filtre qui applique le mouvement mesuré ; il passe en premier, sur les images d'origine.
@@ -529,7 +539,9 @@ pub struct FilterComplexParams<'a> {
     pub speed: f64,
     pub with_audio: bool,
     pub gif: Option<&'a str>,
-    pub stabilize: Option<&'a str>,
+    /// One `vidstabtransform` per segment (each with the motion measured on that segment alone),
+    /// applied before the segments are joined.
+    pub stabilize: Option<&'a [String]>,
     pub hardware_filter: &'a str,
 }
 
@@ -541,7 +553,11 @@ pub fn build_filter_complex(p: &FilterComplexParams) -> String {
     let mut parts = Vec::new();
     for (i, s) in p.segments.iter().enumerate() {
         let range = format!("start={:.3}:end={:.3}", s.start, s.end);
-        parts.push(format!("[0:v]trim={range},setpts=PTS-STARTPTS[v{i}]"));
+        let stab = p
+            .stabilize
+            .and_then(|f| f.get(i))
+            .map_or(String::new(), |f| format!(",{f}"));
+        parts.push(format!("[0:V]trim={range},setpts=PTS-STARTPTS{stab}[v{i}]"));
         if p.with_audio {
             parts.push(format!("[0:a]atrim={range},asetpts=PTS-STARTPTS[a{i}]"));
         }
@@ -562,12 +578,7 @@ pub fn build_filter_complex(p: &FilterComplexParams) -> String {
         if p.with_audio { "[ac]" } else { "" }
     ));
 
-    let mut chain: Vec<&str> = Vec::new();
-    if let Some(s) = p.stabilize {
-        chain.push(s);
-    }
-    chain.extend(p.video_chain.iter().map(String::as_str));
-    let mut chain = chain.join(",");
+    let mut chain = p.video_chain.join(",");
     if let Some(gif) = p.gif {
         chain = format!("{chain},{gif}");
     } else if !p.hardware_filter.is_empty() {
@@ -669,63 +680,6 @@ pub fn hardware_setup(format: &str, hardware: Option<&str>, level: &str) -> (Vec
     match hardware_profile(hardware.unwrap_or_default(), level) {
         Ok(p) => (p.input_args, p.filter),
         Err(_) => (vec![], String::new()),
-    }
-}
-
-/// Intermédiaire de haute qualité, seulement quand il faut graver des sous-titres.
-pub fn intermediate_options() -> Vec<String> {
-    strings(&[
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a",
-        "aac", "-b:a", "192k",
-    ])
-}
-
-pub struct BurnOptions {
-    pub video_filter: String,
-    pub input_args: Vec<String>,
-    pub options: Vec<String>,
-}
-
-/// Seconde passe : grave les sous-titres dans l'intermédiaire et encode vers `format`.
-pub fn burn_options(
-    format: &str,
-    subtitles_filter: &str,
-    level: &str,
-    hardware: Option<&str>,
-    gif: Option<&str>,
-) -> BurnOptions {
-    let hw = if uses_hardware(format, hardware) {
-        hardware
-    } else {
-        None
-    };
-    let mut video_filter = subtitles_filter.to_string();
-    let mut input_args = vec![];
-    if format == "gif" {
-        let tail = gif
-            .map(str::to_string)
-            .unwrap_or_else(|| gif_tail(480, 15, level));
-        video_filter = format!("{subtitles_filter},{tail}");
-    } else if let Some(h) = hw {
-        if let Ok(p) = hardware_profile(h, level) {
-            video_filter = [subtitles_filter, p.filter.as_str()]
-                .iter()
-                .filter(|s| !s.is_empty())
-                .copied()
-                .collect::<Vec<_>>()
-                .join(",");
-            input_args = p.input_args;
-        }
-    }
-    BurnOptions {
-        video_filter,
-        input_args,
-        options: [
-            video_encoder(format, level, hw),
-            audio_encoder(format, level, format == "mp4" || format == "mov"),
-            faststart(format),
-        ]
-        .concat(),
     }
 }
 
@@ -960,7 +914,7 @@ mod tests {
             stabilize: None,
             hardware_filter: "",
         });
-        assert!(g.starts_with("[0:v]trim=start=0.000:end=2.000,setpts=PTS-STARTPTS[v0];[0:a]atrim=start=0.000:end=2.000,asetpts=PTS-STARTPTS[a0];"));
+        assert!(g.starts_with("[0:V]trim=start=0.000:end=2.000,setpts=PTS-STARTPTS[v0];[0:a]atrim=start=0.000:end=2.000,asetpts=PTS-STARTPTS[a0];"));
         assert!(g.contains("[v0][a0][v1][a1]concat=n=2:v=1:a=1[vc][ac]"));
         assert!(g.contains("[vc]hue=s=0[vout]"));
         assert!(g.ends_with("[ac]anull[aout]"));
@@ -996,13 +950,13 @@ mod tests {
     }
 
     #[test]
-    fn stabilisation_runs_first_and_gif_or_hardware_closes_the_chain() {
+    fn stabilisation_runs_per_segment_before_the_join_and_gif_or_hardware_closes_the_chain() {
         let segs = [Segment {
             start: 0.0,
             end: 2.0,
         }];
         let chain = vec!["hue=s=0".to_string()];
-        let stab = stabilize_filter("/tmp/x.trf", "normal");
+        let stab = vec![stabilize_filter("/tmp/x.trf", "normal")];
         let g = build_filter_complex(&FilterComplexParams {
             segments: &segs,
             video_chain: &chain,
@@ -1013,7 +967,10 @@ mod tests {
             hardware_filter: "format=nv12",
         });
         assert!(
-            g.contains(&format!("[vc]{stab},hue=s=0,fps=15[vout]")),
+            g.contains(&format!(
+                "[0:V]trim=start=0.000:end=2.000,setpts=PTS-STARTPTS,{}[v0]",
+                stab[0]
+            )) && g.contains("[vc]hue=s=0,fps=15[vout]"),
             "{g}"
         );
         let hw = build_filter_complex(&FilterComplexParams {
@@ -1040,9 +997,12 @@ mod tests {
                 end: 5.0,
             },
         ];
-        let g = build_detect_graph(&segs, "/tmp/m.trf", "strong");
-        assert!(g.contains("[v0][v1]concat=n=2:v=1:a=0[vc]"));
-        assert!(g.ends_with("[vc]vidstabdetect=shakiness=8:accuracy=15:result=/tmp/m.trf[vo]"));
+        let trfs = ["/tmp/m0.trf".to_string(), "/tmp/m1.trf".to_string()];
+        let g = build_detect_graph(&segs, &trfs, "strong");
+        // One detection per segment: nothing is measured across the cut.
+        assert!(!g.contains("concat"));
+        assert!(g.contains("trim=start=0.000:end=2.000,setpts=PTS-STARTPTS,vidstabdetect=shakiness=8:accuracy=15:result=/tmp/m0.trf[vo0]"));
+        assert!(g.ends_with("result=/tmp/m1.trf[vo1]"));
         assert!(stabilize_filter("/tmp/m.trf", "light")
             .contains("smoothing=8:optzoom=1:interpol=bicubic"));
     }
@@ -1090,14 +1050,15 @@ mod tests {
     }
 
     #[test]
-    fn the_burn_pass_copies_audio_for_mp4_and_filters_for_gif() {
-        let mp4 = burn_options("mp4", "subtitles=a.ass", "balanced", None, None);
-        assert_eq!(mp4.video_filter, "subtitles=a.ass");
-        assert!(mp4.options.join(" ").contains("-c:a copy"));
-        let gif = burn_options("gif", "subtitles=a.ass", "balanced", None, Some("fps=10"));
-        assert_eq!(gif.video_filter, "subtitles=a.ass,fps=10");
-        let hw = burn_options("mp4", "subtitles=a.ass", "balanced", Some("qsv"), None);
-        assert_eq!(hw.video_filter, "subtitles=a.ass,format=nv12");
+    fn overlapping_segments_are_merged_not_exported_twice() {
+        let raw: RawExportOptions = serde_json::from_value(serde_json::json!({
+            "inputPath": "/i.mp4", "outputPath": "/o.mp4", "format": "mp4",
+            "segments": [{"start": 5.0, "end": 9.0}, {"start": 0.0, "end": 3.0}, {"start": 2.0, "end": 6.0}],
+        }))
+        .unwrap();
+        let o = validate_export_options(raw).unwrap();
+        assert_eq!(o.segments.len(), 1);
+        assert_eq!((o.segments[0].start, o.segments[0].end), (0.0, 9.0));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTabActive } from "../../lib/menuBridge";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { X } from "lucide-react";
@@ -94,6 +95,7 @@ function ElapsedTime({ fraction }: { fraction: number }) {
 
 /** The window that generates subtitles from a video, a sound or a whole project. */
 export default function GenerateSubtitlesDialog({ source, label, onClose, onPlace, onAssociate }: Props) {
+  const tabActive = useTabActive();
   const { t } = useTranslation();
   const [settings, setSettings] = useState<SubsSettings | null>(null);
   const [languages, setLanguages] = useState<SubsLanguage[]>([]);
@@ -224,6 +226,10 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
       setUse("original");
       setTrTarget(target);
       sessionId.current = crypto.randomUUID();
+      // La transcription est associée tout de suite : si la traduction enchaînée échoue, elle
+      // n'est pas perdue.
+      onAssociate?.(out.srt_content, sessionId.current);
+      if (out.warnings?.includes("vad_unavailable")) setError(t("subs.vadUnavailable"));
       // Une traduction demandée dès le départ s'ajoute à l'original, qui reste disponible.
       const translated =
         target && target !== out.language
@@ -234,7 +240,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
         setView("translation");
         setUse("translation");
       }
-      onAssociate?.((translated ?? out).srt_content, sessionId.current);
+      if (translated) onAssociate?.(translated.srt_content, sessionId.current);
     } catch (e) {
       if (!cancelled.current) setError(describeError(e));
     } finally {
@@ -382,8 +388,10 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
   }
 
   // In the body: no ancestor view (video, audio…) can restyle or clip it.
+  // `hidden` : the portal is outside the tab panel, so it would stay on screen after a switch of tab
+  // (the dialog keeps its state and its running job, it is only not shown).
   return createPortal(
-    <div className="modal-backdrop" onClick={busy ? undefined : onClose}>
+    <div className="modal-backdrop" hidden={!tabActive} onClick={busy ? undefined : onClose}>
       <div
         className="modal subs-modal"
         role="dialog"

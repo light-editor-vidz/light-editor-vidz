@@ -189,6 +189,24 @@ describe("update banner", () => {
     await waitFor(() => expect(mockRelaunch).toHaveBeenCalled());
   });
 
+  it("saves the work first, and installs nothing when the save is refused", async () => {
+    const downloadAndInstall = vi.fn().mockResolvedValue(undefined);
+    offer({ downloadAndInstall });
+    const beforeRestart = vi.fn().mockResolvedValue(false);
+    render(withSuite(<Trigger />, { beforeRestart }));
+    await ready();
+    fireEvent.click(screen.getByText("check now"));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Update and restart" }));
+
+    await waitFor(() => expect(beforeRestart).toHaveBeenCalled());
+    // Rien n'est installé : l'application ne reste pas mise à jour sur le disque mais ancienne en mémoire.
+    expect(downloadAndInstall).not.toHaveBeenCalled();
+    expect(mockRelaunch).not.toHaveBeenCalled();
+    // Et le bouton reste là pour réessayer.
+    expect(await screen.findByRole("button", { name: "Update and restart" })).toBeInTheDocument();
+  });
+
   it("reports an install that fails after the download", async () => {
     offer({ downloadAndInstall: vi.fn().mockRejectedValue(new Error("signature mismatch")) });
     render(withSuite(<Trigger />));

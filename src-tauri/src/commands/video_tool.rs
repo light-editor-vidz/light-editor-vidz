@@ -29,8 +29,10 @@ const MERGED_PREFIX: &str = "lev_merge_";
 /// La file d'exports et l'aperçu en cours, gérés par Tauri.
 pub struct VideoState {
     queue: ExportQueue<ExportOptions>,
-    preview: Mutex<Option<PathBuf>>,
-    preview_cancel: Mutex<Arc<AtomicBool>>,
+    /// L'aperçu transcodé et le drapeau d'annulation de chaque onglet (`owner`) : un onglet ne
+    /// supprime ni n'annule jamais ceux d'un autre.
+    preview: Mutex<HashMap<String, PathBuf>>,
+    preview_cancel: Mutex<HashMap<String, Arc<AtomicBool>>>,
     /// Les vidéos fusionnées depuis des séquences : supprimées à la fermeture.
     merged: Mutex<Vec<PathBuf>>,
     capabilities: OnceLock<Capabilities>,
@@ -54,7 +56,10 @@ impl VideoState {
         let queue = ExportQueue::new(
             move |options: ExportOptions, ctx| {
                 let result = run_job(&options, ctx);
-                let next = pending.lock().unwrap().remove(&options.output_path);
+                let next = pending
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&options.output_path);
                 match (&result, next) {
                     (Ok(()), Some((projects, srt))) => {
                         finish_export(&finisher, &options.output_path, &projects, srt.as_deref())
@@ -74,25 +79,51 @@ impl VideoState {
         );
         Self {
             queue,
-            preview: Mutex::new(None),
-            preview_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+            preview: Mutex::new(HashMap::new()),
+            preview_cancel: Mutex::new(HashMap::new()),
             merged: Mutex::new(Vec::new()),
             capabilities: OnceLock::new(),
             after_export,
         }
     }
 
+    /// Un export de la file est en cours ou en attente (l'aperçu transcodé, lui, est un simple
+    /// fichier supprimé par `shutdown`).
+    pub fn is_busy(&self) -> bool {
+        self.queue.has_active()
+    }
+
+    /// Demande l'arrêt de tous les exports et aperçus (les `.part` et ffmpeg sont nettoyés par
+    /// leurs propres tâches, qu'il faut ensuite attendre : voir `is_busy`).
+    pub fn cancel_all(&self) {
+        self.queue.cancel_all();
+        for flag in self
+            .preview_cancel
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+        {
+            flag.store(true, Ordering::SeqCst);
+        }
+    }
+
     /// Annule tout (fermeture de l'application) et supprime l'aperçu transcodé.
     pub fn shutdown(&self) {
-        self.queue.cancel_all();
-        self.preview_cancel
+        self.cancel_all();
+        for (_, p) in self
+            .preview
             .lock()
-            .unwrap()
-            .store(true, Ordering::SeqCst);
-        if let Some(p) = self.preview.lock().unwrap().take() {
+            .unwrap_or_else(|e| e.into_inner())
+            .drain()
+        {
             let _ = std::fs::remove_file(p);
         }
-        for p in self.merged.lock().unwrap().drain(..) {
+        for p in self
+            .merged
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+        {
             let _ = std::fs::remove_file(p);
         }
     }
@@ -112,41 +143,131 @@ fn finish_export<R: Runtime>(
     );
 }
 
-/// Un travail de la file : un dossier de travail privé, l'export, puis le nettoyage.
+/// Même fichier, quelle que soit l'écriture du chemin (lien symbolique, `..`, casse).
+/// La sortie n'existant pas forcément encore, on compare son dossier canonique et son nom.
+fn same_file(a: &Path, b: &Path) -> bool {
+    let canon = |p: &Path| -> Option<PathBuf> {
+        if let Ok(c) = p.canonicalize() {
+            return Some(c);
+        }
+        let name = p.file_name()?;
+        let parent = p
+            .parent()
+            .filter(|d| !d.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        Some(parent.canonicalize().ok()?.join(name))
+    };
+    match (canon(a), canon(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+/// Fichier de travail voisin de la destination (même extension, pour qu'ffmpeg devine le format).
+fn partial_path(output: &Path) -> PathBuf {
+    let name = output
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "export".into());
+    output.with_file_name(format!(
+        ".{name}.lev-part.{}",
+        output
+            .extension()
+            .map(|e| e.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    ))
+}
+
+/// Un travail de la file : un dossier de travail privé, l'export dans un `.part`, puis `rename`.
+/// La destination n'est jamais supprimée : un échec ou une annulation la laisse intacte.
 fn run_job(options: &ExportOptions, ctx: &video_export::queue::JobContext) -> Result<(), String> {
+    let output = PathBuf::from(&options.output_path);
+    if same_file(Path::new(&options.input_path), &output) {
+        return Err("output is the same file as the input".into());
+    }
+    let partial = partial_path(&output);
+    let _tracked = crate::commands::partials::track(&partial);
+    let mut job = options.clone();
+    job.output_path = partial.to_string_lossy().into_owned();
     let work = tempfile_dir().map_err(|e| e.to_string())?;
     let runner = ProcessRunner::system(ctx.cancel.clone());
     let result = export_video(
         &runner,
-        options,
+        &job,
         &work,
         &mut |p| ctx.set_progress(p),
         &mut |_| {},
     );
     let _ = std::fs::remove_dir_all(&work);
     match result {
-        Ok(()) => Ok(()),
+        Ok(()) => std::fs::rename(&partial, &output).map_err(|e| {
+            let _ = std::fs::remove_file(&partial);
+            e.to_string()
+        }),
         Err(FfError::Cancelled) => {
-            let _ = std::fs::remove_file(&options.output_path);
+            let _ = std::fs::remove_file(&partial);
             Err("cancelled".into())
         }
         Err(FfError::Failed(m)) => {
-            let _ = std::fs::remove_file(&options.output_path);
+            let _ = std::fs::remove_file(&partial);
             Err(m)
         }
     }
 }
 
+/// Préfixes des fichiers et dossiers temporaires de la vue Vidéo (exports, aperçus, fusions,
+/// mixages de sous-titres).
+const TEMP_PREFIXES: [&str; 5] = [
+    "lev_export_",
+    "lev_preview_",
+    "lev_merge_",
+    "lev_subs_mix_",
+    "lev_subs_scratch_",
+];
+
+/// Supprime, dans `dir`, ce qu'un plantage ou un arrêt forcé a laissé : seuls les noms de nos
+/// préfixes, et seulement au-delà de `max_age` (un autre processus de l'application peut en avoir
+/// d'actifs). Renvoie le nombre d'éléments supprimés.
+pub fn remove_stale_temp(dir: &Path, max_age: std::time::Duration) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !TEMP_PREFIXES.iter().any(|p| name.starts_with(p)) {
+            continue;
+        }
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age >= max_age);
+        if !old {
+            continue;
+        }
+        let path = entry.path();
+        let ok = if path.is_dir() {
+            std::fs::remove_dir_all(&path).is_ok()
+        } else {
+            std::fs::remove_file(&path).is_ok()
+        };
+        removed += usize::from(ok);
+    }
+    removed
+}
+
+/// Un nom temporaire imprévisible (UUID v4 tiré de l'aléa du système) : un autre processus local
+/// ne peut ni le deviner ni y placer un lien symbolique à l'avance.
+pub(crate) fn unpredictable_temp(prefix: &str, suffix: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("{prefix}{}{suffix}", uuid::Uuid::new_v4().simple()))
+}
+
 fn tempfile_dir() -> std::io::Result<PathBuf> {
-    let dir = std::env::temp_dir().join(format!(
-        "lev_export_{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    std::fs::create_dir_all(&dir)?;
+    // `create_dir` (et non `create_dir_all`) échoue si le nom existe déjà.
+    let dir = unpredictable_temp("lev_export_", "");
+    std::fs::create_dir(&dir)?;
     Ok(dir)
 }
 
@@ -297,7 +418,9 @@ pub async fn video_preview<R: Runtime>(
     state: State<'_, VideoState>,
     path: String,
     force: Option<bool>,
+    owner: Option<String>,
 ) -> Result<Preview, CmdError> {
+    let owner = owner.unwrap_or_default();
     approved.check_input(&path).map_err(CmdError::from)?;
     // Une vidéo fusionnée est temporaire : elle n'a pas sa place parmi les fichiers récents.
     let is_merged = Path::new(&path)
@@ -307,19 +430,34 @@ pub async fn video_preview<R: Runtime>(
         recent::record(&file, &path);
     }
     // Un transcodage précédent encore en cours écrirait un fichier que personne ne supprimera.
-    state
+    if let Some(old) = state
         .preview_cancel
         .lock()
-        .unwrap()
-        .store(true, Ordering::SeqCst);
-    if let Some(stale) = state.preview.lock().unwrap().take() {
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&owner)
+    {
+        old.store(true, Ordering::SeqCst);
+    }
+    if let Some(stale) = state
+        .preview
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&owner)
+    {
         let _ = std::fs::remove_file(stale);
     }
-    let cancel = Arc::new(AtomicBool::new(false));
-    *state.preview_cancel.lock().unwrap() = cancel.clone();
+    let cancel = fresh_cancel(&state, &owner);
 
     let runner = ProcessRunner::system(cancel);
-    let info = runner.probe(&path).ok();
+    // ffprobe sur le pool bloquant : lancé ici, il occuperait un worker du runtime async.
+    let (runner, info) = {
+        let probed_path = path.clone();
+        blocking(move || {
+            let info = runner.probe(&probed_path).ok();
+            Ok((runner, info))
+        })
+        .await?
+    };
     if force != Some(true)
         && info
             .as_ref()
@@ -331,26 +469,25 @@ pub async fn video_preview<R: Runtime>(
             transcoded: false,
         });
     }
-    let out = std::env::temp_dir().join(format!(
-        "lev_preview_{}_{}.webm",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    *state.preview.lock().unwrap() = Some(out.clone());
+    let out = unpredictable_temp("lev_preview_", ".webm");
+    state
+        .preview
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(owner.clone(), out.clone());
     let duration = info.as_ref().and_then(|i| i.duration).unwrap_or(0.0);
     let (input, output) = (path.clone(), out.to_string_lossy().into_owned());
     let emitter = app.clone();
+    let progress_owner = owner.clone();
     let result = blocking(move || {
         runner
             .run(
                 &video_export::preview::preview_args(&input, &output),
                 &mut |sec| {
                     if duration > 0.0 {
-                        let _ = emitter.emit(
-                            "video-preview-progress",
+                        emit_preview_progress(
+                            &emitter,
+                            &progress_owner,
                             ((sec / duration) * 100.0).min(99.0).round() as u32,
                         );
                     }
@@ -361,10 +498,14 @@ pub async fn video_preview<R: Runtime>(
     .await;
     if let Err(e) = result {
         let _ = std::fs::remove_file(&out);
-        *state.preview.lock().unwrap() = None;
+        // Seulement si l'entrée est encore la nôtre : un aperçu plus récent ne doit pas être oublié.
+        let mut previews = state.preview.lock().unwrap_or_else(|e| e.into_inner());
+        if previews.get(&owner) == Some(&out) {
+            previews.remove(&owner);
+        }
         return Err(e);
     }
-    let _ = app.emit("video-preview-progress", 100u32);
+    emit_preview_progress(&app, &owner, 100);
     let out_str = out.to_string_lossy().into_owned();
     // Le WebM est produit par l'application : son accès est autorisé directement.
     app.state::<Approved>().allow_input(&out_str);
@@ -375,11 +516,23 @@ pub async fn video_preview<R: Runtime>(
     })
 }
 
-/// Un drapeau d'annulation neuf, partagé avec « Annuler » de l'aperçu (même écran de chargement).
-fn fresh_cancel(state: &VideoState) -> Arc<AtomicBool> {
+/// Un drapeau d'annulation neuf pour cet onglet, partagé avec son « Annuler » (même écran de chargement).
+fn fresh_cancel(state: &VideoState, owner: &str) -> Arc<AtomicBool> {
     let cancel = Arc::new(AtomicBool::new(false));
-    *state.preview_cancel.lock().unwrap() = cancel.clone();
+    state
+        .preview_cancel
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(owner.to_string(), cancel.clone());
     cancel
+}
+
+/// La progression d'un aperçu ou d'une fusion, étiquetée par onglet : chacun ne suit que la sienne.
+fn emit_preview_progress<R: Runtime>(app: &AppHandle<R>, owner: &str, percent: u32) {
+    let _ = app.emit(
+        "video-preview-progress",
+        serde_json::json!({ "owner": owner, "percent": percent }),
+    );
 }
 
 /// Découpe la vidéo en séquences, aux changements de plan.
@@ -388,9 +541,10 @@ pub async fn video_detect_scenes(
     approved: State<'_, Approved>,
     state: State<'_, VideoState>,
     path: String,
+    owner: Option<String>,
 ) -> Result<Vec<Sequence>, CmdError> {
     approved.check_input(&path).map_err(CmdError::from)?;
-    let runner = ProcessRunner::system(fresh_cancel(&state));
+    let runner = ProcessRunner::system(fresh_cancel(&state, &owner.unwrap_or_default()));
     blocking(move || {
         let duration = runner
             .probe(&path)?
@@ -440,17 +594,31 @@ pub async fn video_thumbnails(
             .filter(|d| *d > 0.0)
             .ok_or("Cannot read the video duration")?;
         let work = tempfile_dir().map_err(|e| e.to_string())?;
-        let pattern = work.join("t_%03d.jpg");
-        let result = runner.run(
-            &video_export::preview::thumbnail_args(
-                &path,
-                &pattern.to_string_lossy(),
-                count,
-                duration,
-            ),
-            &mut |_| {},
-        );
         let mut thumbs = Vec::new();
+        let result = if duration > video_export::preview::SEEK_THUMBNAILS_ABOVE_SECONDS {
+            // Longue vidéo : une recherche par vignette, au lieu de décoder le film entier.
+            video_export::preview::thumbnail_times(count, duration)
+                .iter()
+                .enumerate()
+                .try_for_each(|(i, time)| {
+                    let out = work.join(format!("t_{:03}.jpg", i + 1));
+                    runner.run(
+                        &video_export::preview::frame_args(&path, &out.to_string_lossy(), *time),
+                        &mut |_| {},
+                    )
+                })
+        } else {
+            let pattern = work.join("t_%03d.jpg");
+            runner.run(
+                &video_export::preview::thumbnail_args(
+                    &path,
+                    &pattern.to_string_lossy(),
+                    count,
+                    duration,
+                ),
+                &mut |_| {},
+            )
+        };
         if result.is_ok() {
             for i in 1..=count {
                 match jpeg_data_url(&work.join(format!("t_{i:03}.jpg"))) {
@@ -480,22 +648,46 @@ pub async fn video_frames(
     let runner = ProcessRunner::system(Arc::new(AtomicBool::new(false)));
     blocking(move || {
         let work = tempfile_dir().map_err(|e| e.to_string())?;
-        let mut frames = Vec::with_capacity(times.len());
-        for (i, time) in times.iter().enumerate() {
-            let out = work.join(format!("f_{i}.jpg"));
-            let ok = time.is_finite()
-                && runner
-                    .run(
-                        &video_export::preview::frame_args(&path, &out.to_string_lossy(), *time),
-                        &mut |_| {},
-                    )
-                    .is_ok();
-            frames.push(if ok {
-                jpeg_data_url(&out).unwrap_or_default()
-            } else {
-                String::new()
-            });
-        }
+        // Jusqu'à 200 images : quelques processus ffmpeg en parallèle plutôt qu'un par un.
+        let workers = times.len().clamp(1, 4);
+        let mut frames = vec![String::new(); times.len()];
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..workers)
+                .map(|w| {
+                    let (runner, work, path, times) = (&runner, &work, &path, &times);
+                    scope.spawn(move || {
+                        (w..times.len())
+                            .step_by(workers)
+                            .map(|i| {
+                                let out = work.join(format!("f_{i}.jpg"));
+                                let ok = times[i].is_finite()
+                                    && runner
+                                        .run(
+                                            &video_export::preview::frame_args(
+                                                path,
+                                                &out.to_string_lossy(),
+                                                times[i],
+                                            ),
+                                            &mut |_| {},
+                                        )
+                                        .is_ok();
+                                let url = if ok {
+                                    jpeg_data_url(&out).unwrap_or_default()
+                                } else {
+                                    String::new()
+                                };
+                                (i, url)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            for handle in handles {
+                for (i, url) in handle.join().unwrap_or_default() {
+                    frames[i] = url;
+                }
+            }
+        });
         let _ = std::fs::remove_dir_all(&work);
         Ok(frames)
     })
@@ -510,9 +702,10 @@ pub async fn video_extract_audio<R: Runtime>(
     approved: State<'_, Approved>,
     state: State<'_, VideoState>,
     path: String,
+    owner: Option<String>,
 ) -> Result<Option<String>, CmdError> {
     approved.check_input(&path).map_err(CmdError::from)?;
-    let runner = ProcessRunner::system(fresh_cancel(&state));
+    let runner = ProcessRunner::system(fresh_cancel(&state, &owner.unwrap_or_default()));
     let source = PathBuf::from(&path);
     let out = blocking(move || {
         let info = runner.probe(&path)?;
@@ -569,18 +762,13 @@ pub async fn video_merge_sequences<R: Runtime>(
     state: State<'_, VideoState>,
     path: String,
     sequences: Vec<Sequence>,
+    owner: Option<String>,
 ) -> Result<String, CmdError> {
+    let owner = owner.unwrap_or_default();
     approved.check_input(&path).map_err(CmdError::from)?;
     sequences::validate_sequences(&sequences).map_err(|m| CmdError::from(anyhow::anyhow!(m)))?;
-    let runner = ProcessRunner::system(fresh_cancel(&state));
-    let out = std::env::temp_dir().join(format!(
-        "{MERGED_PREFIX}{}_{}.mp4",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
+    let runner = ProcessRunner::system(fresh_cancel(&state, &owner));
+    let out = unpredictable_temp(MERGED_PREFIX, ".mp4");
     let out_str = out.to_string_lossy().into_owned();
     let total = sequences::total_duration(&sequences);
     let emitter = app.clone();
@@ -595,8 +783,9 @@ pub async fn video_merge_sequences<R: Runtime>(
             .run(
                 &sequences::merge_args(&input, &output, &sequences, with_audio),
                 &mut |sec| {
-                    let _ = emitter.emit(
-                        "video-preview-progress",
+                    emit_preview_progress(
+                        &emitter,
+                        &owner,
                         ((sec / total) * 100.0).min(99.0).round() as u32,
                     );
                 },
@@ -608,19 +797,26 @@ pub async fn video_merge_sequences<R: Runtime>(
         let _ = std::fs::remove_file(&out);
         return Err(e);
     }
-    state.merged.lock().unwrap().push(out);
+    state
+        .merged
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(out);
     approved.allow_input(&out_str);
     authorize(&app, &out_str).map_err(CmdError::from)?;
     Ok(out_str)
 }
 
 #[tauri::command]
-pub fn video_cancel_preview(state: State<'_, VideoState>) {
-    state
+pub fn video_cancel_preview(state: State<'_, VideoState>, owner: Option<String>) {
+    if let Some(flag) = state
         .preview_cancel
         .lock()
-        .unwrap()
-        .store(true, Ordering::SeqCst);
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&owner.unwrap_or_default())
+    {
+        flag.store(true, Ordering::SeqCst);
+    }
 }
 
 #[tauri::command]
@@ -674,6 +870,14 @@ async fn prepare(
     approved
         .check_output(&options.output_path)
         .map_err(CmdError::from)?;
+    if same_file(
+        Path::new(&options.input_path),
+        Path::new(&options.output_path),
+    ) {
+        return Err(CmdError::from(anyhow::anyhow!(
+            "the output file must differ from the source video"
+        )));
+    }
     if options.hardware.is_some() || options.stabilize != "off" {
         let caps = match state.capabilities.get() {
             Some(c) => c.clone(),
@@ -757,11 +961,14 @@ pub fn video_add_after_export(
     approved
         .check_output(&output_path)
         .map_err(CmdError::from)?;
-    state
-        .after_export
-        .lock()
-        .unwrap()
-        .insert(output_path, (projects, srt));
+    let mut pending = state.after_export.lock().unwrap_or_else(|e| e.into_inner());
+    // Sans projet : l'entrée est retirée (l'export a été refusé ou a échoué, elle ne doit pas
+    // rester pour un export ultérieur vers le même fichier).
+    if projects.is_empty() {
+        pending.remove(&output_path);
+    } else {
+        pending.insert(output_path, (projects, srt));
+    }
     Ok(())
 }
 
@@ -836,5 +1043,65 @@ mod tests {
     #[test]
     fn the_video_extensions_do_not_overlap_with_images() {
         assert!(VIDEO_EXTENSIONS.contains(&"mp4") && VIDEO_EXTENSIONS.contains(&"m4v"));
+    }
+
+    #[test]
+    fn an_output_equal_to_the_input_is_detected_even_through_a_symlink_or_dotdot() {
+        let dir = std::env::temp_dir().join(format!("lev_same_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        let src = dir.join("clip.mp4");
+        std::fs::write(&src, b"x").unwrap();
+        assert!(same_file(&src, &src));
+        assert!(same_file(
+            &src,
+            &dir.join("sub").join("..").join("clip.mp4")
+        ));
+        assert!(!same_file(&src, &dir.join("other.mp4")));
+        #[cfg(unix)]
+        {
+            let link = dir.join("link.mp4");
+            std::os::unix::fs::symlink(&src, &link).unwrap();
+            assert!(same_file(&src, &link));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_partial_file_sits_next_to_the_destination_and_keeps_its_extension() {
+        assert_eq!(
+            partial_path(Path::new("/v/montage.mp4")),
+            PathBuf::from("/v/.montage.mp4.lev-part.mp4")
+        );
+    }
+
+    #[test]
+    fn temporary_names_are_unique_and_keep_the_cleanup_prefix() {
+        let (a, b) = (
+            unpredictable_temp("lev_preview_", ".webm"),
+            unpredictable_temp("lev_preview_", ".webm"),
+        );
+        assert_ne!(a, b);
+        let name = a.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with("lev_preview_") && name.ends_with(".webm"));
+        assert!(TEMP_PREFIXES.iter().any(|p| name.starts_with(p)));
+    }
+
+    #[test]
+    fn stale_temp_files_are_swept_but_only_ours_and_only_old_ones() {
+        let dir = std::env::temp_dir().join(format!("lev_sweep_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("lev_export_1_2")).unwrap();
+        std::fs::write(dir.join("lev_preview_9.webm"), b"x").unwrap();
+        std::fs::write(dir.join("unrelated.txt"), b"x").unwrap();
+
+        // Rien n'est assez vieux : rien ne part (un export peut être en cours dans un autre processus).
+        assert_eq!(
+            remove_stale_temp(&dir, std::time::Duration::from_secs(3600)),
+            0
+        );
+        // Avec un âge nul, nos fichiers partent et le reste n'est pas touché.
+        assert_eq!(remove_stale_temp(&dir, std::time::Duration::ZERO), 2);
+        assert!(dir.join("unrelated.txt").exists());
+        assert!(!dir.join("lev_export_1_2").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

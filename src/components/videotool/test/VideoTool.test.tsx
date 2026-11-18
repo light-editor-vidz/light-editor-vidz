@@ -63,6 +63,21 @@ describe("VideoTool — empty view", () => {
     expect(onOpenFile).toHaveBeenCalled();
   });
 
+  it("shows the export queue pill as soon as a job exists", async () => {
+    const job = {
+      id: 1,
+      name: "montage",
+      format: "mp4",
+      outputPath: "/v/montage.mp4",
+      status: "running" as const,
+      progress: 40,
+      error: null,
+    };
+    window.electronAPI = { ...window.electronAPI, queueList: vi.fn(async () => [job]) };
+    setup();
+    expect(await screen.findByRole("button", { name: "Export queue" })).toBeInTheDocument();
+  });
+
   it("does not prepare anything without a path", async () => {
     const { previewVideo } = setup();
     await act(async () => {});
@@ -106,6 +121,24 @@ describe("VideoTool — opening a video", () => {
     await fail();
     expect(previewVideo).toHaveBeenCalledTimes(2);
     expect(await screen.findByText(/cannot be played/)).toBeInTheDocument();
+  });
+
+  it("keeps the edits when the playback error forces a transcoded preview of the same file", async () => {
+    const { previewVideo, container } = setup({ path: "/v/a.mp4" });
+    await screen.findByText("a.mp4");
+    const undo = () => screen.getAllByRole("button").find((b) => b.title.startsWith("Undo"))!;
+    fireEvent.click(screen.getByRole("button", { name: "2x" }));
+    await waitFor(() => expect(undo()).toBeEnabled());
+    const fail = () =>
+      act(async () => {
+        fireEvent.error(container.querySelector("video")!);
+      });
+
+    await fail(); // streaming
+    await fail(); // forced transcode
+    expect(previewVideo).toHaveBeenLastCalledWith("/v/a.mp4", true);
+    await screen.findByText("a.mp4");
+    expect(undo()).toBeEnabled();
   });
 
   it("opens the subtitle window from the button next to Export", async () => {
@@ -239,7 +272,7 @@ describe("VideoTool — sequences", () => {
   it("merges the chosen sequences into one video that becomes the source", async () => {
     const detectScenes = vi.fn(async () => scenes);
     const mergeSequences = vi.fn(async () => "/tmp/lev_merge_1.mp4");
-    const { previewVideo } = setup({ path: "/v/a.mp4" });
+    const { previewVideo, registerCloseGuard } = setup({ path: "/v/a.mp4" });
     window.electronAPI = { ...window.electronAPI, detectScenes, mergeSequences };
     await screen.findByText("a.mp4");
 
@@ -256,6 +289,13 @@ describe("VideoTool — sequences", () => {
     ]);
     expect(previewVideo).toHaveBeenLastCalledWith("/tmp/lev_merge_1.mp4", false);
     expect(screen.queryByRole("dialog", { name: "Split into sequences" })).toBeNull();
+
+    // Le résultat de la fusion est un fichier temporaire : fermer l'onglet demande confirmation.
+    const calls = registerCloseGuard.mock.calls as unknown as [() => Promise<boolean>][];
+    const guard = calls[calls.length - 1][0];
+    mockAsk.mockClear();
+    await guard();
+    expect(mockAsk).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the opened video and tells when the merge fails", async () => {

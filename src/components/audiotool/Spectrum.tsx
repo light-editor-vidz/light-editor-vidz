@@ -15,7 +15,7 @@ export default function Spectrum({ analyser, playing }: { analyser: AnalyserNode
     const canvas = ref.current;
     if (!canvas) return;
     let raf = 0;
-    const draw = () => {
+    const paint = () => {
       const dpr = window.devicePixelRatio || 1;
       const W = canvas.clientWidth;
       const H = canvas.clientHeight;
@@ -57,10 +57,14 @@ export default function Spectrum({ analyser, playing }: { analyser: AnalyserNode
         const h = Math.max(3, level * H * 0.8);
         ctx.fillRect(gap + i * (barW + gap), base - h, barW, h);
       }
-      if (playing) raf = requestAnimationFrame(draw);
     };
-    draw();
-    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(draw) : null;
+    // Une seule boucle d'animation : un redimensionnement repeint, il n'en démarre pas une autre.
+    const loop = () => {
+      paint();
+      if (playing) raf = requestAnimationFrame(loop);
+    };
+    loop();
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(paint) : null;
     observer?.observe(canvas);
     return () => {
       cancelAnimationFrame(raf);

@@ -13,9 +13,10 @@ use audio_dsp::pipeline::{
 };
 use audio_dsp::recent::{self, RecentFile};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_dialog::DialogExt;
 
@@ -25,9 +26,10 @@ const VIDEO_EXTENSIONS: [&str; 9] = [
 ];
 const IMAGE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff"];
 
-/// Drapeau d'annulation de l'export en cours, levé par le bouton Annuler.
+/// Drapeau d'annulation de l'export en cours de chaque onglet Audio (`owner`), levé par son bouton
+/// Annuler : annuler dans un onglet ne touche pas l'export d'un autre.
 #[derive(Default)]
-pub struct AudioExportControl(Arc<AtomicBool>);
+pub struct AudioExportControl(Mutex<HashMap<String, Arc<AtomicBool>>>);
 
 /// Fichier choisi dans « Fichier > Ouvrir » et son type.
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -133,8 +135,8 @@ pub async fn pick_media_file<R: Runtime>(
     .await?;
     Ok(picked.map(|path| {
         let kind = kind_of(&path);
-        // L'audio et la vidéo se lisent via le protocole `asset:` : leur accès passe par là.
-        if kind == "audio" || kind == "video" {
+        // Le fichier choisi est ouvrable (audio et vidéo via `asset:`, image via `open_images_by_paths`).
+        if kind != "unknown" {
             approved.allow_input(&path);
         }
         PickedFile { path, kind }
@@ -172,7 +174,7 @@ pub async fn audio_pick_output<R: Runtime>(
     approved: State<'_, Approved>,
     default_path: String,
     ext: String,
-) -> Result<Option<String>, CmdError> {
+) -> Result<Option<crate::commands::video_tool::OutputChoice>, CmdError> {
     let p = Path::new(&default_path);
     let dir = p.parent().map(Path::to_path_buf);
     let name = p.file_name().and_then(|n| n.to_str()).map(String::from);
@@ -188,10 +190,16 @@ pub async fn audio_pick_output<R: Runtime>(
             .blocking_save_file()
     })
     .await?;
-    Ok(picked.map(|path| {
-        let path = approval::ensure_extension(&path, &ext);
+    Ok(picked.map(|picked| {
+        let path = approval::ensure_extension(&picked, &ext);
         approved.allow_output(&path);
-        path
+        // Une extension ajoutée après le dialogue : le fichier complété a pu exister sans que le
+        // dialogue natif ait demandé confirmation.
+        let confirm_overwrite = path != picked && Path::new(&path).exists();
+        crate::commands::video_tool::OutputChoice {
+            path,
+            confirm_overwrite,
+        }
     }))
 }
 
@@ -251,29 +259,51 @@ pub async fn audio_process<R: Runtime>(
     cache: State<'_, DecodeCache>,
     control: State<'_, AudioExportControl>,
     opts: ProcessOptions,
+    owner: Option<String>,
 ) -> Result<(), CmdError> {
+    let owner = owner.unwrap_or_default();
     approved.check_input(&opts.input).map_err(CmdError::from)?;
     approved
         .check_output(&opts.output)
         .map_err(CmdError::from)?;
     let cache = cache.inner().clone();
-    let cancel = control.0.clone();
-    cancel.store(false, Ordering::Relaxed);
+    let cancel = Arc::new(AtomicBool::new(false));
+    control
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(owner.clone(), cancel.clone());
 
     // Un événement par pourcent, pas un par bloc.
     let last = AtomicU8::new(255);
     let job = Job::new(cancel, move |fraction| {
         let percent = (fraction * 100.0) as u8;
         if last.swap(percent, Ordering::Relaxed) != percent {
-            let _ = app.emit("audio-export-progress", percent);
+            let _ = app.emit(
+                "audio-export-progress",
+                serde_json::json!({ "owner": owner, "percent": percent }),
+            );
         }
     });
     blocking(move || process_blocking(&cache, &opts, &job)).await
 }
 
+/// Libère l'audio décodé d'un fichier dont l'onglet est fermé : plusieurs Go pour un long fichier.
 #[tauri::command]
-pub fn audio_cancel(control: State<'_, AudioExportControl>) {
-    control.0.store(true, Ordering::Relaxed);
+pub fn audio_release(cache: State<'_, DecodeCache>, path: String) {
+    cache.release(&path);
+}
+
+#[tauri::command]
+pub fn audio_cancel(control: State<'_, AudioExportControl>, owner: Option<String>) {
+    if let Some(flag) = control
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&owner.unwrap_or_default())
+    {
+        flag.store(true, Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]

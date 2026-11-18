@@ -1,3 +1,5 @@
+import { syncMedia } from "../../lib/mediaSync";
+import { useTabActive } from "../../lib/menuBridge";
 import { VIGNETTE_GRADIENT, videoEffectsStyle } from "../../lib/videoFx";
 import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
@@ -82,11 +84,28 @@ export const TextElementView = memo(function TextElementView({
     const box = boxRef.current;
     const probe = probeRef.current;
     if (!box || !probe) return;
-    const update = () => setAutoSize(fitFontSize(box, probe));
-    update();
-    const observer = new ResizeObserver(update);
+    // Chaque mesure force plusieurs mises en page (une dichotomie de 13 pas) : pendant un
+    // redimensionnement elles sont regroupées à une par image, et sautées si la boîte n'a pas changé.
+    let frame = 0;
+    let lastW = -1;
+    let lastH = -1;
+    const update = () => {
+      frame = 0;
+      if (box.clientWidth === lastW && box.clientHeight === lastH) return;
+      lastW = box.clientWidth;
+      lastH = box.clientHeight;
+      setAutoSize(fitFontSize(box, probe));
+    };
+    lastW = -1;
+    update(); // la première mesure est immédiate (pas d'image sans taille)
+    const observer = new ResizeObserver(() => {
+      if (!frame) frame = requestAnimationFrame(update);
+    });
     observer.observe(box);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
   }, [
     isAuto,
     element.content,
@@ -230,6 +249,7 @@ export const VideoElementView = memo(function VideoElementView({
   playing: boolean;
   panTransform: string;
 }) {
+  const tabActive = useTabActive();
   const ref = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<{ code: number; message: string } | null>(null);
   const { src: mediaSrc, usingBlob, blobError, fallBack } = useMediaSource(projectDir, element.src);
@@ -267,8 +287,8 @@ export const VideoElementView = memo(function VideoElementView({
     }
   }, [playing, mediaSrc]);
 
-  // Synchronisation de la position sur l'horloge de l'éditeur (à chaque image : un simple test
-  // de dérive, le saut n'a lieu que s'il dépasse 0,25 s).
+  // Synchronisation de la position sur l'horloge de l'éditeur (à chaque image : un test de
+  // dérive ; voir `syncMedia` pour les seuils).
   useEffect(() => {
     const video = ref.current;
     if (!video) return;
@@ -287,10 +307,16 @@ export const VideoElementView = memo(function VideoElementView({
           : sourceDuration - 0.05;
       targetTime = Math.max(0, targetTime);
     }
-    if (Math.abs(video.currentTime - targetTime) > 0.25) {
-      video.currentTime = targetTime;
-    }
-  }, [localTime, mediaSrc, element.start_time, element.video_offset, element.playback_speed, element.loop_video]);
+    syncMedia(video, targetTime, playing && !video.ended, speed);
+  }, [
+    localTime,
+    playing,
+    mediaSrc,
+    element.start_time,
+    element.video_offset,
+    element.playback_speed,
+    element.loop_video,
+  ]);
 
   return (
     <div style={mediaFrameStyle(element)}>
@@ -303,7 +329,8 @@ export const VideoElementView = memo(function VideoElementView({
           pointerEvents: "none",
           transform: panTransform || undefined,
         }}
-        preload="auto"
+        // Un onglet masqué (ils restent montés) ne garde pas ses vidéos préchargées en mémoire.
+        preload={tabActive ? "auto" : "metadata"}
         loop={element.loop_video}
         onError={(e) => {
           const mediaError = e.currentTarget.error;

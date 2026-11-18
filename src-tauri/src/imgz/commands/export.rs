@@ -32,17 +32,91 @@ fn extension_for(fmt: ImageFormat) -> &'static str {
 /// Compose l'image sur fond blanc : le JPEG n'a pas de canal alpha, et le simple retirer
 /// laisserait apparaître la couleur (souvent noire) cachée sous les pixels transparents.
 pub fn flatten_on_white(img: &DynamicImage) -> RgbImage {
+    use rayon::prelude::*;
     let rgba = img.to_rgba8();
     let mut out = RgbImage::new(rgba.width(), rgba.height());
-    for (x, y, p) in rgba.enumerate_pixels() {
-        let a = p[3] as u32;
-        let mix = |c: u8| ((c as u32 * a + 255 * (255 - a) + 127) / 255) as u8;
-        out.put_pixel(x, y, image::Rgb([mix(p[0]), mix(p[1]), mix(p[2])]));
-    }
+    // Lignes réparties sur tous les cœurs (un `put_pixel` séquentiel pour 24 Mpx).
+    out.as_mut()
+        .par_chunks_mut(3)
+        .zip(rgba.as_raw().par_chunks(4))
+        .for_each(|(dst, p)| {
+            let a = u32::from(p[3]);
+            let mix = |c: u8| ((u32::from(c) * a + 255 * (255 - a) + 127) / 255) as u8;
+            dst[0] = mix(p[0]);
+            dst[1] = mix(p[1]);
+            dst[2] = mix(p[2]);
+        });
     out
 }
 
-fn embed_icc(bytes: Vec<u8>, fmt: ImageFormat, icc: &[u8]) -> Vec<u8> {
+/// Le même bloc EXIF (TIFF brut) avec `Orientation` = 1 : l'image exportée est déjà redressée,
+/// une orientation d'origine la ferait tourner une seconde fois.
+pub(crate) fn with_upright_orientation(mut tiff: Vec<u8>) -> Vec<u8> {
+    let little = match tiff.get(..2) {
+        Some(b"II") => true,
+        Some(b"MM") => false,
+        _ => return tiff,
+    };
+    let u16_at = |b: &[u8], at: usize| {
+        let s = b.get(at..at + 2)?;
+        Some(if little {
+            u16::from_le_bytes([s[0], s[1]])
+        } else {
+            u16::from_be_bytes([s[0], s[1]])
+        })
+    };
+    let u32_at = |b: &[u8], at: usize| {
+        let s = b.get(at..at + 4)?;
+        Some(if little {
+            u32::from_le_bytes([s[0], s[1], s[2], s[3]])
+        } else {
+            u32::from_be_bytes([s[0], s[1], s[2], s[3]])
+        })
+    };
+    let Some(ifd) = u32_at(&tiff, 4).map(|v| v as usize) else {
+        return tiff;
+    };
+    let count = u16_at(&tiff, ifd).unwrap_or(0) as usize;
+    for i in 0..count {
+        let entry = ifd + 2 + i * 12;
+        if u16_at(&tiff, entry) == Some(0x0112) {
+            let one = if little {
+                1u16.to_le_bytes()
+            } else {
+                1u16.to_be_bytes()
+            };
+            if let Some(slot) = tiff.get_mut(entry + 8..entry + 10) {
+                slot.copy_from_slice(&one);
+            }
+            break;
+        }
+    }
+    tiff
+}
+
+/// Écrit le bloc EXIF dans le fichier encodé (JPEG, PNG, WebP) ; les autres formats n'en portent pas.
+fn embed_exif(bytes: Vec<u8>, fmt: ImageFormat, exif: &[u8]) -> Vec<u8> {
+    use img_parts::{jpeg::Jpeg, png::Png, webp::WebP, ImageEXIF};
+    let exif = Some(exif.to_vec().into());
+    match fmt {
+        ImageFormat::Jpeg => Jpeg::from_bytes(bytes.clone().into()).map(|mut i| {
+            i.set_exif(exif);
+            i.encoder().bytes().to_vec()
+        }),
+        ImageFormat::Png => Png::from_bytes(bytes.clone().into()).map(|mut i| {
+            i.set_exif(exif);
+            i.encoder().bytes().to_vec()
+        }),
+        ImageFormat::WebP => WebP::from_bytes(bytes.clone().into()).map(|mut i| {
+            i.set_exif(exif);
+            i.encoder().bytes().to_vec()
+        }),
+        _ => return bytes,
+    }
+    .unwrap_or(bytes)
+}
+
+pub(crate) fn embed_icc(bytes: Vec<u8>, fmt: ImageFormat, icc: &[u8]) -> Vec<u8> {
     use img_parts::{jpeg::Jpeg, png::Png, webp::WebP};
     let profile = Some(icc.to_vec().into());
     match fmt {
@@ -74,6 +148,7 @@ pub fn write_image_with_icc(
     img_format: ImageFormat,
     quality: Option<u8>,
     icc: Option<&[u8]>,
+    exif: Option<&[u8]>,
 ) -> Result<(), String> {
     // Seuls PNG et TIFF savent écrire plus de 8 bits par canal ; les autres formats
     // reçoivent une version 8 bits.
@@ -98,6 +173,18 @@ pub fn write_image_with_icc(
             let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut bytes);
             img.write_with_encoder(encoder).map_err(|e| e.to_string())?;
         }
+        ImageFormat::Tiff => {
+            // L'encodeur TIFF écrit lui-même la balise du profil (34675).
+            let mut encoder =
+                image::codecs::tiff::TiffEncoder::new(std::io::Cursor::new(&mut bytes));
+            if let Some(icc) = icc {
+                use image::ImageEncoder;
+                encoder
+                    .set_icc_profile(icc.to_vec())
+                    .map_err(|e| e.to_string())?;
+            }
+            img.write_with_encoder(encoder).map_err(|e| e.to_string())?;
+        }
         _ => {
             img.write_to(&mut std::io::Cursor::new(&mut bytes), img_format)
                 .map_err(|e| e.to_string())?;
@@ -106,7 +193,28 @@ pub fn write_image_with_icc(
     if let Some(icc) = icc {
         bytes = embed_icc(bytes, img_format, icc);
     }
-    std::fs::write(path, bytes).map_err(|e| e.to_string())
+    if let Some(exif) = exif {
+        bytes = embed_exif(bytes, img_format, exif);
+    }
+    write_atomic(path, &bytes)
+}
+
+/// Écrit `bytes` dans un fichier voisin puis le renomme : un échec ou une coupure en cours
+/// d'écriture ne détruit pas le fichier que l'export remplace.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "export".into());
+    let part = path.with_file_name(format!(".{name}.part"));
+    std::fs::write(&part, bytes).map_err(|e| {
+        let _ = std::fs::remove_file(&part);
+        e.to_string()
+    })?;
+    std::fs::rename(&part, path).map_err(|e| {
+        let _ = std::fs::remove_file(&part);
+        e.to_string()
+    })
 }
 
 #[cfg(test)]
@@ -116,7 +224,7 @@ pub fn write_image(
     img_format: ImageFormat,
     quality: Option<u8>,
 ) -> Result<(), String> {
-    write_image_with_icc(img, path, img_format, quality, None)
+    write_image_with_icc(img, path, img_format, quality, None, None)
 }
 
 #[tauri::command]
@@ -167,16 +275,24 @@ pub async fn export_image(
 
     // Le verrou n'est tenu que pour copier une référence : l'encodage et l'écriture
     // (longs sur une grande image) se font hors verrou.
-    let (img, icc) = {
+    let (img, icc, exif) = {
         let map = state.0.lock().map_err(|e| e.to_string())?;
         let history = map.get(&tab_id).ok_or("Tab not found")?;
         (
             history.current_arc().ok_or("No image loaded")?,
             history.icc.clone(),
+            history.exif.clone(),
         )
     };
 
-    write_image_with_icc(&img, &path_buf, img_format, quality, icc.as_deref())?;
+    write_image_with_icc(
+        &img,
+        &path_buf,
+        img_format,
+        quality,
+        icc.as_deref(),
+        exif.as_deref(),
+    )?;
     // L'image exportée peut ensuite rejoindre des projets : c'est bien une sortie choisie ici.
     approved.allow_output(&path_buf);
     Ok(Some(path_buf.to_string_lossy().into_owned()))
@@ -364,7 +480,7 @@ mod tests {
         for (fmt, name) in [(ImageFormat::Png, "p.png"), (ImageFormat::Jpeg, "p.jpg")] {
             let path = temp_path(name);
 
-            write_image_with_icc(&img(6, 6), &path, fmt, None, Some(&profile)).unwrap();
+            write_image_with_icc(&img(6, 6), &path, fmt, None, Some(&profile), None).unwrap();
 
             let bytes = std::fs::read(&path).unwrap();
             let found = if fmt == ImageFormat::Png {
@@ -379,5 +495,61 @@ mod tests {
             assert_eq!(found.as_deref(), Some(profile.as_slice()), "{name}");
             assert!(image::open(&path).is_ok(), "{name} reste lisible");
         }
+    }
+
+    #[test]
+    fn a_tiff_keeps_its_icc_profile_and_stays_readable() {
+        let dir = std::env::temp_dir().join(format!("lev_tiff_icc_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("o.tiff");
+        let img = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            3,
+            2,
+            image::Rgba([9, 8, 7, 255]),
+        ));
+        let profile = b"fake-profile-bytes".to_vec();
+
+        write_image_with_icc(&img, &path, ImageFormat::Tiff, None, Some(&profile), None).unwrap();
+
+        let back = image::open(&path).unwrap().to_rgba8();
+        assert_eq!(back.get_pixel(2, 1).0, [9, 8, 7, 255]);
+        // Le profil est dans le fichier (balise 34675, vérifiée aussi avec PIL à l'écriture du test).
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes
+            .windows(profile.len())
+            .any(|w| w == profile.as_slice()));
+        let tag = 34675u16.to_le_bytes();
+        assert!(
+            bytes.windows(2).any(|w| w == tag),
+            "balise IccProfile absente"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exif_is_kept_on_export_with_an_upright_orientation() {
+        // TIFF little-endian, une entrée Orientation = 6 (photo portrait couchée).
+        let exif: Vec<u8> = vec![
+            b'I', b'I', 0x2A, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0,
+            0, 0,
+        ];
+        let upright = with_upright_orientation(exif.clone());
+        assert_eq!(&upright[18..20], &[1, 0]);
+        assert_eq!(upright.len(), exif.len());
+
+        let dir = std::env::temp_dir().join(format!("lev_exif_keep_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("o.jpg");
+        let img = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            4,
+            4,
+            image::Rgba([1, 2, 3, 255]),
+        ));
+        write_image_with_icc(&img, &path, ImageFormat::Jpeg, None, None, Some(&upright)).unwrap();
+
+        use img_parts::ImageEXIF;
+        let jpeg = img_parts::jpeg::Jpeg::from_bytes(std::fs::read(&path).unwrap().into()).unwrap();
+        assert_eq!(jpeg.exif().unwrap().to_vec(), upright);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

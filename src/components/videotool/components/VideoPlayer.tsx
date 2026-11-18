@@ -43,7 +43,8 @@ function VideoPlayer({
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.playbackRate = speed;
-  }, [speed, videoRef]);
+    // `src` : changer d'URL (flux local après une erreur) remet la vitesse à 1× dans le navigateur.
+  }, [speed, src, videoRef]);
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.muted = muted;

@@ -175,7 +175,7 @@ where
     });
 }
 
-fn premultiply<S: Sample>(img: &mut ImageBuffer<Rgba<S>, Vec<S>>)
+pub(crate) fn premultiply<S: Sample>(img: &mut ImageBuffer<Rgba<S>, Vec<S>>)
 where
     Rgba<S>: image::Pixel<Subpixel = S>,
 {
@@ -188,7 +188,7 @@ where
     });
 }
 
-fn unpremultiply<S: Sample>(img: &mut ImageBuffer<Rgba<S>, Vec<S>>)
+pub(crate) fn unpremultiply<S: Sample>(img: &mut ImageBuffer<Rgba<S>, Vec<S>>)
 where
     Rgba<S>: image::Pixel<Subpixel = S>,
 {
@@ -203,9 +203,10 @@ where
     });
 }
 
-/// Flou gaussien. Les images translucides sont floutées en alpha prémultiplié, sans quoi
-/// les pixels transparents (noirs) viennent assombrir les bords ; les grands rayons passent
-/// par l'approximation en trois passes de boîtes, de coût indépendant du rayon.
+/// Flou gaussien en espace d'encodage. Les images translucides sont floutées en alpha
+/// prémultiplié, sans quoi les pixels transparents (noirs) viennent assombrir les bords ; les
+/// petits rayons passent par un noyau séparable réparti sur tous les cœurs, les grands par
+/// l'approximation en trois passes de boîtes, de coût indépendant du rayon.
 pub fn blur_rgba<S: Sample>(
     src: &ImageBuffer<Rgba<S>, Vec<S>>,
     sigma: f32,
@@ -214,21 +215,300 @@ where
     Rgba<S>: image::Pixel<Subpixel = S>,
 {
     let sigma = sigma.max(0.1);
-    let run = |img: &ImageBuffer<Rgba<S>, Vec<S>>| {
-        if sigma > 4.0 {
-            imageops::fast_blur(img, sigma)
-        } else {
-            imageops::blur(img, sigma)
+    if sigma <= SMALL_SIGMA {
+        let taps = gauss_taps;
+        if let Some(out) = separable(
+            src,
+            src.width(),
+            src.height(),
+            &taps(src.width() as usize, sigma),
+            &taps(src.height() as usize, sigma),
+            false,
+        ) {
+            return out;
         }
-    };
+    }
     if src.pixels().all(|p| p[3].raw() == S::MAX) {
-        return run(src);
+        return imageops::fast_blur(src, sigma);
     }
     let mut work = src.clone();
     premultiply(&mut work);
-    let mut out = run(&work);
+    let mut out = imageops::fast_blur(&work, sigma);
     unpremultiply(&mut out);
     out
+}
+
+/// Au-delà de ce rayon, le flou passe par les boîtes (`fast_blur`).
+const SMALL_SIGMA: f32 = 4.0;
+/// Taille maximale (pixels) d'une image floutée en flottant pour les grands rayons.
+const LINEAR_BLUR_MAX_PIXELS: u64 = 12_000_000;
+
+/// Flou gaussien en lumière linéaire : mélanger les valeurs sRGB assombrit les transitions
+/// (un flou de noir et blanc donne un gris trop sombre). Même résultat que [`blur_rgba`] sur
+/// un aplat ; les très grandes images, trop lourdes en flottant, restent en espace d'encodage.
+pub fn blur_linear<S: Sample>(
+    src: &ImageBuffer<Rgba<S>, Vec<S>>,
+    sigma: f32,
+) -> ImageBuffer<Rgba<S>, Vec<S>>
+where
+    Rgba<S>: image::Pixel<Subpixel = S>,
+{
+    let sigma = sigma.max(0.1);
+    if sigma <= SMALL_SIGMA {
+        let (w, h) = (src.width(), src.height());
+        if let Some(out) = separable(
+            src,
+            w,
+            h,
+            &gauss_taps(w as usize, sigma),
+            &gauss_taps(h as usize, sigma),
+            true,
+        ) {
+            return out;
+        }
+    } else if u64::from(src.width()) * u64::from(src.height()) <= LINEAR_BLUR_MAX_PIXELS {
+        let dec = decode_table::<S>(true);
+        let mut lin = ImageBuffer::<Rgba<f32>, Vec<f32>>::new(src.width(), src.height());
+        lin.as_mut()
+            .par_chunks_mut(4)
+            .zip(src.as_raw().par_chunks(4))
+            .for_each(|(o, p)| decode_px(p, &dec, o));
+        let blurred = imageops::fast_blur(&lin, sigma);
+        let mut out = ImageBuffer::<Rgba<S>, Vec<S>>::new(src.width(), src.height());
+        out.as_mut()
+            .par_chunks_mut(4)
+            .zip(blurred.as_raw().par_chunks(4))
+            .for_each(|(o, a)| encode_px(a, true, o));
+        return out;
+    }
+    blur_rgba(src, sigma)
+}
+
+// ── noyaux séparables en flottant (redimensionnement, flou) ──────────────────────
+
+/// Pixels sources (`start`, `weights.len()` consécutifs) contribuant à un pixel de sortie.
+pub(crate) struct Taps {
+    start: usize,
+    weights: Vec<f32>,
+}
+
+fn normalised(start: usize, mut weights: Vec<f32>) -> Taps {
+    let sum: f32 = weights.iter().sum();
+    if sum.abs() > 1e-8 {
+        weights.iter_mut().for_each(|w| *w /= sum);
+    }
+    Taps { start, weights }
+}
+
+fn lanczos3(x: f32) -> f32 {
+    if x.abs() >= 3.0 {
+        return 0.0;
+    }
+    let sinc = |v: f32| {
+        if v == 0.0 {
+            1.0
+        } else {
+            let p = std::f32::consts::PI * v;
+            p.sin() / p
+        }
+    };
+    sinc(x) * sinc(x / 3.0)
+}
+
+/// Poids de Lanczos3 pour passer de `src` à `dst` pixels sur un axe.
+pub(crate) fn lanczos_taps(src: usize, dst: usize) -> Vec<Taps> {
+    let ratio = src as f32 / dst as f32;
+    let scale = ratio.max(1.0);
+    let support = 3.0 * scale;
+    (0..dst)
+        .map(|i| {
+            let center = (i as f32 + 0.5) * ratio;
+            let left = ((center - support).floor().max(0.0)) as usize;
+            let right = (((center + support).ceil()) as usize).min(src);
+            let weights = (left..right)
+                .map(|j| lanczos3((j as f32 + 0.5 - center) / scale))
+                .collect();
+            normalised(left, weights)
+        })
+        .collect()
+}
+
+/// Poids gaussiens (même longueur en entrée et en sortie).
+pub(crate) fn gauss_taps(len: usize, sigma: f32) -> Vec<Taps> {
+    let r = (sigma * 3.0).ceil() as usize;
+    (0..len)
+        .map(|i| {
+            let left = i.saturating_sub(r);
+            let right = (i + r + 1).min(len);
+            let weights = (left..right)
+                .map(|j| {
+                    let d = j as f32 - i as f32;
+                    (-d * d / (2.0 * sigma * sigma)).exp()
+                })
+                .collect();
+            normalised(left, weights)
+        })
+        .collect()
+}
+
+#[inline]
+fn srgb_to_linear(v: f32) -> f32 {
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+#[inline]
+fn linear_to_srgb(v: f32) -> f32 {
+    let v = v.clamp(0.0, 1.0);
+    if v <= 0.003_130_8 {
+        v * 12.92
+    } else {
+        1.055 * v.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// Valeur d'un canal de l'échelle 0–255 passée par la lumière linéaire : `f` agit sur des
+/// intensités linéaires (0–1).
+pub fn in_linear_light(v255: f32, f: impl FnOnce(f32) -> f32) -> f32 {
+    linear_to_srgb(f(srgb_to_linear(v255 / 255.0))) * 255.0
+}
+
+/// Valeur flottante (0–1) de chaque niveau possible d'un canal, linéarisée ou non.
+fn decode_table<S: Sample>(linear: bool) -> Vec<f32> {
+    (0..=S::MAX)
+        .map(|i| {
+            let v = i as f32 / S::MAX as f32;
+            if linear {
+                srgb_to_linear(v)
+            } else {
+                v
+            }
+        })
+        .collect()
+}
+
+/// Pixel RGBA → flottant prémultiplié.
+#[inline]
+fn decode_px<S: Sample>(p: &[S], dec: &[f32], out: &mut [f32]) {
+    let a = p[3].raw() as f32 / S::MAX as f32;
+    for c in 0..3 {
+        out[c] = dec[p[c].raw() as usize] * a;
+    }
+    out[3] = a;
+}
+
+/// Flottant prémultiplié → pixel RGBA.
+#[inline]
+fn encode_px<S: Sample>(acc: &[f32], linear: bool, out: &mut [S]) {
+    let a = acc[3].clamp(0.0, 1.0);
+    for c in 0..3 {
+        let v = if a > 0.0 {
+            (acc[c] / a).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let v = if linear { linear_to_srgb(v) } else { v };
+        out[c] = S::from_255(v * 255.0);
+    }
+    out[3] = S::from_255(a * 255.0);
+}
+
+/// Intermédiaire flottant maximal (pixels) d'un noyau séparable : 16 octets par pixel.
+const MAX_SEPARABLE_PIXELS: usize = 48_000_000;
+
+/// Applique `taps_x` puis `taps_y` (un jeu par pixel de sortie), lignes réparties sur tous
+/// les cœurs, en flottant prémultiplié (`linear` : en lumière linéaire). `None` si
+/// l'intermédiaire serait trop gros : l'appelant se rabat sur un autre chemin.
+pub(crate) fn separable<S: Sample>(
+    src: &ImageBuffer<Rgba<S>, Vec<S>>,
+    dw: u32,
+    dh: u32,
+    taps_x: &[Taps],
+    taps_y: &[Taps],
+    linear: bool,
+) -> Option<ImageBuffer<Rgba<S>, Vec<S>>>
+where
+    Rgba<S>: image::Pixel<Subpixel = S>,
+{
+    let (sw, sh, dw, dh) = (
+        src.width() as usize,
+        src.height() as usize,
+        dw as usize,
+        dh as usize,
+    );
+    if sw == 0 || sh == 0 || dw == 0 || dh == 0 || dw.checked_mul(sh)? > MAX_SEPARABLE_PIXELS {
+        return None;
+    }
+    let dec = decode_table::<S>(linear);
+    let raw = src.as_raw();
+    let mut tmp = vec![0f32; dw * sh * 4];
+    tmp.par_chunks_mut(dw * 4).enumerate().for_each(|(y, row)| {
+        let mut line = vec![0f32; sw * 4];
+        for (x, p) in raw[y * sw * 4..(y + 1) * sw * 4]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .enumerate()
+        {
+            decode_px(p, &dec, &mut line[x * 4..x * 4 + 4]);
+        }
+        for (dx, t) in taps_x.iter().enumerate() {
+            let mut acc = [0f32; 4];
+            for (k, w) in t.weights.iter().enumerate() {
+                let p = &line[(t.start + k) * 4..(t.start + k) * 4 + 4];
+                for c in 0..4 {
+                    acc[c] += w * p[c];
+                }
+            }
+            row[dx * 4..dx * 4 + 4].copy_from_slice(&acc);
+        }
+    });
+    let mut out = ImageBuffer::<Rgba<S>, Vec<S>>::new(dw as u32, dh as u32);
+    out.as_mut()
+        .par_chunks_mut(dw * 4)
+        .enumerate()
+        .for_each(|(dy, row)| {
+            let t = &taps_y[dy];
+            let mut acc = vec![0f32; dw * 4];
+            for (k, w) in t.weights.iter().enumerate() {
+                let line = &tmp[(t.start + k) * dw * 4..(t.start + k + 1) * dw * 4];
+                for (a, v) in acc.iter_mut().zip(line) {
+                    *a += w * v;
+                }
+            }
+            for (a, o) in acc
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(row.as_chunks_mut::<4>().0.iter_mut())
+            {
+                encode_px(a, linear, o);
+            }
+        });
+    Some(out)
+}
+
+/// Redimensionnement de Lanczos3 en lumière linéaire et alpha prémultiplié, réparti sur tous
+/// les cœurs. `None` quand l'intermédiaire serait trop gros.
+pub fn resize_lanczos_linear<S: Sample>(
+    src: &ImageBuffer<Rgba<S>, Vec<S>>,
+    width: u32,
+    height: u32,
+) -> Option<ImageBuffer<Rgba<S>, Vec<S>>>
+where
+    Rgba<S>: image::Pixel<Subpixel = S>,
+{
+    separable(
+        src,
+        width,
+        height,
+        &lanczos_taps(src.width() as usize, width as usize),
+        &lanczos_taps(src.height() as usize, height as usize),
+        true,
+    )
 }
 
 #[cfg(test)]
@@ -281,6 +561,73 @@ mod tests {
     fn large_radii_use_the_box_approximation_and_stay_flat() {
         let img = RgbaImage::from_pixel(32, 32, Rgba([90, 90, 90, 255]));
         assert_eq!(blur_rgba(&img, 30.0).get_pixel(16, 16).0, [90, 90, 90, 255]);
+    }
+
+    // ── lumière linéaire et noyaux séparables ─────────────────────────────────
+
+    fn checker(w: u32, h: u32) -> RgbaImage {
+        RgbaImage::from_fn(w, h, |x, y| {
+            let v = if (x + y) % 2 == 0 { 0 } else { 255 };
+            Rgba([v, v, v, 255])
+        })
+    }
+
+    #[test]
+    fn a_resize_mixes_light_not_encoded_values() {
+        // Moitié de lumière blanche = 188 en sRGB, pas 128.
+        let out = resize_lanczos_linear(&checker(8, 8), 1, 1).unwrap();
+        let v = out.get_pixel(0, 0)[0];
+        assert!((180..=196).contains(&v), "gris {v}");
+    }
+
+    #[test]
+    fn a_resize_keeps_flat_colours_and_alpha_exact() {
+        let img = RgbaImage::from_pixel(9, 7, Rgba([10, 200, 30, 255]));
+        let out = resize_lanczos_linear(&img, 4, 3).unwrap();
+        assert!(out.pixels().all(|p| p.0 == [10, 200, 30, 255]));
+        let half = RgbaImage::from_pixel(9, 7, Rgba([10, 200, 30, 128]));
+        let out = resize_lanczos_linear(&half, 20, 15).unwrap();
+        assert!(out.pixels().all(|p| p.0 == [10, 200, 30, 128]));
+    }
+
+    #[test]
+    fn a_16_bit_resize_keeps_its_precision() {
+        let img = ImageBuffer::<Rgba<u16>, Vec<u16>>::from_pixel(
+            6,
+            6,
+            Rgba([30_000, 40_000, 50_000, 65_535]),
+        );
+        let out = resize_lanczos_linear(&img, 3, 3).unwrap();
+        assert!(out
+            .pixels()
+            .all(|p| p.0 == [30_000, 40_000, 50_000, 65_535]));
+    }
+
+    #[test]
+    fn a_linear_blur_of_black_and_white_is_brighter_than_the_encoded_one() {
+        let img = checker(16, 16);
+        let linear = blur_linear(&img, 3.0).get_pixel(8, 8)[0];
+        let encoded = blur_rgba(&img, 3.0).get_pixel(8, 8)[0];
+        assert!(linear > encoded + 30, "{linear} vs {encoded}");
+        for sigma in [3.0, 8.0] {
+            let flat = RgbaImage::from_pixel(20, 20, Rgba([90, 90, 90, 255]));
+            assert_eq!(
+                blur_linear(&flat, sigma).get_pixel(10, 10).0,
+                [90, 90, 90, 255]
+            );
+        }
+    }
+
+    #[test]
+    fn the_parallel_blur_matches_a_straight_convolution_on_an_impulse() {
+        let mut img = RgbaImage::from_pixel(15, 15, Rgba([0, 0, 0, 255]));
+        img.put_pixel(7, 7, Rgba([255, 255, 255, 255]));
+        let out = blur_rgba(&img, 1.5);
+        // Symétrique, maximum au centre, énergie conservée à l'arrondi près.
+        assert_eq!(out.get_pixel(6, 7)[0], out.get_pixel(8, 7)[0]);
+        assert!(out.get_pixel(7, 7)[0] > out.get_pixel(6, 7)[0]);
+        let sum: u32 = out.pixels().map(|p| u32::from(p[0])).sum();
+        assert!((245..=265).contains(&sum), "somme {sum}");
     }
 
     // ── profondeur 16 bits ────────────────────────────────────────────────────

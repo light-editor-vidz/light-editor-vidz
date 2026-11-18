@@ -88,12 +88,118 @@ fn http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("HTTP client init failed: {e}"))
 }
 
-fn download_client() -> Result<reqwest::Client, String> {
+/// Un type de contenu de média (image, vidéo, son) ou générique (`application/octet-stream`).
+fn is_media_content_type(value: &str) -> bool {
+    let kind = value
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    kind.starts_with("image/")
+        || kind.starts_with("video/")
+        || kind.starts_with("audio/")
+        || kind == "application/octet-stream"
+        || kind == "binary/octet-stream"
+}
+
+/// Domaines des fournisseurs (et des CDN qu'ils utilisent) d'où un média peut être téléchargé.
+/// Un sous-domaine d'une entrée est accepté (`videos.pexels.com`), jamais un domaine qui ne fait
+/// que lui ressembler (`evilpexels.com`).
+const DOWNLOAD_HOSTS: [&str; 9] = [
+    "pexels.com",
+    "pixabay.com",
+    "freesound.org",
+    "openverse.org",
+    "staticflickr.com",
+    "wikimedia.org",
+    "vimeo.com",
+    "vimeocdn.com",
+    "archive.org",
+];
+
+/// Les URL de téléchargement que les recherches ont elles-mêmes renvoyées : Openverse indexe des
+/// médias hébergés n'importe où, ceux-là sont acceptés tels quels (mais pas une URL inventée par
+/// le WebView).
+static ISSUED_URLS: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
+    std::sync::Mutex::new(None);
+const MAX_ISSUED_URLS: usize = 5000;
+
+fn remember_issued(results: &[StockResult]) {
+    let mut guard = ISSUED_URLS.lock().unwrap_or_else(|e| e.into_inner());
+    let set = guard.get_or_insert_with(Default::default);
+    if set.len() + results.len() > MAX_ISSUED_URLS {
+        set.clear();
+    }
+    set.extend(results.iter().map(|r| r.download_url.clone()));
+}
+
+fn is_issued(url: &str) -> bool {
+    ISSUED_URLS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|set| set.contains(url))
+}
+
+fn host_in_allowlist(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    DOWNLOAD_HOSTS
+        .iter()
+        .any(|allowed| host == *allowed || host.ends_with(format!(".{allowed}").as_str()))
+}
+
+/// L'hôte d'une URL s'il s'agit d'un nom de domaine (ni adresse IPv4, ni `[IPv6]`).
+fn domain_of(url: &reqwest::Url) -> Option<&str> {
+    let host = url.host_str()?;
+    let is_ip = host.starts_with('[') || host.parse::<std::net::Ipv4Addr>().is_ok();
+    (!is_ip).then_some(host)
+}
+
+/// https, un nom de domaine (pas d'adresse IP ni `localhost`), et soit un fournisseur connu, soit
+/// une URL renvoyée par une recherche.
+fn check_download_url(url: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| "Only https downloads are allowed")?;
+    if parsed.scheme() != "https" {
+        return Err("Only https downloads are allowed".to_string());
+    }
+    let Some(host) = domain_of(&parsed) else {
+        return Err("Download host not allowed: not a domain name".to_string());
+    };
+    if host.eq_ignore_ascii_case("localhost") || host.ends_with(".localhost") {
+        return Err(format!("Download host not allowed: {host}"));
+    }
+    if host_in_allowlist(host) || is_issued(url) {
+        Ok(())
+    } else {
+        Err(format!("Download host not allowed: {host}"))
+    }
+}
+
+fn download_client(start_host: Option<String>) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(
             DOWNLOAD_CONNECT_TIMEOUT_SECS,
         ))
         .read_timeout(std::time::Duration::from_secs(DOWNLOAD_READ_TIMEOUT_SECS))
+        // Une redirection ne ramène jamais vers du http clair : la règle « https uniquement »
+        // s'appliquait seulement à l'URL de départ.
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            let target = attempt.url();
+            // Un domaine connu, ou celui de l'URL de départ : jamais une adresse IP ni un hôte
+            // interne atteint par rebond.
+            let host_ok = domain_of(target)
+                .is_some_and(|h| host_in_allowlist(h) || start_host.as_deref() == Some(h));
+            if target.scheme() != "https" {
+                attempt.error("redirect to a non-https address")
+            } else if !host_ok {
+                attempt.error("Download host not allowed (redirect)")
+            } else if attempt.previous().len() >= 5 {
+                attempt.error("too many redirects")
+            } else {
+                attempt.follow()
+            }
+        }))
         .user_agent(USER_AGENT)
         .build()
         .map_err(|e| format!("HTTP client init failed: {e}"))
@@ -533,8 +639,10 @@ pub async fn search_stock_assets(
             Err(e) => errors.push(format!("{provider}: {e}")),
         }
     }
+    let results = interleave(per_provider);
+    remember_issued(&results);
     Ok(StockSearchResponse {
-        results: interleave(per_provider),
+        results,
         errors,
         providers,
     })
@@ -552,9 +660,10 @@ pub async fn import_stock_asset(
     url: String,
     filename: String,
 ) -> CmdResult<String> {
-    if !url.starts_with("https://") {
-        return Err(("Only https downloads are allowed".to_string()).into());
-    }
+    check_download_url(&url)?;
+    let start_host = reqwest::Url::parse(&url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string));
     let project_dir = projects.require(&project_dir)?;
     let subdir = super::assets::kind_subdir(&kind)?;
     let filename = sanitize_filename(&filename);
@@ -566,7 +675,7 @@ pub async fn import_stock_asset(
         .await
         .map_err(|e| format!("Failed to create assets directory: {e}"))?;
 
-    let client = download_client()?;
+    let client = download_client(start_host)?;
     let mut resp = client
         .get(&url)
         .send()
@@ -578,12 +687,25 @@ pub async fn import_stock_asset(
     if resp.content_length().unwrap_or(0) > MAX_DOWNLOAD_BYTES {
         return Err(("File too large".to_string()).into());
     }
+    // Une page d'erreur ou de connexion (HTML, JSON) n'est pas un média.
+    if let Some(kind_header) = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+    {
+        if !is_media_content_type(kind_header) {
+            return Err((format!("Unexpected content type: {kind_header}")).into());
+        }
+    }
 
     let dest = super::assets::unique_destination(&target_dir, &filename);
-    let partial = dest.with_extension("part");
+    // Suffixe ajouté au nom complet : `x.jpg` et `x.png` ne partagent pas le même `.part`.
+    let partial = std::path::PathBuf::from(format!("{}.part", dest.display()));
     let result = download_to(&mut resp, &partial, MAX_DOWNLOAD_BYTES).await;
     if let Err(e) = result {
         let _ = tokio::fs::remove_file(&partial).await;
+        // Le nom réservé par `unique_destination` ne doit pas rester comme fichier vide.
+        let _ = tokio::fs::remove_file(&dest).await;
         return Err((e).into());
     }
     tokio::fs::rename(&partial, &dest)
@@ -630,6 +752,27 @@ async fn download_to(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn only_media_content_types_are_accepted_for_a_download() {
+        for ok in [
+            "image/jpeg",
+            "video/mp4; codecs=avc1",
+            "audio/mpeg",
+            "application/octet-stream",
+            "IMAGE/PNG",
+        ] {
+            assert!(is_media_content_type(ok), "{ok}");
+        }
+        for bad in [
+            "text/html; charset=utf-8",
+            "application/json",
+            "text/plain",
+            "",
+        ] {
+            assert!(!is_media_content_type(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn parses_pexels_photos_and_videos() {
@@ -1056,7 +1199,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("f.part");
         let result = run(async {
-            let mut resp = download_client().unwrap().get(&url).send().await.unwrap();
+            let mut resp = download_client(None)
+                .unwrap()
+                .get(&url)
+                .send()
+                .await
+                .unwrap();
             download_to(&mut resp, &path, 10_000).await
         });
         assert!(result.is_ok(), "{result:?}");
@@ -1069,7 +1217,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("f.part");
         let result = run(async {
-            let mut resp = download_client().unwrap().get(&url).send().await.unwrap();
+            let mut resp = download_client(None)
+                .unwrap()
+                .get(&url)
+                .send()
+                .await
+                .unwrap();
             assert!(resp.content_length().is_none(), "transfert chunked attendu");
             download_to(&mut resp, &path, 1000).await
         });
@@ -1094,6 +1247,51 @@ mod tests {
     }
 
     #[test]
+    fn downloads_are_limited_to_known_hosts_over_https() {
+        for ok in [
+            "https://videos.pexels.com/video-files/1/a.mp4",
+            "https://images.pexels.com/photos/1/a.jpg",
+            "https://cdn.pixabay.com/video/a.mp4",
+            "https://cdn.freesound.org/previews/1/a.mp3",
+            "https://upload.wikimedia.org/a.jpg",
+        ] {
+            assert!(check_download_url(ok).is_ok(), "{ok}");
+        }
+        for (bad, why) in [
+            ("http://images.pexels.com/a.jpg", "https"),
+            ("https://evilpexels.com/a.jpg", "lookalike"),
+            ("https://pexels.com.evil.example/a.jpg", "suffix trick"),
+            ("https://127.0.0.1/a.jpg", "IPv4"),
+            ("https://[::1]/a.jpg", "IPv6"),
+            ("https://localhost/a.jpg", "localhost"),
+            ("https://intranet.example/a.jpg", "unknown host"),
+            ("file:///etc/passwd", "scheme"),
+        ] {
+            assert!(check_download_url(bad).is_err(), "{bad} ({why})");
+        }
+    }
+
+    #[test]
+    fn a_url_returned_by_a_search_is_accepted_even_on_an_unlisted_host() {
+        let url = "https://media.some-museum.example/art/42.jpg";
+        assert!(check_download_url(url).is_err());
+        remember_issued(&[StockResult {
+            provider: "openverse".into(),
+            kind: "image".into(),
+            thumbnail_url: None,
+            download_url: url.into(),
+            page_url: None,
+            author: None,
+            license: None,
+            duration: None,
+            filename: "x.jpg".into(),
+        }]);
+        assert!(check_download_url(url).is_ok());
+        // Une autre URL du même hôte, que la recherche n'a pas renvoyée, reste refusée.
+        assert!(check_download_url("https://media.some-museum.example/other.jpg").is_err());
+    }
+
+    #[test]
     fn the_download_client_has_no_total_deadline() {
         // Une réponse lente mais continue (plus longue que le délai de recherche) doit passer :
         // seul le délai d'inactivité entre deux lectures s'applique.
@@ -1115,7 +1313,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("slow.part");
         let result = run(async {
-            let mut resp = download_client().unwrap().get(&url).send().await.unwrap();
+            let mut resp = download_client(None)
+                .unwrap()
+                .get(&url)
+                .send()
+                .await
+                .unwrap();
             download_to(&mut resp, &path, 100).await
         });
         assert!(result.is_ok(), "{result:?}");

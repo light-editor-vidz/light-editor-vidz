@@ -16,9 +16,15 @@ use tauri::State;
 
 type Files = Arc<Mutex<HashMap<String, PathBuf>>>;
 
+/// Nombre maximal de jetons actifs : les plus anciens sont révoqués au-delà (un jeton reste sinon
+/// valable toute la session, et le serveur répond à n'importe quelle origine).
+const MAX_TOKENS: usize = 64;
+
 pub struct MediaServer {
     port: Option<u16>,
     files: Files,
+    /// Les jetons du plus ancien au plus récent.
+    order: Mutex<std::collections::VecDeque<String>>,
 }
 
 impl MediaServer {
@@ -40,7 +46,11 @@ impl MediaServer {
                 });
                 Some(port)
             });
-        Self { port, files }
+        Self {
+            port,
+            files,
+            order: Mutex::default(),
+        }
     }
 
     fn url_for(&self, path: PathBuf) -> Result<String, CmdError> {
@@ -48,7 +58,16 @@ impl MediaServer {
             .port
             .ok_or_else(|| CmdError::from(anyhow::anyhow!("The media server is not running")))?;
         let token = uuid::Uuid::new_v4().simple().to_string();
-        self.files.lock().unwrap().insert(token.clone(), path);
+        let mut files = self.files.lock().unwrap_or_else(|e| e.into_inner());
+        let mut order = self.order.lock().unwrap_or_else(|e| e.into_inner());
+        files.insert(token.clone(), path);
+        order.push_back(token.clone());
+        while order.len() > MAX_TOKENS {
+            if let Some(old) = order.pop_front() {
+                files.remove(&old);
+            }
+        }
+        drop((files, order));
         Ok(format!("http://127.0.0.1:{port}/{token}"))
     }
 }
@@ -96,10 +115,31 @@ fn content_type(path: &Path) -> &'static str {
     }
 }
 
-fn respond(stream: &mut TcpStream, status: &str, headers: &str) -> io::Result<()> {
+/// Les origines du WebView de l'application (build : `tauri://localhost` ou
+/// `http(s)://tauri.localhost` ; développement : `http://localhost:<port>`). Toute autre page —
+/// un site ouvert dans un navigateur de la machine — ne reçoit aucun en-tête CORS.
+fn allowed_origin(origin: &str) -> bool {
+    matches!(
+        origin,
+        "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
+    ) || origin
+        .strip_prefix("http://localhost:")
+        .is_some_and(|port| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
+}
+
+fn respond_with(
+    stream: &mut TcpStream,
+    status: &str,
+    origin: Option<&str>,
+    headers: &str,
+) -> io::Result<()> {
+    let cors = origin
+        .filter(|o| allowed_origin(o))
+        .map(|o| format!("Access-Control-Allow-Origin: {o}\r\nVary: Origin\r\n"))
+        .unwrap_or_default();
     write!(
         stream,
-        "HTTP/1.1 {status}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n{headers}\r\n"
+        "HTTP/1.1 {status}\r\n{cors}Connection: close\r\n{headers}\r\n"
     )
 }
 
@@ -111,6 +151,7 @@ fn handle(mut stream: TcpStream, files: &Files) -> io::Result<()> {
     let mut parts = request.split_whitespace();
     let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
     let mut range = None;
+    let mut origin = None;
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 || line.trim().is_empty() {
@@ -119,9 +160,14 @@ fn handle(mut stream: TcpStream, files: &Files) -> io::Result<()> {
         if let Some((name, value)) = line.split_once(':') {
             if name.eq_ignore_ascii_case("range") {
                 range = Some(value.trim().to_string());
+            } else if name.eq_ignore_ascii_case("origin") {
+                origin = Some(value.trim().to_string());
             }
         }
     }
+    let respond = |stream: &mut TcpStream, status: &str, headers: &str| {
+        respond_with(stream, status, origin.as_deref(), headers)
+    };
     if method != "GET" && method != "HEAD" {
         return respond(
             &mut stream,
@@ -131,7 +177,7 @@ fn handle(mut stream: TcpStream, files: &Files) -> io::Result<()> {
     }
     let path = files
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .get(target.trim_start_matches('/'))
         .cloned();
     let Some(mut file) = path.as_ref().and_then(|p| File::open(p).ok()) else {
@@ -178,7 +224,7 @@ pub fn video_stream_url(
 
 /// L'URL de lecture d'un média d'un projet ouvert, résolu côté Rust.
 #[tauri::command]
-pub fn project_stream_url(
+pub async fn project_stream_url(
     projects: State<'_, OpenProjects>,
     server: State<'_, MediaServer>,
     project_dir: String,
@@ -186,7 +232,13 @@ pub fn project_stream_url(
 ) -> Result<String, CmdError> {
     let refuse = |m: String| CmdError::from(anyhow::anyhow!(m));
     let dir = projects.require(&project_dir).map_err(refuse)?;
-    let path = scene_core::paths::resolve_media_path(&dir, &src).map_err(refuse)?;
+    // La résolution canonicalise des chemins (E/S) : pas sur le thread principal.
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        scene_core::paths::resolve_media_path(&dir, &src)
+    })
+    .await
+    .map_err(|e| refuse(e.to_string()))?
+    .map_err(refuse)?;
     server.url_for(path)
 }
 
@@ -253,10 +305,46 @@ mod tests {
     }
 
     #[test]
+    fn cors_is_granted_to_the_app_origin_only() {
+        let (_dir, _server, url) = served();
+        let ok = fetch(&url, "Origin: tauri://localhost\r\n");
+        assert!(
+            ok.contains("Access-Control-Allow-Origin: tauri://localhost"),
+            "{ok}"
+        );
+        let dev = fetch(&url, "Origin: http://localhost:1420\r\n");
+        assert!(dev.contains("Access-Control-Allow-Origin: http://localhost:1420"));
+        let other = fetch(&url, "Origin: https://evil.example\r\n");
+        assert!(!other.contains("Access-Control-Allow-Origin"), "{other}");
+        assert!(!fetch(&url, "").contains("Access-Control-Allow-Origin"));
+        assert!(!allowed_origin("http://localhost:1420.evil.com"));
+    }
+
+    #[test]
     fn a_wrong_token_gets_nothing() {
         let (_dir, _server, url) = served();
         let (base, _) = url.rsplit_once('/').unwrap();
         assert!(fetch(&format!("{base}/nope"), "").starts_with("HTTP/1.1 404"));
         assert!(fetch(&format!("{base}/../a.webm"), "").starts_with("HTTP/1.1 404"));
+    }
+
+    #[test]
+    fn the_oldest_tokens_are_revoked_beyond_the_limit() {
+        let server = MediaServer {
+            port: Some(1),
+            files: Files::default(),
+            order: Mutex::default(),
+        };
+        let first = server.url_for(PathBuf::from("/a")).unwrap();
+        for i in 0..MAX_TOKENS {
+            server.url_for(PathBuf::from(format!("/f{i}"))).unwrap();
+        }
+        let token = first.rsplit('/').next().unwrap();
+        let files = server.files.lock().unwrap();
+        assert!(
+            !files.contains_key(token),
+            "the first token must be revoked"
+        );
+        assert_eq!(files.len(), MAX_TOKENS);
     }
 }

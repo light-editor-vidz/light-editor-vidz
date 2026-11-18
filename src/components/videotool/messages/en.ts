@@ -112,6 +112,8 @@ export const en = {
 
   // CropOverlay
   crop_apply: "✓ Apply",
+  key_enter: "Enter",
+  geometry_summary_short: (rotation: number, h: number, v: number) => `${rotation}° / H: ${h}° / V: ${v}°`,
 
   // Subtitles
   tool_subtitles: "Subtitles",
@@ -141,6 +143,9 @@ export const en = {
   subtitles_anim_typewriter: "Typewriter",
   subtitles_anim_typewriter_desc: "Characters appear one by one",
   subtitles_font: "Font",
+  font_sans_serif: "Sans-serif",
+  font_serif: "Serif",
+  font_monospace: "Monospace",
   subtitles_size: "Size",
   subtitles_color: "Text",
   subtitles_outline: "Outline",
@@ -167,6 +172,16 @@ export const en = {
   export_stop: "Stop export",
   export_cancelled: "Export cancelled",
   export_nothing: "Nothing to export: every part of the video is cut.",
+  export_error_stabilization: "Stabilization is not available in this build of ffmpeg.",
+  export_error_same_file: "The output file must differ from the source video.",
+  export_error_invalid: "These export settings are not valid.",
+  export_error_no_video: "The file has no video stream.",
+  export_error_queue_conflict: "Another queued export already writes to that file.",
+  export_error_no_sequence: "There is no sequence to merge.",
+  export_error_too_many_sequences: "Too many sequences to merge at once.",
+  export_error_too_many_frames: "Too many frames requested.",
+  export_error_ffmpeg_missing: "ffmpeg could not be started: check that it is installed.",
+  export_error_write_temp: "A temporary file could not be written: check the free disk space.",
   export_already_running: "An export is already running.",
   update_notes: "What's new",
   update_hide_notes: "Hide",
@@ -218,6 +233,7 @@ export const en = {
   hw_vaapi: "VAAPI",
   export_stabilization: "Stabilization",
   export_queue_add: "Add to queue",
+  export_waiting: (n: number) => `Waiting (${n} ahead)`,
   export_queued: "Added to the export queue",
 
   // Export queue

@@ -53,12 +53,46 @@ fn parse_project_file(path: &Path) -> Result<Project, String> {
 /// Lit le projet ; si `project.json` est illisible (écriture interrompue d'une ancienne version,
 /// disque défaillant), retombe sur la sauvegarde de la version précédente.
 fn read_project(project_dir: &Path) -> Result<Project, String> {
+    read_project_flagged(project_dir).map(|(project, _)| project)
+}
+
+/// Comme `read_project`, avec un drapeau vrai quand le projet vient de `project.json.bak` : l'appelant
+/// doit alors en prévenir l'utilisateur.
+fn read_project_flagged(project_dir: &Path) -> Result<(Project, bool), String> {
     match parse_project_file(&project_json_path(project_dir)) {
-        Ok(project) => Ok(project),
+        Ok(project) => Ok((project, false)),
         Err(primary_error) => {
-            parse_project_file(&project_dir.join(BACKUP_FILE)).map_err(|_| primary_error)
+            let project =
+                parse_project_file(&project_dir.join(BACKUP_FILE)).map_err(|_| primary_error)?;
+            // L'enregistrement automatique va écraser `project.json` : le fichier illisible est mis
+            // de côté, pour qu'une réparation à la main reste possible.
+            let primary = project_json_path(project_dir);
+            if primary.is_file() {
+                let _ = fs::copy(&primary, project_dir.join("project.json.corrupt"));
+            }
+            Ok((project, true))
         }
     }
+}
+
+/// Les projets rouverts depuis leur sauvegarde, en attente que l'interface le signale (une seule
+/// fois) à l'utilisateur.
+static RECOVERED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn note_recovered(project_dir: &str) {
+    let mut list = RECOVERED.lock().unwrap_or_else(|e| e.into_inner());
+    if !list.iter().any(|d| d == project_dir) {
+        list.push(project_dir.to_string());
+    }
+}
+
+/// Vrai (une seule fois) si le projet vient d'être ouvert depuis `project.json.bak`.
+#[tauri::command]
+pub fn take_project_recovery(project_dir: String) -> bool {
+    let mut list = RECOVERED.lock().unwrap_or_else(|e| e.into_inner());
+    let before = list.len();
+    list.retain(|d| d != &project_dir);
+    list.len() != before
 }
 
 /// Écriture atomique : le JSON est écrit dans un fichier temporaire puis renommé, de sorte
@@ -70,11 +104,35 @@ fn write_project(project_dir: &Path, project: &Project) -> Result<(), String> {
     let json = scene_core::project::to_json(project)
         .map_err(|e| format!("Failed to serialize project: {e}"))?;
     let target = project_json_path(project_dir);
-    let temp = project_dir.join(TEMP_FILE);
-    fs::write(&temp, json).map_err(|e| format!("Failed to write project: {e}"))?;
-    if target.is_file() {
-        // Best effort : l'absence de sauvegarde ne doit pas empêcher d'enregistrer.
-        let _ = fs::copy(&target, project_dir.join(BACKUP_FILE));
+    // Nom propre à ce processus et à cet appel : deux écritures simultanées ne se marchent pas dessus.
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let unique = format!(
+        "{TEMP_FILE}.{}.{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let temp = project_dir.join(unique);
+    {
+        use std::io::Write;
+        let mut file =
+            fs::File::create(&temp).map_err(|e| format!("Failed to write project: {e}"))?;
+        file.write_all(json.as_bytes())
+            .and_then(|()| file.sync_all()) // sur le disque avant le renommage : pas de fichier vide après une coupure
+            .map_err(|e| {
+                let _ = fs::remove_file(&temp);
+                format!("Failed to write project: {e}")
+            })?;
+    }
+    // Un `project.json` illisible ne remplace jamais la sauvegarde : c'est elle qui a permis de rouvrir
+    // le projet, et l'enregistrement automatique qui suit ne doit pas la détruire.
+    if target.is_file() && parse_project_file(&target).is_ok() {
+        // Best effort, et atomique : la copie passe aussi par un fichier voisin renommé.
+        let backup_temp = project_dir.join(format!("{BACKUP_FILE}.tmp"));
+        if fs::copy(&target, &backup_temp).is_ok()
+            && fs::rename(&backup_temp, project_dir.join(BACKUP_FILE)).is_err()
+        {
+            let _ = fs::remove_file(&backup_temp);
+        }
     }
     fs::rename(&temp, &target).map_err(|e| {
         let _ = fs::remove_file(&temp);
@@ -225,6 +283,13 @@ pub async fn new_project(
     .await
 }
 
+/// Un dossier de projet porte le suffixe `.lvproj` : on n'ouvre pas (ni ne rend lisible par
+/// `asset:`) un dossier quelconque qui contiendrait un `project.json`.
+pub fn is_project_dir(dir: &Path) -> bool {
+    dir.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("lvproj"))
+}
+
 /// Charge un projet depuis son dossier `.lvproj/` et l'ajoute aux projets récents.
 #[tauri::command]
 pub async fn load_project(
@@ -234,7 +299,13 @@ pub async fn load_project(
 ) -> CmdResult<Project> {
     let projects = projects.inner().clone();
     blocking(move || {
-        let project = read_project(Path::new(&project_dir))?;
+        if !is_project_dir(Path::new(&project_dir)) {
+            return Err("This folder is not a LightEditorVidz project (.lvproj).".to_string());
+        }
+        let (project, recovered) = read_project_flagged(Path::new(&project_dir))?;
+        if recovered {
+            note_recovered(&project_dir);
+        }
         projects.register(Path::new(&project_dir))?;
         allow_asset_scope(&app, Path::new(&project_dir))?;
         add_recent(&app, &project_dir, &project)?;
@@ -329,7 +400,12 @@ pub async fn list_recent_projects(app: tauri::AppHandle) -> CmdResult<Vec<Recent
         let stored = load_recents(&app)?;
         let present: Vec<RecentProject> = stored
             .iter()
-            .filter(|r| project_json_path(Path::new(&r.path)).is_file())
+            // Un disque absent (clé USB, partage réseau) n'est pas un projet supprimé : l'entrée
+            // n'est oubliée que si son dossier parent existe et que le projet n'y est plus.
+            .filter(|r| {
+                let dir = Path::new(&r.path);
+                project_json_path(dir).is_file() || !dir.parent().is_some_and(Path::exists)
+            })
             .cloned()
             .collect();
         if present.len() != stored.len() {
@@ -516,15 +592,59 @@ mod tests {
     }
 
     #[test]
+    fn recovery_from_the_backup_is_flagged_and_the_next_save_keeps_that_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project(dir.path(), &sample_project()).unwrap();
+        write_project(dir.path(), &sample_project()).unwrap();
+        // Une lecture normale n'est pas signalée.
+        assert!(!read_project_flagged(dir.path()).unwrap().1);
+        std::fs::write(dir.path().join(PROJECT_FILE), "{\"name\": \"tronq").unwrap();
+
+        let (recovered, flagged) = read_project_flagged(dir.path()).unwrap();
+        assert!(flagged);
+        assert_eq!(recovered.name, "Démo");
+
+        // L'enregistrement automatique réécrit `project.json` sans détruire la sauvegarde :
+        // le fichier illisible n'est pas copié par-dessus.
+        let mut edited = sample_project();
+        edited.name = "Modifié".into();
+        write_project(dir.path(), &edited).unwrap();
+        assert_eq!(
+            parse_project_file(&dir.path().join(BACKUP_FILE))
+                .unwrap()
+                .name,
+            "Démo"
+        );
+        assert_eq!(read_project(dir.path()).unwrap().name, "Modifié");
+    }
+
+    #[test]
+    fn the_recovery_notice_is_given_once() {
+        note_recovered("/p/a.lvproj");
+        assert!(take_project_recovery("/p/a.lvproj".into()));
+        assert!(!take_project_recovery("/p/a.lvproj".into()));
+        assert!(!take_project_recovery("/p/never.lvproj".into()));
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn a_failed_write_never_touches_the_existing_project_file() {
         let dir = tempfile::tempdir().unwrap();
         write_project(dir.path(), &sample_project()).unwrap();
-        // Un dossier à la place du fichier temporaire empêche d'y écrire.
-        std::fs::create_dir(dir.path().join(TEMP_FILE)).unwrap();
+        // Un dossier non inscriptible empêche de créer le fichier temporaire.
+        use std::os::unix::fs::PermissionsExt;
+        let locked = std::fs::Permissions::from_mode(0o555);
+        std::fs::set_permissions(dir.path(), locked).unwrap();
         let mut renamed = sample_project();
         renamed.name = "Autre".into();
 
-        assert!(write_project(dir.path(), &renamed).is_err());
+        let admin = std::fs::File::create(dir.path().join("probe")).is_ok();
+        let failed = write_project(dir.path(), &renamed).is_err();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        if admin {
+            return; // exécuté en administrateur : les permissions ne bloquent rien
+        }
+        assert!(failed);
         assert_eq!(read_project(dir.path()).unwrap().name, "Démo");
     }
 
@@ -635,5 +755,21 @@ mod tests {
         .unwrap();
         assert!(matches!(&stored[0], StoredRecent::PathOnly(p) if p == "/old"));
         assert!(matches!(&stored[1], StoredRecent::Full(r) if r.name == "N"));
+    }
+
+    #[test]
+    fn an_unreadable_project_file_is_kept_aside_when_the_backup_is_used() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project(dir.path(), &sample_project()).unwrap();
+        write_project(dir.path(), &sample_project()).unwrap(); // crée le .bak
+        std::fs::write(project_json_path(dir.path()), b"{ truncated").unwrap();
+
+        let project = read_project(dir.path()).unwrap();
+
+        assert_eq!(project.name, "Démo");
+        assert_eq!(
+            std::fs::read(dir.path().join("project.json.corrupt")).unwrap(),
+            b"{ truncated"
+        );
     }
 }

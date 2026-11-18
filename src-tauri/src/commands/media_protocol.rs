@@ -12,7 +12,7 @@ use std::io::{Read, Seek, SeekFrom};
 
 /// Taille maximale d'une réponse : une requête sans borne de fin (`bytes=0-`) est servie par
 /// tranches, le lecteur redemande la suite.
-const MAX_CHUNK: u64 = 8 * 1024 * 1024;
+const MAX_CHUNK: u64 = 2 * 1024 * 1024;
 
 pub struct MediaResponse {
     pub status: u16,
@@ -94,11 +94,24 @@ pub fn serve(projects: &OpenProjects, path: &str, range: Option<&str>) -> MediaR
     let Some(decoded) = percent_decode(path.trim_start_matches('/')) else {
         return error(400);
     };
-    let Some((project_dir, relative)) = decoded.rsplit_once("::") else {
-        return error(400);
-    };
-    let Ok(dir) = projects.require(project_dir) else {
-        return error(403);
+    // Le séparateur est le premier `::` qui suit un projet ouvert : un nom de fichier (ou de
+    // dossier) peut lui-même contenir `::`.
+    let mut split = None;
+    let mut known_project = false;
+    for (at, _) in decoded.match_indices("::") {
+        let (project_dir, relative) = (&decoded[..at], &decoded[at + 2..]);
+        if let Ok(dir) = projects.require(project_dir) {
+            split = Some((dir, relative));
+            break;
+        }
+        known_project |= !project_dir.is_empty();
+    }
+    let Some((dir, relative)) = split else {
+        return error(if known_project || decoded.contains("::") {
+            403
+        } else {
+            400
+        });
     };
     let Ok(file_path) = scene_core::paths::resolve_media_path(&dir, relative) else {
         return error(404);
@@ -181,6 +194,19 @@ mod tests {
         assert_eq!((r.status, r.body.as_slice()), (200, &b"0123456789"[..]));
         assert_eq!(header(&r, "Content-Type"), Some("video/mp4"));
         assert_eq!(header(&r, "Accept-Ranges"), Some("bytes"));
+    }
+
+    #[test]
+    fn a_file_name_containing_the_separator_is_still_served() {
+        let (d, projects, _) = setup(b"0123456789");
+        let project = d.path().join("p.lvproj").canonicalize().unwrap();
+        std::fs::write(project.join("assets/videos/a::b.mp4"), b"abc").unwrap();
+        let url = format!(
+            "/{}::assets%2Fvideos%2Fa::b.mp4",
+            project.to_string_lossy().replace('/', "%2F")
+        );
+        let r = serve(&projects, &url, None);
+        assert_eq!((r.status, r.body.as_slice()), (200, &b"abc"[..]));
     }
 
     #[test]

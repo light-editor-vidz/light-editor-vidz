@@ -1,12 +1,14 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listen } from "@tauri-apps/api/event";
+import { ask } from "@tauri-apps/plugin-dialog";
 import AudioTool from "./AudioTool";
 import { busyWork } from "../../lib/busyWork";
 import { inertBridge, TabActiveProvider } from "../../lib/menuBridge";
 import * as commands from "../../lib/audiotool/commands";
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn(async () => true), open: vi.fn(), save: vi.fn() }));
 vi.mock("../../lib/audiotool/commands", () => ({
   audioAllowAsset: vi.fn(),
   audioLoad: vi.fn(),
@@ -14,6 +16,7 @@ vi.mock("../../lib/audiotool/commands", () => ({
   audioPickOutput: vi.fn(),
   audioProcess: vi.fn(),
   audioCancel: vi.fn(),
+  audioRelease: vi.fn(),
   audioRecentList: vi.fn(),
   audioRecentForget: vi.fn(),
   fetchAudioData: vi.fn(),
@@ -22,6 +25,8 @@ vi.mock("../../lib/audiotool/commands", () => ({
 /** Le moteur d'aperçu est remplacé par un double : Web Audio n'existe pas dans jsdom. */
 const engineState = vi.hoisted(() => ({
   current: null as null | Record<string, ReturnType<typeof vi.fn> | unknown>,
+  /** Quand il est posé, `decode` attend ce délai. */
+  gate: null as null | Promise<void>,
 }));
 vi.mock("../../lib/audiotool/previewEngine", () => {
   class PreviewEngine {
@@ -29,8 +34,12 @@ vi.mock("../../lib/audiotool/previewEngine", () => {
     hasPreview = true;
     analyserNode = null;
     time = 0;
-    decode = vi.fn(async () => ({ duration: 60 }));
+    decode = vi.fn(async () => {
+      if (engineState.gate) await engineState.gate;
+      return { duration: 60 };
+    });
     load = vi.fn();
+    setBuffer = vi.fn();
     setParams = vi.fn();
     setKept = vi.fn();
     setOnEnded = vi.fn();
@@ -64,6 +73,7 @@ const engine = () =>
     time: number;
     decode: ReturnType<typeof vi.fn>;
     load: ReturnType<typeof vi.fn>;
+    setBuffer: ReturnType<typeof vi.fn>;
     setParams: ReturnType<typeof vi.fn>;
     setKept: ReturnType<typeof vi.fn>;
     pause: ReturnType<typeof vi.fn>;
@@ -72,7 +82,7 @@ const engine = () =>
     dispose: ReturnType<typeof vi.fn>;
   };
 
-let progressHandler: ((e: { payload: number }) => void) | null = null;
+let progressHandler: ((e: { payload: { owner: string; percent: number } }) => void) | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -129,9 +139,58 @@ describe("AudioTool — chargement", () => {
 
     expect(mocked.audioAllowAsset).toHaveBeenCalledWith("/music/song.mp3");
     expect(mocked.fetchAudioData).toHaveBeenCalledWith("/music/song.mp3");
-    expect(mocked.audioLoad).toHaveBeenCalledWith("/music/song.mp3", 900);
+    expect(mocked.audioLoad).toHaveBeenCalledWith("/music/song.mp3", 3000);
     expect(screen.getByText("2ch · 44100Hz · 1:00")).toBeInTheDocument();
-    expect(engine().load).toHaveBeenCalledWith({ duration: 60 }, 60, INFO.waveform);
+    expect(engine().load).toHaveBeenCalledWith(null, 60, INFO.waveform);
+    await waitFor(() => expect(engine().setBuffer).toHaveBeenCalledWith({ duration: 60 }));
+  });
+
+  it("ouvre l'éditeur dès que le moteur a répondu, sans attendre le décodage de l'aperçu", async () => {
+    let finish: () => void = () => {};
+    engineState.gate = new Promise<void>((resolve) => (finish = resolve));
+    try {
+      await openFile();
+      expect(engine().setBuffer).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Space to play/pause" })).toBeDisabled();
+
+      finish();
+      await waitFor(() => expect(engine().setBuffer).toHaveBeenCalledWith({ duration: 60 }));
+    } finally {
+      engineState.gate = null;
+    }
+  });
+
+  it("ne décode pas l'aperçu d'un onglet fermé pendant le chargement (pas de contexte audio recréé)", async () => {
+    let release: (b: ArrayBuffer) => void = () => {};
+    mocked.fetchAudioData.mockReturnValue(new Promise<ArrayBuffer>((resolve) => (release = resolve)));
+    const { unmount } = render(<AudioTool path="/music/song.mp3" onOpen={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByText("song.mp3");
+    unmount();
+
+    await act(async () => {
+      release(new ArrayBuffer(8));
+    });
+
+    expect(engine().decode).not.toHaveBeenCalled();
+  });
+
+  it("libère le décodage gardé par le moteur quand l'onglet se ferme", async () => {
+    mocked.audioRelease.mockResolvedValue(undefined);
+    const { unmount } = await openFile();
+    expect(mocked.audioRelease).not.toHaveBeenCalled();
+
+    unmount();
+
+    expect(mocked.audioRelease).toHaveBeenCalledWith("/music/song.mp3");
+  });
+
+  it("renonce à l'aperçu d'un fichier trop long plutôt que de décoder plusieurs Go", async () => {
+    mocked.audioLoad.mockResolvedValue({ ...INFO, duration: 3 * 3600 });
+    await openFile();
+
+    expect(await screen.findByRole("status")).toHaveTextContent("too long for the preview");
+    expect(engine().decode).not.toHaveBeenCalled();
+    expect(mocked.fetchAudioData).not.toHaveBeenCalled();
   });
 
   it("affiche les réglages et l'export une fois le fichier ouvert", async () => {
@@ -453,19 +512,22 @@ describe("AudioTool — export", () => {
     });
 
     expect(mocked.audioPickOutput).toHaveBeenCalledWith("/music/song-edit.mp3", "mp3");
-    expect(mocked.audioProcess).toHaveBeenCalledWith({
-      input: "/music/song.mp3",
-      output: "/out/song-edit.wav",
-      format: "mp3",
-      cuts: [],
-      fade_in: null,
-      fade_out: 2,
-      fade_curve: "linear",
-      wav_depth: null,
-      normalize: true,
-      speed: 1.5,
-      filters: [],
-    });
+    expect(mocked.audioProcess).toHaveBeenCalledWith(
+      {
+        input: "/music/song.mp3",
+        output: "/out/song-edit.wav",
+        format: "mp3",
+        cuts: [],
+        fade_in: null,
+        fade_out: 2,
+        fade_curve: "linear",
+        wav_depth: null,
+        normalize: true,
+        speed: 1.5,
+        filters: [],
+      },
+      expect.any(String),
+    );
     expect(document.querySelector(".modal")).toBeNull();
     expect(screen.getByText("Exported: song-edit.wav", { selector: ".at-toast" })).toBeInTheDocument();
   });
@@ -499,6 +561,7 @@ describe("AudioTool — export", () => {
 
     expect(mocked.audioProcess).toHaveBeenCalledWith(
       expect.objectContaining({ format: "wav", wav_depth: "pcm24", cuts: [[10, 20]] }),
+      expect.any(String),
     );
   });
 
@@ -525,7 +588,10 @@ describe("AudioTool — export", () => {
       fireEvent.click(confirm(modal));
     });
     await waitFor(() => expect(progressHandler).not.toBeNull());
-    act(() => progressHandler?.({ payload: 42 }));
+    const owner = (mocked.audioProcess.mock.calls[0] as unknown as [unknown, string])[1];
+    // L'export d'un autre onglet est ignoré.
+    act(() => progressHandler?.({ payload: { owner: "autre-onglet", percent: 90 } }));
+    act(() => progressHandler?.({ payload: { owner, percent: 42 } }));
 
     expect(within(modal).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "42");
 
@@ -544,7 +610,7 @@ describe("AudioTool — export", () => {
     });
 
     fireEvent.click(within(modal).getByRole("button", { name: "Cancel" }));
-    expect(mocked.audioCancel).toHaveBeenCalled();
+    expect(mocked.audioCancel).toHaveBeenCalledWith(expect.any(String));
     await act(async () => fail({ code: "cancelled", params: {}, message: "Export cancelled" }));
 
     expect(screen.getByText("Export cancelled", { selector: ".at-toast" })).toBeInTheDocument();
@@ -607,7 +673,36 @@ describe("AudioTool — en-tête et menu", () => {
 
     act(() => inertBridge.actions.current.closeProject?.());
 
-    expect(onClose).toHaveBeenCalled();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("demande confirmation avant de fermer un onglet dont les modifications seraient perdues", async () => {
+    let guard: (() => Promise<boolean>) | null = null;
+    const registerCloseGuard = (g: () => Promise<boolean>) => {
+      guard = g;
+      return () => {};
+    };
+    await openFile({ registerCloseGuard });
+    expect(await guard!()).toBe(true); // rien à perdre : pas de question
+    expect(vi.mocked(ask)).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByLabelText("Normalise (peak −1 dBFS)"));
+    vi.mocked(ask).mockResolvedValueOnce(false);
+    expect(await guard!()).toBe(false);
+    expect(vi.mocked(ask)).toHaveBeenCalledTimes(1);
+    vi.mocked(ask).mockResolvedValueOnce(true);
+    expect(await guard!()).toBe(true);
+  });
+
+  it("« Fermer l'onglet » garde l'onglet quand on renonce", async () => {
+    const { onClose } = await openFile();
+    fireEvent.click(screen.getByLabelText("Normalise (peak −1 dBFS)"));
+    vi.mocked(ask).mockResolvedValueOnce(false);
+
+    act(() => inertBridge.actions.current.closeProject?.());
+    await act(async () => {});
+
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("ne réagit plus au clavier quand l'onglet est masqué", async () => {

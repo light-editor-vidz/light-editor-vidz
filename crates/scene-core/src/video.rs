@@ -26,7 +26,9 @@ pub fn probe_video(source: &Path) -> Option<VideoProbe> {
             "-select_streams",
             "v:0",
             "-show_entries",
-            "stream=width,height:format=duration",
+            // La rotation (smartphones) : ffmpeg la applique au décodage, donc les frames sont dans
+            // les dimensions tournées alors que width/height sont celles du codage.
+            "stream=width,height,duration:stream_tags=rotate:stream_side_data=rotation:format=duration",
             "-of",
             "default=noprint_wrappers=1",
         ])
@@ -44,6 +46,7 @@ fn parse_probe(text: &str) -> Option<VideoProbe> {
     let mut width = None;
     let mut height = None;
     let mut duration = 0.0;
+    let mut rotation = 0.0_f64;
     for line in text.lines() {
         let Some((key, value)) = line.split_once('=') else {
             continue;
@@ -51,13 +54,33 @@ fn parse_probe(text: &str) -> Option<VideoProbe> {
         match key.trim() {
             "width" => width = value.trim().parse::<u32>().ok(),
             "height" => height = value.trim().parse::<u32>().ok(),
-            "duration" => duration = value.trim().parse::<f64>().unwrap_or(0.0),
+            // Durée du conteneur ET du flux : certains fichiers (WebM, MKV en flux) n'ont que l'une des
+            // deux (« N/A » pour l'autre). La plus grande valeur valide est retenue ; sans elle, la
+            // boucle ne fonctionnait jamais et l'image restait figée.
+            "duration" => {
+                if let Ok(v) = value.trim().parse::<f64>() {
+                    if v.is_finite() {
+                        duration = f64::max(duration, v);
+                    }
+                }
+            }
+            "rotation" | "TAG:rotate" => {
+                rotation = value.trim().parse::<f64>().unwrap_or(rotation);
+            }
             _ => {}
         }
     }
+    let (width, height) = (width.filter(|w| *w > 0)?, height.filter(|h| *h > 0)?);
+    // ±90° (et 270°) : les dimensions affichées sont permutées.
+    let quarter_turn = rotation.is_finite() && (rotation.round() as i64).rem_euclid(180) == 90;
+    let (width, height) = if quarter_turn {
+        (height, width)
+    } else {
+        (width, height)
+    };
     Some(VideoProbe {
-        width: width.filter(|w| *w > 0)?,
-        height: height.filter(|h| *h > 0)?,
+        width,
+        height,
         duration: if duration.is_finite() { duration } else { 0.0 },
     })
 }
@@ -133,6 +156,42 @@ impl VideoStream {
         (self.frame.width(), self.frame.height())
     }
 
+    /// Lit exactement la frame suivante ; faux quand le flux est terminé (la dernière frame lue
+    /// reste alors celle de `frame()`).
+    pub fn advance(&mut self) -> bool {
+        if self.ended {
+            return false;
+        }
+        let next = self.frame_idx.map_or(self.start_idx, |c| c + 1);
+        if self.stdout.read_exact(self.frame.data_mut()).is_ok() {
+            self.frame_idx = Some(next);
+            true
+        } else {
+            self.ended = true;
+            false
+        }
+    }
+
+    /// Index de la dernière frame lue.
+    pub fn current_idx(&self) -> Option<u64> {
+        self.frame_idx
+    }
+
+    /// Le flux est terminé : plus aucune frame ne viendra.
+    pub fn is_ended(&self) -> bool {
+        self.ended
+    }
+
+    /// La dernière frame lue.
+    pub fn frame(&self) -> &Pixmap {
+        &self.frame
+    }
+
+    /// Premier index que ce flux peut fournir (point d'ouverture).
+    pub fn start_idx(&self) -> u64 {
+        self.start_idx
+    }
+
     /// Vrai si `idx` ne peut pas être atteint en lisant vers l'avant (retour en arrière après une
     /// boucle) ou serait trop loin pour être décodé image par image (`max_skip`) — il faut alors
     /// rouvrir le flux avec un `-ss` plutôt que décoder et jeter des centaines de frames.
@@ -182,6 +241,73 @@ mod tests {
                 duration: 12.5
             }
         );
+    }
+
+    #[test]
+    fn a_quarter_turn_rotation_swaps_the_displayed_dimensions() {
+        // Side data (ffmpeg récent) et balise `rotate` (ancien) : -90°, 90° et 270°.
+        for line in ["rotation=-90.000000", "TAG:rotate=90", "TAG:rotate=270"] {
+            let probe =
+                parse_probe(&format!("width=1920\nheight=1080\n{line}\nduration=2\n")).unwrap();
+            assert_eq!((probe.width, probe.height), (1080, 1920), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_real_rotated_video_is_probed_with_its_displayed_size() {
+        let ffmpeg = crate::ffmpeg_path::ffmpeg_binary();
+        let dir = std::env::temp_dir().join(format!("lev_rotprobe_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (plain, rotated) = (dir.join("plain.mp4"), dir.join("rotated.mp4"));
+        let made = Command::new(&ffmpeg)
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=320x180:d=1:r=10",
+            ])
+            .args(["-c:v", "libx264", "-pix_fmt", "yuv420p"])
+            .arg(&plain)
+            .status();
+        if !matches!(made, Ok(s) if s.success()) {
+            return; // pas de ffmpeg (ou sans libx264) : rien à vérifier ici
+        }
+        Command::new(&ffmpeg)
+            .args(["-v", "error", "-y", "-display_rotation", "90", "-i"])
+            .arg(&plain)
+            .args(["-c", "copy"])
+            .arg(&rotated)
+            .status()
+            .unwrap();
+
+        let probe = probe_video(&rotated).unwrap();
+
+        assert_eq!((probe.width, probe.height), (180, 320));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_stream_duration_is_used_when_the_container_has_none() {
+        let probe = parse_probe("width=10\nheight=20\nduration=3.5\nduration=N/A\n").unwrap();
+        assert_eq!(probe.duration, 3.5);
+        let probe = parse_probe("width=10\nheight=20\nduration=N/A\nduration=2.0\n").unwrap();
+        assert_eq!(probe.duration, 2.0);
+    }
+
+    #[test]
+    fn a_half_turn_or_no_rotation_keeps_the_dimensions() {
+        for line in [
+            "rotation=180.000000",
+            "TAG:rotate=180",
+            "rotation=0",
+            "rotation=N/A",
+        ] {
+            let probe = parse_probe(&format!("width=1920\nheight=1080\n{line}\n")).unwrap();
+            assert_eq!((probe.width, probe.height), (1920, 1080), "{line}");
+        }
     }
 
     #[test]

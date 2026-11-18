@@ -37,3 +37,26 @@ describe("lifecycle", () => {
     expect(await runBeforeExit()).toBe(true);
   });
 });
+
+describe("runBeforeExit — questions one after the other", () => {
+  it("never runs two tasks at the same time, and stops at the first refusal", async () => {
+    let running = 0;
+    let most = 0;
+    const slow = (answer: boolean) => async () => {
+      running++;
+      most = Math.max(most, running);
+      await new Promise((r) => setTimeout(r, 5));
+      running--;
+      return answer;
+    };
+    const offs = [registerBeforeExit(slow(true)), registerBeforeExit(slow(false)), registerBeforeExit(slow(true))];
+    const third = vi.fn(async () => true);
+    offs.push(registerBeforeExit(third));
+
+    expect(await runBeforeExit()).toBe(false);
+
+    offs.forEach((off) => off());
+    expect(most).toBe(1);
+    expect(third).not.toHaveBeenCalled();
+  });
+});

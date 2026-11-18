@@ -86,6 +86,65 @@ fn cutting_joins_the_kept_parts() {
 }
 
 #[test]
+fn a_late_segment_is_exported_correctly_with_an_input_seek() {
+    let Some(r) = runner() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let src = make_clip(&r, dir.path());
+    let out = dir.path().join("late.mp4").to_string_lossy().into_owned();
+
+    // Rien avant 4,5 s : l'export saute directement là (`-ss` avant `-i`), sans décaler les coupes.
+    let o = options(
+        &src,
+        &out,
+        serde_json::json!({"segments": [{"start": 4.5, "end": 5.5}]}),
+    );
+    export(&r, &o).unwrap();
+
+    let info = r.probe(&out).unwrap();
+    assert!(
+        (duration(&r, &out) - 1.0).abs() < 0.3,
+        "{}",
+        duration(&r, &out)
+    );
+    assert!(info.streams.iter().any(|s| s.codec_type == "audio"));
+    // Les premières images viennent bien de 4,5 s : le compteur de testsrc2 ne repart pas de 0.
+    let png = dir.path().join("first.png").to_string_lossy().into_owned();
+    let early = dir.path().join("early.png").to_string_lossy().into_owned();
+    r.run(
+        &["-y", "-i", &out, "-frames:v", "1", &png].map(String::from),
+        &mut |_| {},
+    )
+    .unwrap();
+    r.run(
+        &["-y", "-i", &src, "-frames:v", "1", &early].map(String::from),
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_ne!(std::fs::read(&png).unwrap(), std::fs::read(&early).unwrap());
+}
+
+#[test]
+fn thumbnails_are_extracted_by_seeking_one_frame_each() {
+    let Some(r) = runner() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let src = make_clip(&r, dir.path());
+    let pattern = dir.path().join("t_%03d.jpg").to_string_lossy().into_owned();
+
+    r.run(
+        &video_export::preview::thumbnail_args(&src, &pattern, 5, 6.0),
+        &mut |_| {},
+    )
+    .unwrap();
+
+    for i in 1..=5 {
+        assert!(
+            dir.path().join(format!("t_{i:03}.jpg")).is_file(),
+            "thumbnail {i}"
+        );
+    }
+}
+
+#[test]
 fn speed_shortens_the_output_and_keeps_audio_in_sync() {
     let Some(r) = runner() else { return };
     let dir = tempfile::tempdir().unwrap();

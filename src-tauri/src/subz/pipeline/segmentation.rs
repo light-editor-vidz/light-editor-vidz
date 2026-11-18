@@ -154,11 +154,20 @@ pub fn build_cues(segments: &[Segment]) -> Vec<Segment> {
     cues
 }
 
+/// Smallest gap between the starts of two cues: the first one stays on screen at least this long.
+const MIN_SHARED_START_SECS: f64 = 0.1;
+
 /// Puts cues in order, removes overlaps, and gives each one time to be read: at least
 /// [`MIN_DURATION_SECS`], and enough for [`MAX_READING_SPEED`] when the next cue allows it.
 fn tidy_timings(cues: &mut [Segment]) {
     cues.sort_by(|a, b| a.start.total_cmp(&b.start));
     for i in 1..cues.len() {
+        // Deux répliques qui commencent au même instant : la première aurait une durée nulle (donc
+        // invisible). La seconde est décalée de quoi laisser la première se lire un instant.
+        if cues[i].start - cues[i - 1].start < MIN_SHARED_START_SECS {
+            cues[i].start = cues[i - 1].start + MIN_SHARED_START_SECS;
+            cues[i].end = cues[i].end.max(cues[i].start);
+        }
         if cues[i].start < cues[i - 1].end {
             cues[i - 1].end = cues[i].start.max(cues[i - 1].start);
         }
@@ -416,6 +425,28 @@ mod tests {
                 "too slow: {cue:?}"
             );
         }
+    }
+
+    #[test]
+    fn two_cues_starting_together_both_get_a_visible_duration() {
+        let mut cues = vec![
+            Segment {
+                start: 2.0,
+                end: 4.0,
+                text: "first".into(),
+            },
+            Segment {
+                start: 2.0,
+                end: 5.0,
+                text: "second".into(),
+            },
+        ];
+        tidy_timings(&mut cues);
+        assert!(
+            cues[0].end - cues[0].start >= MIN_SHARED_START_SECS - 1e-9,
+            "{cues:?}"
+        );
+        assert!(cues[1].start >= cues[0].end - 1e-9);
     }
 
     #[test]

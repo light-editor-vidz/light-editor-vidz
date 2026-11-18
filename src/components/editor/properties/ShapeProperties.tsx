@@ -69,6 +69,9 @@ export function ShapeProperties({
           <button
             type="button"
             className={`properties-toggle${element.stroke !== "none" ? " active" : ""}`}
+            title={t("properties.strokeToggle")}
+            aria-label={t("properties.strokeToggle")}
+            aria-pressed={element.stroke !== "none"}
             onClick={() => onUpdate({ stroke: element.stroke === "none" ? "rgba(255,255,255,1)" : "none" })}
           >
             S

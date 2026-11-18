@@ -7,6 +7,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-18
+
+Fixes from a full code audit.
+
+### Security
+
+- Output and import paths of the project export, the asset import and the image opening now go through the approval of paths; the unused `store:default` permission is removed; stock downloads are limited to the providers' hosts, also after a redirect; the CSP and the media server CORS are tightened.
+
+### Fixed
+
+- Video: exporting over the source file can no longer delete it; the export is written to a temporary file and renamed, and a read error no longer wipes the edit.
+- Export: text and shadow transparency, letter spacing, rotated phone videos, EXIF orientation of photos, the blur transition, line-by-line reveal, Ken Burns and invalid colours now match the preview; frame indices no longer stutter; every video is decoded once instead of once per worker.
+- Quitting waits for or cancels the running exports, and orphan temporary files are cleaned up at startup; cancelling during the finalisation of a video is honoured.
+- Image: decompression bombs are refused, removing the EXIF keeps the orientation and drops the GPS data, resetting a tool no longer replays steps in the wrong frame, the modified state is reliable, and Ctrl+Q asks before quitting.
+- Subtitles: a generated subtitle is kept when the chained translation fails, cancellation is no longer lost, POST requests are only retried when safe, and a warning tells when the speech detection was unavailable.
+- Several tabs of the Video and Audio views no longer share their preview, cancellation and progress.
+- A project opened from its backup is reported; the export queue shows its position.
+
+### Changed
+
+- Image: white balance, blur and resizing work in linear light, and heavy operations are parallelised.
+- Audio: the memory used when changing the speed is halved; stabilisation is measured per segment.
+- The video sources are no longer loaded in memory when a project opens.
+- Release builds use thin LTO; the CI also runs clippy, rustfmt, prettier and the audits, and the GitHub actions are pinned.
+
 ## [1.2.0] - 2026-11-16
 
 ### Added

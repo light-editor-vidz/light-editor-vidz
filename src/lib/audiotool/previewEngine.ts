@@ -5,7 +5,7 @@
 // filtres raides sont plusieurs biquads en série, comme dans le moteur ; les étages inutilisés
 // sont des identités exactes.
 
-import { keptDuration, virtualToReal, type Segment } from "./cuts";
+import { keptDuration, realToVirtual, virtualToReal, type Segment } from "./cuts";
 import {
   TARGET_PEAK,
   DEFAULT_Q,
@@ -22,6 +22,11 @@ import {
 /** L'étage le plus raide : quatre biquads de 12 dB/octave en série. */
 const FILTER_STAGES = 4;
 const NORMALIZE_DEBOUNCE_MS = 150;
+/** Fondu de chaque côté d'un raccord de coupe (le moteur Rust applique le même : 5 ms). */
+const SPLICE_FADE_SECONDS = 0.005;
+/** Durée rendue d'un bloc pour mesurer le pic, et amorce des filtres avant chaque bloc. */
+const RENDER_CHUNK_SECONDS = 60;
+const RENDER_PREROLL_SECONDS = 1;
 
 export interface FilterParams {
   type: FilterType | string;
@@ -81,11 +86,15 @@ export class PreviewEngine {
   private filters: BiquadFilterNode[] = [];
   private normalizeGain: GainNode | null = null;
   private analyser: AnalyserNode | null = null;
+  /** La dernière source planifiée : sa fin est celle de la lecture. */
   private source: AudioBufferSourceNode | null = null;
+  /** Une source par segment conservé, toutes sur le même buffer décodé : les coupes ne recopient
+   * jamais le PCM (un podcast de plusieurs heures en tient plusieurs Go). */
+  private sources: AudioBufferSourceNode[] = [];
+  /** Les gains de micro-fondu des raccords, déconnectés avec les sources. */
+  private spliceGains: GainNode[] = [];
 
   private audioBuffer: AudioBuffer | null = null;
-  /** `audioBuffer` sans les coupes. */
-  private playBuffer: AudioBuffer | null = null;
   private kept: Segment[] = [];
   private params: PreviewParams = {
     fadeIn: 0,
@@ -102,6 +111,9 @@ export class PreviewEngine {
   private startOffset = 0;
   private rate = 1;
   private normToken = 0;
+  /** Un rendu de mesure est en cours ; `normRerun` : un réglage est arrivé pendant ce temps. */
+  private normRunning = false;
+  private normRerun = false;
   private normTimer: ReturnType<typeof setTimeout> | null = null;
 
   private onEnded: () => void = () => {};
@@ -147,7 +159,6 @@ export class PreviewEngine {
   load(buffer: AudioBuffer | null, duration: number, waveform: ArrayLike<number> | null): void {
     this.stopSource();
     this.audioBuffer = buffer;
-    this.playBuffer = buffer;
     this.duration = duration;
     this.waveform = waveform;
     this.kept = duration > 0 ? [{ start: 0, end: duration }] : [];
@@ -157,8 +168,14 @@ export class PreviewEngine {
     this.scheduleNormalization(true);
   }
 
+  /** L'aperçu décodé arrive après l'ouverture du fichier : l'éditeur n'attend pas le décodage. */
+  setBuffer(buffer: AudioBuffer): void {
+    this.audioBuffer = buffer;
+    this.scheduleNormalization(true);
+  }
+
   get hasPreview(): boolean {
-    return this.playBuffer !== null;
+    return this.audioBuffer !== null;
   }
 
   /** Durée de ce que les coupes laissent. */
@@ -179,7 +196,7 @@ export class PreviewEngine {
     if (!this.ctx || !this.source) return this.startOffset;
     // Le temps du contexte est celui de l'horloge murale ; la source consomme le buffer `rate`
     // fois plus vite, donc la tête de lecture doit suivre.
-    const end = this.playBuffer?.duration ?? 0;
+    const end = this.audioBuffer ? this.virtualDuration : 0;
     return Math.min(this.startOffset + (this.ctx.currentTime - this.startCtxTime) * this.rate, end);
   }
 
@@ -188,36 +205,15 @@ export class PreviewEngine {
     return virtualToReal(this.currentTime(), this.kept);
   }
 
-  /** Les coupes ont changé : le buffer lu est reconstruit (une fois par édition). */
+  /** Les coupes ont changé : seuls les segments planifiés changent, le buffer reste le même. */
   setKept(kept: Segment[]): void {
+    // La tête de lecture est un point du fichier : une coupe avant elle ne doit pas la faire sauter
+    // de la longueur de la coupe. Elle est convertie en position du fichier avec les anciennes
+    // coupes, puis retraduite avec les nouvelles.
+    const real = this.audioBuffer ? this.currentRealTime() : 0;
+    const before = this.playing ? this.currentTime() : this.startOffset;
     this.kept = kept;
-    const buffer = this.audioBuffer;
-    if (!buffer || !this.ctx) {
-      this.playBuffer = buffer;
-    } else if (kept.length === 1 && kept[0].start === 0 && kept[0].end >= this.duration) {
-      this.playBuffer = buffer;
-    } else {
-      const rate = buffer.sampleRate;
-      const segments = kept.map(({ start, end }): [number, number] => [
-        Math.round(start * rate),
-        Math.round(end * rate),
-      ]);
-      const length = Math.max(
-        1,
-        segments.reduce((sum, [a, b]) => sum + Math.max(0, b - a), 0),
-      );
-      const out = this.ctx.createBuffer(buffer.numberOfChannels, length, rate);
-      for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-        const from = buffer.getChannelData(ch);
-        const to = out.getChannelData(ch);
-        let at = 0;
-        for (const [a, b] of segments) {
-          to.set(from.subarray(a, b), at);
-          at += Math.max(0, b - a);
-        }
-      }
-      this.playBuffer = out;
-    }
+    this.startOffset = this.audioBuffer ? realToVirtual(real, kept) : before;
     this.startOffset = Math.min(this.startOffset, this.virtualDuration);
     this.scheduleNormalization();
     if (this.playing) this.start(this.currentTime());
@@ -242,7 +238,7 @@ export class PreviewEngine {
   private region(): FadeRegion {
     return {
       start: 0,
-      end: this.playBuffer?.duration ?? this.virtualDuration,
+      end: this.virtualDuration,
       fadeIn: this.params.fadeIn || 0,
       fadeOut: this.params.fadeOut || 0,
       curve: this.params.curve,
@@ -270,54 +266,100 @@ export class PreviewEngine {
     if (this.ctx && this.source) {
       this.startOffset = this.currentTime();
       this.startCtxTime = this.ctx.currentTime;
-      this.source.playbackRate.value = rate;
       this.rate = rate;
+      if (this.sources.length > 1) {
+        // Les segments suivants sont planifiés pour l'ancienne vitesse : on repart d'ici.
+        this.start(this.startOffset);
+        return;
+      }
+      this.source.playbackRate.value = rate;
       this.rescheduleFades();
     }
     this.rate = rate;
   }
 
   private start(offset: number): void {
-    if (!this.ctx || !this.playBuffer || !this.fadeGain) return;
+    if (!this.ctx || !this.audioBuffer || !this.fadeGain) return;
     this.stopSource();
-    const source = this.ctx.createBufferSource();
-    this.source = source;
-    source.buffer = this.playBuffer;
-    source.connect(this.fadeGain);
-    this.startOffset = Math.max(0, Math.min(offset, this.playBuffer.duration));
-    this.startCtxTime = this.ctx.currentTime;
+    const ctx = this.ctx;
+    const total = this.virtualDuration;
+    this.startOffset = Math.max(0, Math.min(offset, total));
+    this.startCtxTime = ctx.currentTime;
     this.rate = validRate(this.params.speed);
-    source.playbackRate.value = this.rate;
-    configureFilter(this.filters, this.ctx.sampleRate, this.params.filter);
-    this.scheduleFades(this.fadeGain.gain, this.ctx.currentTime, this.startOffset, this.rate);
-    source.start(0, this.startOffset);
-    source.onended = () => {
-      this.source = null;
+    configureFilter(this.filters, ctx.sampleRate, this.params.filter);
+    this.scheduleFades(this.fadeGain.gain, ctx.currentTime, this.startOffset, this.rate);
+    let at = 0; // début du segment, compté le long de ce que les coupes laissent
+    for (const [index, { start, end }] of this.kept.entries()) {
+      const length = end - start;
+      const skip = Math.max(0, this.startOffset - at);
+      if (at + length > this.startOffset) {
+        const source = ctx.createBufferSource();
+        source.buffer = this.audioBuffer;
+        source.playbackRate.value = this.rate;
+        // Le premier segment part tout de suite ; les suivants à l'heure où la lecture les atteint.
+        const when = this.sources.length === 0 ? 0 : this.startCtxTime + (at - this.startOffset) / this.rate;
+        const startsAt = Math.max(when, ctx.currentTime);
+        const isJoinBefore = at > 0 && skip === 0;
+        const isJoinAfter = index < this.kept.length - 1;
+        if (isJoinBefore || isJoinAfter) {
+          // Micro-fondu de part et d'autre de chaque raccord (comme l'export) : sans lui, deux
+          // morceaux recollés à une phase quelconque claquent.
+          const gain = ctx.createGain();
+          const edge = SPLICE_FADE_SECONDS;
+          const playSeconds = (length - skip) / this.rate;
+          gain.gain.setValueAtTime(isJoinBefore ? 0 : 1, startsAt);
+          if (isJoinBefore) gain.gain.linearRampToValueAtTime(1, startsAt + edge);
+          if (isJoinAfter && playSeconds > 2 * edge) {
+            gain.gain.setValueAtTime(1, startsAt + playSeconds - edge);
+            gain.gain.linearRampToValueAtTime(0, startsAt + playSeconds);
+          }
+          source.connect(gain);
+          gain.connect(this.fadeGain);
+          this.spliceGains.push(gain);
+        } else {
+          source.connect(this.fadeGain);
+        }
+        if (end >= this.duration) source.start(when, start + skip);
+        else source.start(when, start + skip, length - skip);
+        this.sources.push(source);
+      }
+      at += length;
+    }
+    const last = this.sources[this.sources.length - 1];
+    if (!last) return;
+    this.source = last;
+    last.onended = () => {
+      this.stopSource();
       this.startOffset = 0;
       this.onEnded();
     };
   }
 
   private stopSource(): void {
-    const source = this.source;
-    if (!source || !this.ctx) {
+    const sources = this.sources;
+    this.sources = [];
+    for (const gain of this.spliceGains) gain.disconnect();
+    this.spliceGains = [];
+    if (sources.length === 0 || !this.ctx) {
       this.source = null;
       return;
     }
     this.startOffset = this.currentTime();
-    source.onended = null;
-    try {
-      source.stop();
-    } catch {
-      // Déjà arrêtée.
+    for (const source of sources) {
+      source.onended = null;
+      try {
+        source.stop();
+      } catch {
+        // Déjà arrêtée.
+      }
+      source.disconnect();
     }
-    source.disconnect();
     this.source = null;
     this.fadeGain?.gain.cancelScheduledValues(this.ctx.currentTime);
   }
 
   play(): void {
-    if (!this.playBuffer) return;
+    if (!this.audioBuffer) return;
     // Depuis le début une fois la fin atteinte.
     const from = this.startOffset >= this.virtualDuration - 0.01 ? 0 : this.startOffset;
     this.start(from);
@@ -329,7 +371,7 @@ export class PreviewEngine {
 
   /** Déplace la tête de lecture à `time`, compté le long de ce que les coupes laissent. */
   seek(time: number): void {
-    if (!this.playBuffer) return;
+    if (!this.audioBuffer) return;
     const wasPlaying = this.playing;
     if (wasPlaying) this.stopSource();
     this.startOffset = Math.max(0, Math.min(time, this.virtualDuration));
@@ -342,20 +384,39 @@ export class PreviewEngine {
     if (this.normalizeGain) this.normalizeGain.gain.value = gain;
   }
 
-  /** Pic de la région conservée une fois fondus et filtre appliqués, rendu hors ligne. */
+  /** Pic de la région conservée une fois fondus et filtre appliqués, rendu hors ligne par tranches
+   * (une heure de son rendue d'un bloc ferait un buffer de plusieurs centaines de Mo). Chaque
+   * tranche a une courte amorce pour que les filtres soient établis, et n'est mesurée qu'après. */
   private async renderedPeak(): Promise<number> {
-    const buffer = this.playBuffer;
+    const buffer = this.audioBuffer;
     if (!buffer) return 0;
     const region = this.region();
     const end = region.end ?? 0;
+    let peak = 0;
+    for (let from = 0; from < end; from += RENDER_CHUNK_SECONDS) {
+      const preroll = Math.min(RENDER_PREROLL_SECONDS, from);
+      peak = Math.max(
+        peak,
+        await this.renderWindow(buffer, region, from, Math.min(end, from + RENDER_CHUNK_SECONDS), preroll),
+      );
+    }
+    return peak;
+  }
+
+  /** Rend la fenêtre `[from, to]` (temps de ce qui reste après les coupes) et renvoie son pic. */
+  private async renderWindow(
+    buffer: AudioBuffer,
+    region: FadeRegion,
+    from: number,
+    to: number,
+    preroll: number,
+  ): Promise<number> {
     const rate = buffer.sampleRate;
-    const length = Math.max(1, Math.ceil(end * rate));
+    const origin = from - preroll;
+    const length = Math.max(1, Math.ceil((to - origin) * rate));
     const offline = new OfflineAudioContext(buffer.numberOfChannels, length, rate);
-    const source = offline.createBufferSource();
     const fades = offline.createGain();
     const filters = Array.from({ length: FILTER_STAGES }, () => offline.createBiquadFilter());
-    source.buffer = buffer;
-    source.connect(fades);
     let previous: AudioNode = fades;
     for (const node of filters) {
       previous.connect(node);
@@ -363,13 +424,26 @@ export class PreviewEngine {
     }
     previous.connect(offline.destination);
     configureFilter(filters, rate, this.params.filter);
-    this.scheduleFades(fades.gain, 0, 0, 1, region);
-    source.start(0, 0, end);
+    this.scheduleFades(fades.gain, 0, origin, 1, region);
+    let at = 0;
+    for (const { start, end } of this.kept) {
+      const segEnd = at + (end - start);
+      const lo = Math.max(at, origin);
+      const hi = Math.min(segEnd, to);
+      if (hi > lo) {
+        const source = offline.createBufferSource();
+        source.buffer = buffer;
+        source.connect(fades);
+        source.start(lo - origin, start + (lo - at), hi - lo);
+      }
+      at = segEnd;
+    }
     const rendered = await offline.startRendering();
     let peak = 0;
+    const first = Math.min(rendered.length, Math.ceil(preroll * rate));
     for (let ch = 0; ch < rendered.numberOfChannels; ch++) {
       const data = rendered.getChannelData(ch);
-      for (let i = 0; i < data.length; i++) {
+      for (let i = first; i < data.length; i++) {
         const a = Math.abs(data[i]);
         if (a > peak) peak = a;
       }
@@ -386,17 +460,29 @@ export class PreviewEngine {
   private async updateNormalization(): Promise<void> {
     if (this.normTimer) clearTimeout(this.normTimer);
     this.normTimer = null;
+    // Un rendu hors ligne est déjà en cours : on n'en empile pas un second (chaque réglage lançait
+    // le sien, tous en parallèle). Le dernier état demandé est mesuré une fois celui-ci terminé.
+    if (this.normRunning) {
+      this.normRerun = true;
+      return;
+    }
     const token = ++this.normToken;
-    if (!this.playBuffer || !this.params.normalize) {
+    if (!this.audioBuffer || !this.params.normalize) {
       this.setNormalizeGain(1);
       return;
     }
+    this.normRunning = true;
     try {
       const peak = await this.regionPeak();
-      if (token !== this.normToken) return;
-      this.setNormalizeGain(peak > 1e-8 ? TARGET_PEAK / peak : 1);
+      if (token === this.normToken) this.setNormalizeGain(peak > 1e-8 ? TARGET_PEAK / peak : 1);
     } catch {
       if (token === this.normToken) this.setNormalizeGain(1);
+    } finally {
+      this.normRunning = false;
+      if (this.normRerun) {
+        this.normRerun = false;
+        void this.updateNormalization();
+      }
     }
   }
 

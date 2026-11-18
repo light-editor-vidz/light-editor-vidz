@@ -6,6 +6,7 @@ pub mod launch;
 pub mod media_protocol;
 pub mod media_server;
 pub mod media_subs;
+pub mod partials;
 pub mod project;
 pub mod registry;
 pub mod release_notes;

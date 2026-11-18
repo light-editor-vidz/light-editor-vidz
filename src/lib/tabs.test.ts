@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HOME, initialTabs, tabsReducer, type TabsAction, type TabsState } from "./tabs";
+import { HOME, initialTabs, samePath, tabsReducer, type TabsAction, type TabsState } from "./tabs";
 
 const run = (actions: TabsAction[], from: TabsState = initialTabs) => actions.reduce(tabsReducer, from);
 
@@ -159,5 +159,28 @@ describe("tabsReducer", () => {
     expect(s.tabs[0]).toMatchObject({ id, kind: "video", path: "/v/a.mp4" });
     s = run([{ type: "openVideo", path: "/v/b.mp4" }], s);
     expect(s.tabs.map((t) => t.kind)).toEqual(["video", "video"]);
+  });
+
+  it("« nouveau projet » revient à l'accueil avec la création ouverte, sans fermer l'onglet", () => {
+    let state = tabsReducer(initialTabs, { type: "openAudio", path: null });
+    const audioId = state.active;
+
+    state = tabsReducer(state, { type: "newProject" });
+
+    expect(state.active).toBe(HOME);
+    expect(state.startNewProject).toBe(true);
+    expect(state.tabs.map((t) => t.id)).toEqual([audioId]);
+  });
+
+  it("does not open the same project twice under another spelling of its path", () => {
+    let state = tabsReducer(initialTabs, { type: "openProject", dir: "/p/demo.lvproj" });
+    state = tabsReducer(state, { type: "openProject", dir: "/p/demo.lvproj/" });
+    state = tabsReducer(state, { type: "openProject", dir: "/p//./demo.lvproj" });
+    expect(state.tabs).toHaveLength(1);
+  });
+
+  it("compares paths regardless of separators", () => {
+    expect(samePath("C:\\p\\a.lvproj", "C:/p/a.lvproj")).toBe(true);
+    expect(samePath("/p/a.lvproj", "/p/b.lvproj")).toBe(false);
   });
 });

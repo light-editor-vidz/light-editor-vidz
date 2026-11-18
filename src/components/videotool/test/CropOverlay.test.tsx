@@ -110,6 +110,20 @@ describe("CropOverlay", () => {
     expect(onApply).toHaveBeenCalled();
   });
 
+  it("does not apply on Enter typed in a field, or from a hidden tab", () => {
+    const onApply = vi.fn();
+    render(
+      <LangProvider>
+        <input aria-label="field" />
+        <Harness onApply={onApply} />
+      </LangProvider>,
+    );
+    const input = document.querySelector("input[aria-label='field']") as HTMLInputElement;
+    input.focus();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
   it("ignores other keys", () => {
     const onApply = vi.fn();
     render(

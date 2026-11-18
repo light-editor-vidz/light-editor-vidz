@@ -146,7 +146,7 @@ impl SttEngine for DeepgramEngine {
                     .post(endpoint(&self.base_url, self.language.as_deref()))
                     .header("Authorization", auth_header(self.api_key.as_str()))
                     .header("Content-Type", "audio/mpeg")
-                    .body(file))
+                    .body(http::cancellable_file_body(file)?))
             },
             "Deepgram",
         )?;

@@ -1,4 +1,5 @@
 import { render, waitFor, act } from "@testing-library/react";
+import { resetInstalledMenu } from "./suite/menu";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import AppMenuBar from "./AppMenuBar";
 import { inertBridge } from "./lib/menuBridge";
@@ -17,6 +18,7 @@ const recent = (path: string, name: string) => ({ path, name, width: 1920, heigh
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetInstalledMenu();
   mockList.mockResolvedValue([recent("/p/a.lvproj", "Spot A"), recent("/p/b.lvproj", "Spot B")]);
 });
 

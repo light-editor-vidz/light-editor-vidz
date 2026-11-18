@@ -17,6 +17,8 @@ import VignetteOverlay from "./components/VignetteOverlay";
 import { useEditorHistory, type EditableState } from "./hooks/useHistory";
 import { formatTime, getKeptSegments, getVirtualDuration, realToVirtual, virtualToReal } from "./utils/time";
 import { getApi } from "./api";
+import QueueManager from "./components/QueueManager";
+import { useVideoOwner, VideoOwnerProvider } from "./owner";
 import type { RecentEntry, Sequence } from "./api";
 import type { SubtitleCue } from "./utils/srt";
 import { DEFAULT_SUBTITLE_STYLE } from "./types";
@@ -66,7 +68,18 @@ interface Props {
   registerCloseGuard: (guard: () => Promise<boolean>) => () => void;
 }
 
-export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, onClose, registerCloseGuard }: Props) {
+/** Un identifiant par onglet : l'aperçu, l'annulation et la progression côté Rust ne sont qu'à lui. */
+export default function VideoTool(props: Props) {
+  const [owner] = useState(() => crypto.randomUUID());
+  return (
+    <VideoOwnerProvider value={owner}>
+      <VideoToolView {...props} />
+    </VideoOwnerProvider>
+  );
+}
+
+function VideoToolView({ path, onOpenFile, onOpenPath, onOpenAudio, onClose, registerCloseGuard }: Props) {
+  const owner = useVideoOwner();
   const { t } = useT();
   const tabActive = useTabActive();
   const { setFlags } = useMenuBridge();
@@ -216,23 +229,28 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
   // The file whose preview was already transcoded: a second playback error is final.
   const forcedPath = useRef<string | null>(null);
   const hasEdits = useRef(false);
+  // Une fusion de séquences produit un fichier temporaire que seul l'export conserve : sans édition
+  // dans l'historique (les coupes repartent de zéro), fermer ne demandait pourtant rien.
+  const unexportedMerge = useRef(false);
   useEffect(() => {
     hasEdits.current = canUndo;
   }, [canUndo]);
 
   const loadVideo = useCallback(
-    async (filePath: string, force = false, keep?: EditableState) => {
+    async (filePath: string, force = false, keep?: EditableState, reload = false) => {
       const id = ++loadId.current;
       forcedPath.current = force ? filePath : null;
+      // Un autre fichier ouvert « à neuf » : plus de fusion en attente d'export.
+      if (keep === undefined && !reload) unexportedMerge.current = false;
       setLoading({ msg: t.loading_preparing, progress: 0 });
 
       // Registered outside the try so the failure path unregisters it too.
-      const off = getApi().onPreviewProgress((p) => {
+      const off = getApi(owner).onPreviewProgress((p) => {
         if (id === loadId.current) setLoading({ msg: t.loading_preparing, progress: p });
       });
       let url: string | null = null;
       try {
-        url = await getApi().previewVideo(filePath, force);
+        url = await getApi(owner).previewVideo(filePath, force);
       } catch (err) {
         if (id === loadId.current) {
           console.error("Preview transcode failed:", err);
@@ -254,7 +272,8 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
       }
       setIsPlaying(false);
       setActivePanel(null);
-      reset(keep);
+      // A forced re-transcode of the open file must not wipe the edits (cuts, crop, history).
+      if (!reload) reset(keep);
       setVideoPath(filePath);
       setGenerated([]);
       getApi()
@@ -271,7 +290,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
       setCurrentTime(0);
       setLoading(null);
     },
-    [t, reset],
+    [t, reset, owner],
   );
 
   /**
@@ -285,14 +304,15 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
       setShowSequences(false);
       const id = ++loadId.current;
       setLoading({ msg: t.sequences_merging, progress: 0 });
-      const off = getApi().onPreviewProgress((p) => {
+      const off = getApi(owner).onPreviewProgress((p) => {
         if (id === loadId.current) setLoading({ msg: t.sequences_merging, progress: p });
       });
       try {
-        const merged = await getApi().mergeSequences(videoPath, sequences);
+        const merged = await getApi(owner).mergeSequences(videoPath, sequences);
         off();
         if (id !== loadId.current) return; // annulé entre-temps
         await loadVideo(merged, false, { ...editable, cutSegments: [], subtitles: null });
+        unexportedMerge.current = true;
       } catch (err) {
         off();
         if (id !== loadId.current) return;
@@ -301,7 +321,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
         setToast(t.sequences_error_merge);
       }
     },
-    [videoPath, editable, t, loadVideo],
+    [videoPath, editable, t, loadVideo, owner],
   );
 
   /** Sépare la piste audio dans un fichier, puis l'ouvre dans l'outil Audio. */
@@ -311,7 +331,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
     const id = ++loadId.current;
     setLoading({ msg: t.audio_extract_running, progress: 0 });
     try {
-      const file = await getApi().extractAudio(videoPath);
+      const file = await getApi(owner).extractAudio(videoPath);
       if (id !== loadId.current) return; // annulé entre-temps
       setLoading(null);
       if (file) onOpenAudio(file);
@@ -322,13 +342,13 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
       setLoading(null);
       setToast(t.audio_extract_error);
     }
-  }, [videoPath, t, onOpenAudio]);
+  }, [videoPath, t, onOpenAudio, owner]);
 
   const cancelLoad = useCallback(() => {
     loadId.current++;
-    void getApi().cancelFfmpeg();
+    void getApi(owner).cancelFfmpeg();
     setLoading(null);
-  }, []);
+  }, [owner]);
 
   // With a text field focused, Cmd/Ctrl+Z belongs to the field, not to the
   // timeline's history (the menu accelerator would otherwise swallow it).
@@ -544,7 +564,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
 
   // Fermer l'onglet (ou la fenêtre) avec des modifications non exportées demande confirmation.
   const confirmClose = useCallback(async () => {
-    if (!hasEdits.current) return true;
+    if (!hasEdits.current && !unexportedMerge.current) return true;
     try {
       return await ask(t.confirm_close_tab, { kind: "warning" });
     } catch {
@@ -606,7 +626,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
         console.error("Streaming the video failed:", err);
       }
     }
-    if (forcedPath.current !== videoPath) void loadVideo(videoPath, true);
+    if (forcedPath.current !== videoPath) void loadVideo(videoPath, true, undefined, true);
     else setToast(t.error_video_unreadable);
   }, [t, videoPath, videoUrl, loadVideo]);
   /** Un sous-titre généré est associé tout de suite à la vidéo, et le reste d'une session à l'autre. */
@@ -629,16 +649,24 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
     const cues = remapCues(last.cues, keptSegments, editable.speed);
     return cues.length > 0 ? cuesToSrt(cues) : null;
   };
+  // L'événement est diffusé à tous les onglets Vidéo : seul celui qui a lancé un export vers des
+  // projets (et qui en attend le compte rendu) affiche le toast — pas l'onglet qui est au premier
+  // plan par hasard.
+  const awaitingAdded = useRef(0);
+  const onProjectsExport = useCallback(() => {
+    awaitingAdded.current += 1;
+  }, []);
   useEffect(() => {
-    if (!tabActive) return;
-    return getApi().onAddedToProjects((report) =>
+    return getApi().onAddedToProjects((report) => {
+      if (awaitingAdded.current <= 0) return;
+      awaitingAdded.current -= 1;
       setToast(
         report.errors.length > 0
           ? i18n.t("subs.addToProjectFailed", { error: report.errors[0] })
           : i18n.t("subs.addedToProjects", { count: report.added }),
-      ),
-    );
-  }, [tabActive]);
+      );
+    });
+  }, []);
   const onSubtitlesError = useCallback(
     (reason: "empty" | "read") => setToast(reason === "empty" ? t.subtitles_empty : t.subtitles_error),
     [t],
@@ -688,6 +716,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
   if (!videoPath) {
     return (
       <div className="vt-root">
+        <QueueManager />
         <DropZone
           onDrop={loadVideo}
           onOpen={onOpenFile}
@@ -708,6 +737,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
 
   return (
     <div className="vt-root">
+      <QueueManager />
       <div className="app-layout">
         <div className="top-bar">
           <div className="file-badge" title={videoPath ?? undefined}>
@@ -916,6 +946,7 @@ export default function VideoTool({ path, onOpenFile, onOpenPath, onOpenAudio, o
               associatedSrt={associatedSrt}
               onClose={closeExport}
               onQueued={onExportQueued}
+              onProjectsExport={onProjectsExport}
             />
           </Suspense>
         )}

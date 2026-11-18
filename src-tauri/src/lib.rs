@@ -23,10 +23,16 @@ pub fn run() {
                 app.manage(commands::video_tool::VideoState::new(app.handle().clone()));
                 commands::launch::on_first_launch(app.handle());
                 // L'audio temporaire laissé par un plantage ou un arrêt forcé.
+                // Les `.part` d'exports interrompus (plantage, arrêt forcé).
+                if let Ok(data) = app.path().app_data_dir() {
+                    commands::partials::sweep_and_init(&data);
+                }
                 if let Ok(cache) = app.path().app_cache_dir() {
                     subz::pipeline::audio_extract::remove_stale_temp_dirs(&cache, STALE_AUDIO_AGE);
                 }
+                imgz::commands::open::approve_recents(app.handle());
                 commands::media_subs::clear_staging(app.handle());
+                commands::video_tool::remove_stale_temp(&std::env::temp_dir(), STALE_AUDIO_AGE);
             }
             #[cfg(target_os = "linux")]
             menu_style::style_menu_bar();
@@ -59,21 +65,34 @@ pub fn run() {
             use tauri::Manager;
             let app = ctx.app_handle().clone();
             let path = request.uri().path().to_string();
-            std::thread::spawn(move || {
+            imgz::commands::image_protocol::spawn(move || {
                 let state = app.state::<imgz::AppState>();
                 responder.respond(imgz::commands::image_protocol::serve(&state, &path));
             });
         })
-        .register_uri_scheme_protocol("lvmedia", |ctx, request| {
+        // Asynchrone : un protocole synchrone tourne sur le thread principal (canonicalize et
+        // lecture de plusieurs Mio par requête `Range`), d'où des saccades de l'interface.
+        .register_asynchronous_uri_scheme_protocol("lvmedia", |ctx, request, responder| {
             use tauri::Manager;
-            let projects = ctx.app_handle().state::<commands::registry::OpenProjects>();
-            let range = request.headers().get("range").and_then(|v| v.to_str().ok());
-            let served = commands::media_protocol::serve(&projects, request.uri().path(), range);
-            let mut response = tauri::http::Response::builder().status(served.status);
-            for (name, value) in served.headers {
-                response = response.header(name, value);
-            }
-            response.body(served.body).unwrap_or_default()
+            let projects = ctx
+                .app_handle()
+                .state::<commands::registry::OpenProjects>()
+                .inner()
+                .clone();
+            let path = request.uri().path().to_string();
+            let range = request
+                .headers()
+                .get("range")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            std::thread::spawn(move || {
+                let served = commands::media_protocol::serve(&projects, &path, range.as_deref());
+                let mut response = tauri::http::Response::builder().status(served.status);
+                for (name, value) in served.headers {
+                    response = response.header(name, value);
+                }
+                responder.respond(response.body(served.body).unwrap_or_default());
+            });
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -84,10 +103,12 @@ pub fn run() {
             commands::project::new_project,
             commands::project::load_project,
             commands::project::save_project,
+            commands::project::take_project_recovery,
             commands::project::list_recent_projects,
             commands::project::pick_text_file,
             commands::project::remove_recent_project,
             commands::assets::import_asset,
+            commands::assets::pick_asset_source,
             commands::assets::list_assets,
             commands::assets::delete_asset,
             commands::assets::read_media_file,
@@ -120,6 +141,7 @@ pub fn run() {
             commands::audio_tool::audio_recent_forget,
             commands::audio_tool::audio_process,
             commands::audio_tool::audio_cancel,
+            commands::audio_tool::audio_release,
             commands::video_tool::video_pick_file,
             commands::video_tool::video_pick_subtitles,
             commands::video_tool::video_pick_output,
@@ -184,15 +206,25 @@ pub fn run() {
             static QUITTING: std::sync::atomic::AtomicBool =
                 std::sync::atomic::AtomicBool::new(false);
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
-                if subz::cancel::is_busy()
-                    && !QUITTING.swap(true, std::sync::atomic::Ordering::SeqCst)
-                {
+                use tauri::Manager;
+                let export = app.state::<commands::export::ExportControl>();
+                let video = app.state::<commands::video_tool::VideoState>();
+                // Les sous-titres, l'export de projet et la file/l'aperçu de la vue Vidéo.
+                let busy = || subz::cancel::is_busy() || export.is_busy() || video.is_busy();
+                if busy() && !QUITTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
                     api.prevent_exit();
                     subz::cancel::request();
+                    // Un export de projet interrompu supprime lui-même son `.part` et arrête ffmpeg.
+                    export.request_cancel();
+                    video.cancel_all();
                     let handle = app.clone();
                     std::thread::spawn(move || {
+                        let export = handle.state::<commands::export::ExportControl>();
+                        let video = handle.state::<commands::video_tool::VideoState>();
                         let deadline = std::time::Instant::now() + QUIT_GRACE;
-                        while subz::cancel::is_busy() && std::time::Instant::now() < deadline {
+                        while (subz::cancel::is_busy() || export.is_busy() || video.is_busy())
+                            && std::time::Instant::now() < deadline
+                        {
                             std::thread::sleep(std::time::Duration::from_millis(50));
                         }
                         handle.exit(0);

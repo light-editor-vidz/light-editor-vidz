@@ -1,12 +1,13 @@
-use super::error::CmdResult;
+use super::error::{CmdResult, CommandError};
 use super::registry::OpenProjects;
 use crate::export::{export_audio, export_video, AudioFormat, ExportOverrides};
+use audio_dsp::approval::Approved;
 use scene_core::model::Project;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
 /// Surcharges d'export optionnelles envoyées par le frontend (résolution/fps/qualité) —
 /// n'affectent que le fichier exporté, jamais les réglages enregistrés dans le projet.
@@ -24,6 +25,18 @@ pub struct ExportOptions {
 pub struct ExportControl {
     cancel: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
+}
+
+impl ExportControl {
+    /// Un export de projet tourne.
+    pub fn is_busy(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    /// Demande l'arrêt de l'export en cours (ffmpeg et le fichier `.part` sont alors nettoyés).
+    pub fn request_cancel(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
+    }
 }
 
 /// Libère le verrou d'export quoi qu'il arrive (retour normal, erreur, panic).
@@ -57,6 +70,11 @@ pub async fn export_project(
     options: Option<ExportOptions>,
 ) -> CmdResult<ExportResult> {
     let project_dir = projects.require(&project_dir)?;
+    // Seule une destination choisie dans « Enregistrer sous » peut être écrite (et renommée
+    // par-dessus un fichier existant).
+    app.state::<Approved>()
+        .check_output(&output_path)
+        .map_err(|e| CommandError::from(audio_dsp::error::CmdError::from(e)))?;
     if control.running.swap(true, Ordering::SeqCst) {
         return Err(("An export is already running.".to_string()).into());
     }
@@ -106,6 +124,11 @@ pub async fn export_project_audio(
     format: AudioFormat,
 ) -> CmdResult<ExportResult> {
     let project_dir = projects.require(&project_dir)?;
+    // Seule une destination choisie dans « Enregistrer sous » peut être écrite (et renommée
+    // par-dessus un fichier existant).
+    app.state::<Approved>()
+        .check_output(&output_path)
+        .map_err(|e| CommandError::from(audio_dsp::error::CmdError::from(e)))?;
     if control.running.swap(true, Ordering::SeqCst) {
         return Err(("An export is already running.".to_string()).into());
     }
@@ -137,4 +160,34 @@ pub async fn export_project_audio(
 #[tauri::command]
 pub fn cancel_export(control: State<'_, ExportControl>) {
     control.cancel.store(true, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_export_destination_must_have_been_chosen_by_the_user() {
+        let approved = Approved::default();
+        assert!(approved.check_output("/home/me/.bashrc").is_err());
+        approved.allow_output("/home/me/out.mp4");
+        assert!(approved.check_output("/home/me/out.mp4").is_ok());
+        // Une destination approuvée n'ouvre pas la lecture, et inversement.
+        assert!(approved.check_input("/home/me/out.mp4").is_err());
+    }
+
+    #[test]
+    fn quitting_can_tell_a_running_export_and_ask_it_to_stop() {
+        let control = ExportControl::default();
+        assert!(!control.is_busy());
+
+        control.running.store(true, Ordering::SeqCst);
+        assert!(control.is_busy());
+        control.request_cancel();
+        assert!(control.cancel.load(Ordering::SeqCst));
+
+        // Le verrou libéré (fin ou annulation de l'export) autorise la sortie.
+        drop(RunningGuard(control.running.clone()));
+        assert!(!control.is_busy());
+    }
 }

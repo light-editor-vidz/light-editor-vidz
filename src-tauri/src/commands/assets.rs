@@ -1,10 +1,12 @@
 use super::blocking;
-use super::error::CmdResult;
+use super::error::{CmdResult, CommandError};
 use super::registry::OpenProjects;
+use audio_dsp::approval::Approved;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::State;
+use tauri_plugin_dialog::DialogExt;
 
 /// Lit un média (vidéo/image/audio) et le renvoie en octets bruts plutôt que via le protocole
 /// `asset://`. Contournement pour la vidéo : WebKitGTK (webview Tauri sur Linux) rejette parfois
@@ -24,8 +26,20 @@ pub async fn read_media_file(
         .map(tauri::ipc::Response::new)
 }
 
+/// Taille maximale d'un média lu en mémoire par `read_media_file` (repli blob uniquement).
+const MAX_READ_MEDIA_BYTES: u64 = 256 * 1024 * 1024;
+
 fn read_media_bytes(project_dir: &Path, relative_src: &str) -> Result<Vec<u8>, String> {
     let path = scene_core::paths::resolve_media_path(project_dir, relative_src)?;
+    if let Ok(meta) = fs::metadata(&path) {
+        if meta.len() > MAX_READ_MEDIA_BYTES {
+            return Err(format!(
+                "Media file too large to load in memory ({} MB, limit {} MB)",
+                meta.len() / (1024 * 1024),
+                MAX_READ_MEDIA_BYTES / (1024 * 1024)
+            ));
+        }
+    }
     fs::read(&path).map_err(|e| format!("Failed to read media file: {e}"))
 }
 
@@ -43,9 +57,7 @@ pub(crate) fn kind_subdir(kind: &str) -> Result<&'static str, String> {
 /// dossiers du projet (pas de fichier arbitraire du disque présenté comme un « son »).
 fn allowed_extensions(kind: &str) -> &'static [&'static str] {
     match kind {
-        "image" => &[
-            "png", "jpg", "jpeg", "jpe", "jfif", "webp", "gif", "bmp", "avif",
-        ],
+        "image" => &["png", "jpg", "jpeg", "jpe", "jfif", "webp", "gif", "bmp"],
         "video" => &[
             "mp4", "m4v", "mov", "mkv", "webm", "avi", "mpg", "mpeg", "mts", "m2ts", "ogv", "wmv",
             "flv", "3gp",
@@ -69,12 +81,10 @@ pub(crate) fn has_allowed_extension(kind: &str, filename: &str) -> bool {
         })
 }
 
-/// Évite d'écraser un fichier existant en suffixant `-2`, `-3`, ... avant l'extension.
+/// Évite d'écraser un fichier existant en suffixant `-2`, `-3`, ... avant l'extension. Le nom
+/// retenu est **réservé** (fichier vide créé de façon atomique) : deux imports simultanés du même
+/// nom n'obtiennent pas le même chemin. L'appelant écrit ensuite par-dessus.
 pub(crate) fn unique_destination(dir: &Path, filename: &str) -> PathBuf {
-    let mut dest = dir.join(filename);
-    if !dest.exists() {
-        return dest;
-    }
     let stem = Path::new(filename)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -83,19 +93,57 @@ pub(crate) fn unique_destination(dir: &Path, filename: &str) -> PathBuf {
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("");
-    let mut i = 2;
+    let mut i = 1;
     loop {
-        let candidate = if ext.is_empty() {
-            format!("{stem}-{i}")
-        } else {
-            format!("{stem}-{i}.{ext}")
+        let candidate = match (i, ext.is_empty()) {
+            (1, _) => filename.to_string(),
+            (_, true) => format!("{stem}-{i}"),
+            (_, false) => format!("{stem}-{i}.{ext}"),
         };
-        dest = dir.join(candidate);
-        if !dest.exists() {
-            return dest;
+        let dest = dir.join(candidate);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest)
+        {
+            Ok(_) => return dest,
+            // Existe déjà (ou dossier non inscriptible : le suffixe suivant échouera aussi, mais
+            // l'écriture qui suit remontera l'erreur réelle).
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => i += 1,
+            Err(_) => return dir.join(filename),
         }
-        i += 1;
     }
+}
+
+/// Dialogue « Importer » de la médiathèque : seul le fichier qu'il renvoie peut être importé.
+#[tauri::command]
+pub async fn pick_asset_source(
+    app: tauri::AppHandle,
+    approved: State<'_, Approved>,
+    kind: String,
+) -> CmdResult<Option<String>> {
+    use tauri::Manager;
+    let exts = allowed_extensions(&kind);
+    if exts.is_empty() {
+        return Err(format!("Unknown media type: {kind}").into());
+    }
+    let handle = app.clone();
+    let picked = blocking(move || {
+        let mut dialog = handle.dialog().file();
+        if let Some(window) = handle.get_webview_window("main") {
+            dialog = dialog.set_parent(&window);
+        }
+        Ok(dialog
+            .add_filter(kind.to_uppercase(), exts)
+            .blocking_pick_file()
+            .and_then(|p| p.into_path().ok())
+            .map(|p| p.to_string_lossy().into_owned()))
+    })
+    .await?;
+    if let Some(path) = &picked {
+        approved.allow_input(path);
+    }
+    Ok(picked)
 }
 
 /// Copie un fichier choisi par l'utilisateur dans `<project_dir>/assets/<kind>s/`.
@@ -104,11 +152,16 @@ pub(crate) fn unique_destination(dir: &Path, filename: &str) -> PathBuf {
 pub async fn import_asset(
     app: tauri::AppHandle,
     projects: State<'_, OpenProjects>,
+    approved: State<'_, Approved>,
     project_dir: String,
     kind: String,
     source_path: String,
 ) -> CmdResult<String> {
     let dir = projects.require(&project_dir)?;
+    // La source doit avoir été choisie dans un dialogue ou déposée sur la fenêtre.
+    approved
+        .check_input(&source_path)
+        .map_err(|e| CommandError::from(audio_dsp::error::CmdError::from(e)))?;
     blocking(move || {
         let relative = copy_asset(&dir, &kind, &source_path)?;
         // Le sous-titre généré pour ce fichier le suit dans le projet.
@@ -272,6 +325,22 @@ mod tests {
 
         fs::write(dir.join("logo-2.png"), b"b").unwrap();
         assert_eq!(unique_destination(&dir, "logo.png"), dir.join("logo-3.png"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn simultaneous_imports_of_the_same_name_get_distinct_paths() {
+        let dir = temp_dir("race");
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let dir = dir.clone();
+                std::thread::spawn(move || unique_destination(&dir, "logo.png"))
+            })
+            .collect();
+        let mut paths: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        paths.sort();
+        paths.dedup();
+        assert_eq!(paths.len(), 8);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -510,5 +579,24 @@ mod tests {
         let (_dir, project, _source) = project_with_source("a.png");
 
         assert!(read_media(project, "../../etc/passwd".into()).is_err());
+    }
+
+    #[test]
+    fn reading_an_oversized_media_file_is_refused() {
+        let (_dir, project, source) = project_with_source("a.png");
+        let rel = import(project.clone(), "image".into(), source).unwrap();
+        let path = scene_core::paths::resolve_media_path(Path::new(&project), &rel).unwrap();
+        // Fichier creux : aucune vraie allocation disque.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_len(MAX_READ_MEDIA_BYTES + 1)
+            .unwrap();
+
+        let Err(err) = read_media(project, rel) else {
+            panic!("un média trop gros doit être refusé");
+        };
+        assert!(err.contains("too large"), "{err}");
     }
 }

@@ -62,7 +62,9 @@ pub fn preview_args(input: &str, out: &str) -> Vec<String> {
         "-b:a",
         "128k",
         "-vf",
-        "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        // Au plus 1080p : un 4K transcodé à sa résolution d'origine serait très lent et inutile
+        // pour un aperçu.
+        "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
         out,
     ]
     .iter()
@@ -72,6 +74,17 @@ pub fn preview_args(input: &str, out: &str) -> Vec<String> {
 
 /// Largeur et hauteur (px) des vignettes de la frise de la timeline.
 pub const THUMB_SIZE: (u32, u32) = (160, 90);
+
+/// Au-delà de cette durée (s), la frise est faite par une recherche par vignette (`frame_args`) :
+/// le filtre `fps` de `thumbnail_args` décode toute la vidéo pour n'en garder que `count` images.
+pub const SEEK_THUMBNAILS_ABOVE_SECONDS: f64 = 120.0;
+
+/// Les instants (milieux de `count` tranches égales) où prendre les vignettes d'une longue vidéo.
+pub fn thumbnail_times(count: u32, duration: f64) -> Vec<f64> {
+    (0..count)
+        .map(|i| (f64::from(i) + 0.5) * duration / f64::from(count.max(1)))
+        .collect()
+}
 
 /// Arguments de l'extraction de `count` vignettes réparties sur `duration` secondes, écrites
 /// selon le motif `out_pattern` (`%03d.jpg`). Faite par ffmpeg : le WebView ne sait pas lire
@@ -197,6 +210,10 @@ mod tests {
             a.starts_with("-i /in.avi -c:v libvpx-vp9")
                 && a.ends_with("scale=trunc(iw/2)*2:trunc(ih/2)*2 /out.webm")
         );
+        assert!(
+            a.contains("min(1920,iw)") && a.contains("min(1080,ih)"),
+            "{a}"
+        );
     }
 
     #[test]
@@ -206,6 +223,12 @@ mod tests {
         assert!(args[4].starts_with("fps=10/20.000000,scale=160:90"));
         assert_eq!(args[6], "10");
         assert_eq!(args.last().unwrap(), "t_%03d.jpg");
+    }
+
+    #[test]
+    fn long_videos_get_one_seek_per_thumbnail_at_the_middle_of_each_slice() {
+        assert_eq!(thumbnail_times(4, 400.0), vec![50.0, 150.0, 250.0, 350.0]);
+        assert!(thumbnail_times(0, 10.0).is_empty());
     }
 
     #[test]

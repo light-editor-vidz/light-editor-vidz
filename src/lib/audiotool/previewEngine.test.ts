@@ -326,6 +326,93 @@ describe("PreviewEngine", () => {
     expect(engine.currentRealTime()).toBeCloseTo(6);
   });
 
+  it("plays the kept segments as successive sources on the one decoded buffer, never copying the PCM", async () => {
+    const { engine, ctx, buffer } = await loadedEngine();
+    const created = vi.spyOn(ctx, "createBuffer");
+    engine.setKept([
+      { start: 0, end: 2 },
+      { start: 5, end: 8 },
+    ]);
+    engine.play();
+
+    expect(created).not.toHaveBeenCalled();
+    expect(ctx.sources).toHaveLength(2);
+    expect(ctx.sources[0].buffer).toBe(buffer);
+    expect(ctx.sources[1].buffer).toBe(buffer);
+    expect(ctx.sources[0].start).toHaveBeenCalledWith(0, 0, 2);
+    // Le second segment démarre quand le premier se termine : 2 s plus tard à vitesse normale.
+    expect(ctx.sources[1].start).toHaveBeenCalledWith(2, 5, 3);
+  });
+
+  it("fades each side of a splice so the join does not click", async () => {
+    const { engine, ctx } = await loadedEngine();
+    engine.setKept([
+      { start: 0, end: 2 },
+      { start: 5, end: 8 },
+    ]);
+    engine.play();
+    const before = ctx.gains.length;
+    // Une source par segment, chacune derrière son gain de raccord.
+    expect(ctx.sources).toHaveLength(2);
+    const [first, second] = ctx.gains.slice(2); // [0] fondus, [1] normalisation
+    expect(before).toBeGreaterThanOrEqual(4);
+    // Premier segment : plein au début du fichier, descend à la fin ; le second remonte.
+    expect(first.gain.events[0]).toEqual(["set", 1, 0]);
+    expect(first.gain.events[first.gain.events.length - 1]).toEqual(["ramp", 0, 2]);
+    expect(second.gain.events[0]).toEqual(["set", 0, 2]);
+    expect(second.gain.events[1]).toEqual(["ramp", 1, 2.005]);
+  });
+
+  it("starts in the middle of a later segment when seeking past the first one", async () => {
+    const { engine, ctx } = await loadedEngine();
+    engine.setKept([
+      { start: 0, end: 2 },
+      { start: 5, end: 8 },
+    ]);
+    engine.seek(3); // 1 s dans le second segment
+    engine.play();
+    expect(ctx.sources).toHaveLength(1);
+    expect(ctx.sources[0].start).toHaveBeenCalledWith(0, 6, 2);
+  });
+
+  it("measures the normalisation peak in bounded chunks, not in one buffer for the whole sound", async () => {
+    vi.useFakeTimers();
+    const engine = new PreviewEngine();
+    const buffer = await engine.decode(new ArrayBuffer(8));
+    engine.setParams(params({ normalize: true }));
+    engine.load(buffer, 150, [0.1, 0.9]);
+    const lengths: number[] = [];
+    const Base = FakeOffline;
+    vi.stubGlobal(
+      "OfflineAudioContext",
+      class extends Base {
+        constructor(channels: number, length: number, rate: number) {
+          super(channels, length, rate);
+          lengths.push(length / rate);
+        }
+      },
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    expect(lengths.length).toBeGreaterThanOrEqual(3);
+    expect(Math.max(...lengths)).toBeLessThanOrEqual(61);
+  });
+
+  it("keeps the playhead on the same point of the file when a cut is added before it", async () => {
+    const { engine } = await loadedEngine();
+    engine.seek(6);
+    expect(engine.currentRealTime()).toBeCloseTo(6);
+
+    // Une coupe de 2 s avant la tête : elle reste sur le même instant du fichier (6 s), donc à 4 s
+    // de ce qui reste, au lieu de sauter de 2 s vers l'avant.
+    engine.setKept([
+      { start: 0, end: 1 },
+      { start: 3, end: 10 },
+    ]);
+
+    expect(engine.currentRealTime()).toBeCloseTo(6);
+    expect(engine.currentTime()).toBeCloseTo(4);
+  });
+
   it("restarts the sound on the new cuts when it is playing", async () => {
     const { engine, ctx } = await loadedEngine();
     engine.play();
@@ -373,6 +460,33 @@ describe("PreviewEngine", () => {
       expect(ctx.gains[1].gain.value).toBeCloseTo(TARGET_PEAK / 0.25);
       await vi.advanceTimersByTimeAsync(200);
       expect(ctx.gains[1].gain.value).toBeCloseTo(TARGET_PEAK / 0.5);
+    });
+
+    it("never runs two measurement renders at once, and measures the latest state afterwards", async () => {
+      vi.useFakeTimers();
+      let running = 0;
+      let peakSeen = 0;
+      vi.stubGlobal(
+        "OfflineAudioContext",
+        class extends FakeOffline {
+          startRendering = vi.fn(async () => {
+            running++;
+            peakSeen = Math.max(peakSeen, running);
+            await new Promise((r) => setTimeout(r, 100));
+            running--;
+            return new FakeBuffer(this.channels, this.length, this.sampleRate);
+          });
+        },
+      );
+      const { engine } = await loadedEngine({ normalize: true });
+      await vi.advanceTimersByTimeAsync(10);
+      // Plusieurs réglages pendant que la première mesure tourne.
+      for (let i = 1; i <= 3; i++) {
+        engine.setParams(params({ normalize: true, fadeIn: i }));
+        await vi.advanceTimersByTimeAsync(200);
+      }
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(peakSeen).toBe(1);
     });
 
     it("leaves a silent file alone instead of dividing by zero", async () => {

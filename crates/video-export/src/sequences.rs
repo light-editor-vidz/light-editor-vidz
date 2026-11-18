@@ -24,7 +24,9 @@ pub fn scene_detect_args(input: &str, log: &str) -> Vec<String> {
         "-an".into(),
         "-vf".into(),
         format!(
-            "select=gt(scene\\,{SCENE_THRESHOLD}),metadata=print:file={}",
+            // Analysé en 320 px de large : le score de changement de plan n'a pas besoin de la pleine
+            // résolution, et l'analyse d'un 4K est 10 à 20 fois plus lente sinon.
+            "scale=320:-2:flags=fast_bilinear,select=gt(scene\\,{SCENE_THRESHOLD}),metadata=print:file={}",
             escape_for_ffmpeg_filter(log)
         ),
         "-f".into(),
@@ -91,14 +93,24 @@ pub fn total_duration(sequences: &[Sequence]) -> f64 {
 }
 
 /// Arguments de la fusion vers `out` (MP4 H.264 + AAC, lisible directement) : chaque séquence est
-/// découpée puis jointe dans l'ordre donné.
+/// jointe dans l'ordre donné. Chaque séquence est une **entrée** à elle (`-ss début -t durée -i`),
+/// et non une branche `trim` d'une même entrée : avec `trim`, une séquence tardive placée en tête
+/// obligeait ffmpeg à garder en mémoire toutes les images décodées qui la précèdent.
 pub fn merge_args(input: &str, out: &str, sequences: &[Sequence], with_audio: bool) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
     let mut parts = Vec::new();
     for (i, s) in sequences.iter().enumerate() {
-        let range = format!("start={:.3}:end={:.3}", s.start, s.end);
-        parts.push(format!("[0:v]trim={range},setpts=PTS-STARTPTS[v{i}]"));
+        args.extend([
+            "-ss".into(),
+            format!("{:.3}", s.start),
+            "-t".into(),
+            format!("{:.3}", s.end - s.start),
+            "-i".into(),
+            input.into(),
+        ]);
+        parts.push(format!("[{i}:V]setpts=PTS-STARTPTS[v{i}]"));
         if with_audio {
-            parts.push(format!("[0:a]atrim={range},asetpts=PTS-STARTPTS[a{i}]"));
+            parts.push(format!("[{i}:a]asetpts=PTS-STARTPTS[a{i}]"));
         }
     }
     let inputs: String = (0..sequences.len())
@@ -118,14 +130,12 @@ pub fn merge_args(input: &str, out: &str, sequences: &[Sequence], with_audio: bo
     ));
     parts.push("[vc]scale=trunc(iw/2)*2:trunc(ih/2)*2[vout]".into());
 
-    let mut args: Vec<String> = vec![
-        "-i".into(),
-        input.into(),
+    args.extend([
         "-filter_complex".into(),
         parts.join(";"),
         "-map".into(),
         "[vout]".into(),
-    ];
+    ]);
     if with_audio {
         args.extend(["-map".into(), "[ac]".into()]);
     }
@@ -192,9 +202,21 @@ mod tests {
     #[test]
     fn the_merge_keeps_the_given_order() {
         let a = merge_args("/in.mp4", "/out.mp4", &[seq(5.0, 8.0), seq(0.0, 2.0)], true);
-        let graph = &a[3];
-        assert!(graph.starts_with("[0:v]trim=start=5.000:end=8.000,setpts=PTS-STARTPTS[v0];"));
-        assert!(graph.contains("[0:a]atrim=start=0.000:end=2.000,asetpts=PTS-STARTPTS[a1]"));
+        let graph = &a[a.iter().position(|x| x == "-filter_complex").unwrap() + 1];
+        // Une entrée par séquence, dans l'ordre choisi : rien n'est décodé en avance.
+        let inputs: Vec<&[String]> = a.windows(6).filter(|w| w[0] == "-ss").collect();
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(
+            inputs[0][..5],
+            ["-ss", "5.000", "-t", "3.000", "-i"].map(String::from)
+        );
+        assert_eq!(
+            inputs[1][..5],
+            ["-ss", "0.000", "-t", "2.000", "-i"].map(String::from)
+        );
+        assert!(!graph.contains("trim="), "plus de branche trim : {graph}");
+        assert!(graph.starts_with("[0:V]setpts=PTS-STARTPTS[v0];"));
+        assert!(graph.contains("[1:a]asetpts=PTS-STARTPTS[a1]"));
         assert!(graph.contains("[v0][a0][v1][a1]concat=n=2:v=1:a=1[vc][ac]"));
         assert_eq!(a.last().unwrap(), "/out.mp4");
         assert!(a.contains(&"[ac]".to_string()));
@@ -204,7 +226,8 @@ mod tests {
     fn without_audio_no_audio_stream_is_mapped() {
         let a = merge_args("/in.mp4", "/out.mp4", &[seq(0.0, 2.0)], false);
         assert!(!a.iter().any(|x| x.contains("atrim") || x == "aac"));
-        assert!(a[3].contains("concat=n=1:v=1:a=0[vc];"));
+        let graph = &a[a.iter().position(|x| x == "-filter_complex").unwrap() + 1];
+        assert!(graph.contains("concat=n=1:v=1:a=0[vc];"));
     }
 
     #[test]

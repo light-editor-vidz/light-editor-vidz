@@ -107,7 +107,7 @@ describe("ImageTool — fermeture", () => {
   });
 
   it("une image modifiée demande confirmation, et on la garde si on renonce", async () => {
-    const dirty = editorStub().tabs.map((t) => ({ ...t, historyIndex: 2, savedIndex: 0 }));
+    const dirty = editorStub().tabs.map((t) => ({ ...t, historyIndex: 2 }));
     const { registerCloseGuard } = setup({ tabs: dirty });
     await act(async () => {});
     const guard = (registerCloseGuard.mock.calls[0] as unknown as [() => Promise<boolean>])[0];
@@ -119,8 +119,18 @@ describe("ImageTool — fermeture", () => {
     expect(mockAsk).toHaveBeenCalledTimes(2);
   });
 
+  it("garde l'onglet modifié quand la boîte de confirmation ne peut pas s'afficher", async () => {
+    mockAsk.mockRejectedValueOnce(new Error("dialog unavailable"));
+    const dirty = editorStub().tabs.map((t) => ({ ...t, historyIndex: 2 }));
+    const { registerCloseGuard } = setup({ tabs: dirty });
+    await act(async () => {});
+    const guard = (registerCloseGuard.mock.calls[0] as unknown as [() => Promise<boolean>])[0];
+
+    expect(await guard()).toBe(false);
+  });
+
   it("la fermeture de la fenêtre demande aussi, et reste ouverte si on renonce", async () => {
-    const dirty = editorStub().tabs.map((t) => ({ ...t, historyIndex: 1, savedIndex: 0 }));
+    const dirty = editorStub().tabs.map((t) => ({ ...t, historyIndex: 1 }));
     setup({ tabs: dirty });
     await act(async () => {});
 
@@ -138,7 +148,7 @@ describe("ImageTool — fermeture", () => {
   });
 
   it("Fermer l’onglet du menu ne ferme pas si on renonce", async () => {
-    const dirty = editorStub().tabs.map((t) => ({ ...t, historyIndex: 1, savedIndex: 0 }));
+    const dirty = editorStub().tabs.map((t) => ({ ...t, historyIndex: 1 }));
     const { onClose } = setup({ tabs: dirty });
     await act(async () => {});
     mockAsk.mockResolvedValueOnce(false);

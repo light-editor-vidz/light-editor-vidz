@@ -39,15 +39,14 @@ pub fn trim(buf: &mut AudioBuffer, start_secs: f64, end_secs: f64) -> Result<()>
     Ok(())
 }
 
-/// Removes the `cuts` (start, end in seconds) from the audio and joins what is
-/// left. Overlapping or out-of-order cuts are merged first; a cut is clamped to
-/// the audio, and what remains must not be empty.
-pub fn remove(buf: &mut AudioBuffer, cuts: &[(f64, f64)]) -> Result<()> {
-    if cuts.is_empty() {
-        return Ok(());
-    }
-    let frames = buf.num_frames();
-    let rate = buf.sample_rate as f64;
+/// The cuts as sorted, merged frame ranges, clamped to the audio. Overlapping or out-of-order
+/// cuts are merged first; what remains must not be empty.
+fn merged_cuts(
+    frames: usize,
+    rate: f64,
+    total_secs: f64,
+    cuts: &[(f64, f64)],
+) -> Result<Vec<(usize, usize)>> {
     // Written so that NaN fails every comparison and lands in the error branch.
     if let Some(&(start, end)) = cuts.iter().find(|&&(s, e)| !(s >= 0.0 && e > s)) {
         return Err(coded(
@@ -55,7 +54,7 @@ pub fn remove(buf: &mut AudioBuffer, cuts: &[(f64, f64)]) -> Result<()> {
             &[
                 ("start", format!("{start:.2}")),
                 ("end", format!("{end:.2}")),
-                ("total", format!("{:.2}", buf.duration_secs())),
+                ("total", format!("{total_secs:.2}")),
             ],
             format!("Invalid cut {start:.3}:{end:.3}"),
         ));
@@ -81,6 +80,58 @@ pub fn remove(buf: &mut AudioBuffer, cuts: &[(f64, f64)]) -> Result<()> {
     if removed >= frames {
         return Err(coded("trim_empty", &[], "Nothing is left after the cuts"));
     }
+    Ok(merged)
+}
+
+/// Length of the fade applied on each side of a splice, in seconds.
+const SPLICE_FADE_SECS: f64 = 0.005;
+
+/// Fades the audio down and back up around each splice (`joins`: frame index where one kept piece
+/// ends and the next begins). Two pieces glued at an arbitrary phase leave a step in the waveform:
+/// an audible click at every cut.
+fn soften_joins(channel: &mut [f32], joins: &[usize], rate: f64) {
+    let want = (rate * SPLICE_FADE_SECS).round() as usize;
+    for (i, &join) in joins.iter().enumerate() {
+        if join == 0 || join >= channel.len() {
+            continue;
+        }
+        let before = if i == 0 { join } else { join - joins[i - 1] };
+        let after = joins.get(i + 1).map_or(channel.len(), |&n| n) - join;
+        let n = want.min(before / 2).min(after / 2);
+        for k in 0..n {
+            let gain = k as f32 / n as f32;
+            channel[join - 1 - k] *= gain;
+            channel[join + k] *= gain;
+        }
+    }
+}
+
+/// Where the kept pieces meet, as frame indexes in the joined audio.
+fn join_positions(merged: &[(usize, usize)], frames: usize) -> Vec<usize> {
+    let mut joins = Vec::with_capacity(merged.len());
+    let mut kept = 0;
+    let mut read = 0;
+    for &(a, b) in merged {
+        kept += a - read;
+        read = b;
+        if kept > 0 && read < frames {
+            joins.push(kept);
+        }
+    }
+    joins
+}
+
+/// Removes the `cuts` (start, end in seconds) from the audio and joins what is
+/// left. Overlapping or out-of-order cuts are merged first; a cut is clamped to
+/// the audio, and what remains must not be empty.
+pub fn remove(buf: &mut AudioBuffer, cuts: &[(f64, f64)]) -> Result<()> {
+    if cuts.is_empty() {
+        return Ok(());
+    }
+    let frames = buf.num_frames();
+    let rate = buf.sample_rate as f64;
+    let merged = merged_cuts(frames, rate, buf.duration_secs(), cuts)?;
+    let joins = join_positions(&merged, frames);
     for ch in buf.samples.iter_mut() {
         let mut write = 0;
         let mut read = 0;
@@ -92,8 +143,42 @@ pub fn remove(buf: &mut AudioBuffer, cuts: &[(f64, f64)]) -> Result<()> {
         ch.copy_within(read..frames, write);
         write += frames - read;
         ch.truncate(write);
+        soften_joins(ch, &joins, rate);
     }
     Ok(())
+}
+
+/// The audio without the `cuts`, as a new buffer built from the kept ranges only: the working
+/// copy of an export never holds the removed parts (a plain clone followed by [`remove`] held the
+/// whole decoded file twice for an instant, and the removed part for the whole export).
+pub fn without_cuts(src: &AudioBuffer, cuts: &[(f64, f64)]) -> Result<AudioBuffer> {
+    if cuts.is_empty() {
+        return Ok(src.clone());
+    }
+    let frames = src.num_frames();
+    let merged = merged_cuts(frames, src.sample_rate as f64, src.duration_secs(), cuts)?;
+    let rate = src.sample_rate as f64;
+    let joins = join_positions(&merged, frames);
+    let kept: usize = frames - merged.iter().map(|&(a, b)| b - a).sum::<usize>();
+    let samples = src
+        .samples
+        .iter()
+        .map(|ch| {
+            let mut out = Vec::with_capacity(kept);
+            let mut read = 0;
+            for &(a, b) in &merged {
+                out.extend_from_slice(&ch[read..a]);
+                read = b;
+            }
+            out.extend_from_slice(&ch[read..frames]);
+            soften_joins(&mut out, &joins, rate);
+            out
+        })
+        .collect();
+    Ok(AudioBuffer {
+        samples,
+        sample_rate: src.sample_rate,
+    })
 }
 
 #[cfg(test)]
@@ -113,6 +198,44 @@ mod tests {
             samples: vec![vec![1.0f32; frames], vec![0.5f32; frames]],
             sample_rate: sr,
         }
+    }
+
+    #[test]
+    fn a_copy_without_cuts_equals_cutting_a_clone() {
+        let mut src = make_stereo(100, 10);
+        for (i, v) in src.samples[0].iter_mut().enumerate() {
+            *v = i as f32;
+        }
+        let cuts = [(7.0, 9.0), (1.0, 3.0), (2.0, 4.0), (9.5, 99.0)];
+
+        let built = without_cuts(&src, &cuts).unwrap();
+        let mut cut = src.clone();
+        remove(&mut cut, &cuts).unwrap();
+
+        assert_eq!(built.samples, cut.samples);
+        assert_eq!(src.num_frames(), 100, "the source is untouched");
+        assert!(without_cuts(&src, &[(0.0, 100.0)]).is_err());
+        assert!(without_cuts(&src, &[(f64::NAN, 1.0)]).is_err());
+        assert_eq!(without_cuts(&src, &[]).unwrap().samples, src.samples);
+    }
+
+    #[test]
+    fn a_splice_is_faded_so_it_does_not_click_and_the_length_is_unchanged() {
+        // 1 s à 1 kHz, tout à 1,0 : couper 0,4–0,6 laisse un raccord à 0,4 s.
+        let mut buf = make_buf(1000, 1000);
+        remove(&mut buf, &[(0.4, 0.6)]).unwrap();
+        let ch = &buf.samples[0];
+        assert_eq!(ch.len(), 800);
+        // Loin du raccord : intact. Au raccord : descend vers 0 puis remonte.
+        assert_eq!(ch[100], 1.0);
+        assert!(ch[399] < 0.3 && ch[400] < 0.3, "{} {}", ch[399], ch[400]);
+        assert!(ch[397] < ch[390]);
+        // Le début et la fin du fichier ne sont pas des raccords.
+        assert_eq!(ch[0], 1.0);
+        assert_eq!(ch[799], 1.0);
+        // Même résultat par la copie qui ne contient que les plages conservées.
+        let built = without_cuts(&make_buf(1000, 1000), &[(0.4, 0.6)]).unwrap();
+        assert_eq!(&built.samples[0], ch);
     }
 
     #[test]

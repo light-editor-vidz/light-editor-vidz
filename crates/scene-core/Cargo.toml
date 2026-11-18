@@ -14,4 +14,4 @@ ts-rs = "12"
 uuid = { version = "1", features = ["v4", "serde"] }
 tiny-skia = "0.12"
 cosmic-text = "0.19"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }

@@ -17,6 +17,18 @@ export type Tab =
 
 export const HOME = "home";
 
+/** Le même chemin écrit autrement (séparateurs, `/` final, `./`) : un projet n'a pas deux onglets,
+ * donc pas deux sauvegardes automatiques qui s'écrasent. */
+export function samePath(a: string, b: string): boolean {
+  const norm = (p: string) =>
+    p
+      .replace(/\\/g, "/")
+      .replace(/\/(\.\/)+/g, "/")
+      .replace(/\/{2,}/g, "/")
+      .replace(/\/$/, "");
+  return norm(a) === norm(b);
+}
+
 export interface TabsState {
   tabs: Tab[];
   /** `HOME` ou l'identifiant d'un onglet. */
@@ -35,7 +47,9 @@ export type TabsAction =
   | { type: "activate"; id: string }
   | { type: "close"; id: string; intent?: "new" }
   | { type: "setTabPath"; id: string; path: string }
-  | { type: "clearNewProject" };
+  | { type: "clearNewProject" }
+  /** « Nouveau projet » : l'accueil et sa fenêtre de création, sans fermer l'onglet affiché. */
+  | { type: "newProject" };
 
 let counter = 0;
 const newId = (kind: Tab["kind"]) => `${kind}-${++counter}`;
@@ -65,7 +79,7 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
   switch (action.type) {
     case "openProject": {
       // Un projet déjà ouvert est simplement remis au premier plan.
-      const existing = state.tabs.find((t) => t.kind === "project" && t.dir === action.dir);
+      const existing = state.tabs.find((t) => t.kind === "project" && samePath(t.dir, action.dir));
       if (existing) return { ...state, active: existing.id, startNewProject: false };
       const tab: Tab = {
         id: newId("project"),
@@ -98,6 +112,8 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
         ...state,
         tabs: state.tabs.map((t) => (t.id === action.id && t.kind !== "project" ? { ...t, path: action.path } : t)),
       };
+    case "newProject":
+      return { ...state, active: HOME, startNewProject: true };
     case "clearNewProject":
       return state.startNewProject ? { ...state, startNewProject: false } : state;
   }

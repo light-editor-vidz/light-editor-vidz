@@ -261,4 +261,47 @@ describe("PropertiesPanel — subtitles", () => {
     setup({ element: video, selectedIds: [video.id], elements: [video], onGenerateSubtitles });
     expect(screen.getByRole("button", { name: "Generate subtitles…" })).toBeInTheDocument();
   });
+
+  it("closes the linked-subtitle editor when another video is selected (no texts of A written on B)", () => {
+    const linked = (n: number, id: string) =>
+      element({
+        id,
+        type: "video",
+        src: `${id}.mp4`,
+        video_offset: 0,
+        playback_speed: 1,
+        subtitles: {
+          enabled: true,
+          position: "bottom",
+          font_size: 3,
+          cues: Array.from({ length: n }, (_, i) => ({ start: i, end: i + 1, text: `${id}${i}` })),
+        },
+      } as unknown as Partial<Element>);
+    const a = linked(2, "a");
+    const b = linked(3, "b");
+    const { rerender, ...rest } = setup({ element: a, selectedIds: [a.id], elements: [a, b] });
+    fireEvent.click(screen.getByRole("button", { name: "Edit subtitles" }));
+    expect(screen.queryByRole("button", { name: "Edit subtitles" })).toBeNull();
+
+    rerender(
+      <PropertiesPanel
+        element={b}
+        audioTrack={null}
+        activeCompositionDuration={30}
+        elements={[a, b]}
+        selectedIds={[b.id]}
+        onUpdate={rest.onUpdate}
+        onUpdateAudio={rest.onUpdateAudio}
+        onReorder={rest.onReorder}
+        onSelectLayer={rest.onSelectLayer}
+        onReorderLayer={rest.onReorderLayer}
+        onDeleteLayer={rest.onDeleteLayer}
+        onAlign={rest.onAlign}
+        onDistribute={rest.onDistribute}
+        onGroup={rest.onGroup}
+        onUngroup={rest.onUngroup}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Edit subtitles" })).toBeInTheDocument();
+  });
 });

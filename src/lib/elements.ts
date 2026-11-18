@@ -387,6 +387,11 @@ export function addElementToComposition(project: Project, compId: string, elemen
 
 /** Met à jour un élément (par id) dans toutes les compositions, en fusionnant `patch`. */
 export function updateElementInProject(project: Project, elementId: string, patch: ElementPatch): Project {
+  // Patch sans effet : même objet, pour ne produire ni nouvelle référence ni entrée d'annulation.
+  const current = findElement(project, elementId);
+  if (!current) return project;
+  const target = current as unknown as Record<string, unknown>;
+  if (Object.entries(patch).every(([k, v]) => Object.is(target[k], v))) return project;
   return {
     ...project,
     // Les scènes qui ne contiennent pas l'élément gardent leur référence (mémoïsation en aval).

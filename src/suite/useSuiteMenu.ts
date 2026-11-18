@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { exit } from "@tauri-apps/plugin-process";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { findSpec, installMenu, type MenuSpec, type TopMenu } from "./menu";
 import { applyTheme, loadTheme, saveTheme, type Theme } from "./theme";
@@ -69,12 +68,13 @@ export function useSuiteMenu({
       action: () => onLanguage(value),
     });
     const mac = isMac();
-    // A predefined Quit item is greyed out on Linux: it is an ordinary entry that exits.
+    // A predefined Quit item is greyed out on Linux: it is an ordinary entry. It closes the window
+    // so the close guard (unsaved work, running exports) applies exactly as for the window cross.
     const quit: MenuSpec = {
       kind: "item",
       text: t("menu.quit"),
       accelerator: "CmdOrCtrl+Q",
-      action: () => void exit(0),
+      action: () => void getCurrentWindow().close(),
     };
     const bar: TopMenu[] = [
       ...(mac

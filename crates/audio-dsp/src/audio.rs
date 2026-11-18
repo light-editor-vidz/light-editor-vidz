@@ -16,7 +16,7 @@ use symphonia::core::probe::Hint;
 
 /// Upper bound on the up-front reservation: a corrupt header may claim any
 /// frame count, and it must not turn into a giant allocation.
-const MAX_RESERVED_FRAMES: u64 = 1 << 26;
+const MAX_RESERVED_FRAMES: u64 = 1 << 22;
 
 /// Stream resets tolerated in one file (chained Ogg streams, mostly).
 const MAX_STREAM_RESETS: usize = 16;
@@ -69,7 +69,105 @@ fn is_eof(e: &SymError) -> bool {
     matches!(e, SymError::IoError(io) if io.kind() == std::io::ErrorKind::UnexpectedEof)
 }
 
+/// Decodes with symphonia, and with ffmpeg for what symphonia cannot read (Opus in an Ogg, Matroska
+/// or WebM container, which the file picker nevertheless offers).
 pub fn decode(path: &str) -> Result<AudioBuffer> {
+    match decode_symphonia(path) {
+        Ok(buf) => Ok(buf),
+        Err(error) => {
+            let cannot_open = error
+                .downcast_ref::<crate::error::Coded>()
+                .is_some_and(|e| e.code == "cannot_open");
+            if cannot_open {
+                return Err(error);
+            }
+            decode_via_ffmpeg(path).map_err(|_| error)
+        }
+    }
+}
+
+/// The stream layout `ffmpeg` should keep: channels and sample rate of the first audio stream.
+fn probe_layout(path: &str) -> Result<(usize, u32)> {
+    let out = std::process::Command::new(scene_core::ffmpeg_path::ffprobe_binary())
+        .args(["-v", "error", "-select_streams", "a:0"])
+        .args([
+            "-show_entries",
+            "stream=channels,sample_rate",
+            "-of",
+            "default=noprint_wrappers=1",
+        ])
+        .arg(format!("file:{path}"))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .context("ffprobe is not available")?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let value = |key: &str| {
+        text.lines()
+            .find_map(|l| l.strip_prefix(key)?.strip_prefix('='))
+            .and_then(|v| v.trim().parse::<u32>().ok())
+    };
+    match (value("channels"), value("sample_rate")) {
+        (Some(c), Some(r)) if c > 0 && r > 0 => Ok((c as usize, r)),
+        _ => bail!("No audio stream"),
+    }
+}
+
+/// Raw f32 samples from ffmpeg, split into channels as they arrive (no second full-size copy).
+fn decode_via_ffmpeg(path: &str) -> Result<AudioBuffer> {
+    use std::io::Read;
+    let (channels, sample_rate) = probe_layout(path)?;
+    let mut child = std::process::Command::new(scene_core::ffmpeg_path::ffmpeg_binary())
+        .args(["-v", "error", "-nostdin", "-i"])
+        .arg(format!("file:{path}"))
+        .args(["-map", "0:a:0", "-f", "f32le", "-acodec", "pcm_f32le"])
+        .args([
+            "-ac",
+            &channels.to_string(),
+            "-ar",
+            &sample_rate.to_string(),
+            "-",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("ffmpeg is not available")?;
+    let mut stdout = child.stdout.take().context("no ffmpeg output")?;
+    let mut samples: Vec<Vec<f32>> = vec![Vec::new(); channels];
+    let frame_bytes = 4 * channels;
+    let mut chunk = vec![0u8; frame_bytes * 16_384];
+    let mut filled = 0;
+    loop {
+        let read = stdout.read(&mut chunk[filled..])?;
+        if read == 0 {
+            break;
+        }
+        filled += read;
+        let whole = filled / frame_bytes * frame_bytes;
+        for frame in chunk[..whole].chunks_exact(frame_bytes) {
+            for (c, channel) in samples.iter_mut().enumerate() {
+                let at = c * 4;
+                channel.push(f32::from_le_bytes([
+                    frame[at],
+                    frame[at + 1],
+                    frame[at + 2],
+                    frame[at + 3],
+                ]));
+            }
+        }
+        chunk.copy_within(whole..filled, 0);
+        filled -= whole;
+    }
+    let status = child.wait()?;
+    if !status.success() || samples[0].is_empty() {
+        return Err(coded("empty_audio", &[], "Decoded audio is empty"));
+    }
+    Ok(AudioBuffer {
+        samples,
+        sample_rate,
+    })
+}
+
+fn decode_symphonia(path: &str) -> Result<AudioBuffer> {
     let file = std::fs::File::open(path).map_err(|e| {
         coded(
             "cannot_open",
@@ -88,7 +186,13 @@ pub fn decode(path: &str) -> Result<AudioBuffer> {
         .format(
             &hint,
             mss,
-            &FormatOptions::default(),
+            // Gapless : le silence d'encodeur (début et fin) des MP3 est retiré, comme le fait le
+            // décodeur du navigateur pour l'aperçu. Sans cela, chaque ré-export d'un MP3
+            // ajoutait son silence de tête et décalait l'export de l'aperçu.
+            &FormatOptions {
+                enable_gapless: true,
+                ..Default::default()
+            },
             &MetadataOptions::default(),
         )
         .map_err(|_| coded("unsupported_format", &[], "Unsupported audio format"))?;
@@ -1441,5 +1545,68 @@ mod tests {
         let mut out = Vec::new();
         write_pcm(&mut out, &buf, &Job::detached()).unwrap();
         assert_eq!(out.len(), 10_000 * 4);
+    }
+
+    #[test]
+    fn an_mp3_is_decoded_without_the_encoder_delay() {
+        let dir = std::env::temp_dir().join(format!("lev_gapless_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mp3 = dir.join("tone.mp3");
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=1:sample_rate=44100",
+            ])
+            .args(["-c:a", "libmp3lame"])
+            .arg(&mp3)
+            .status();
+        if !matches!(made, Ok(s) if s.success()) {
+            return; // pas de ffmpeg avec libmp3lame : rien à vérifier ici
+        }
+        let frames = decode(mp3.to_str().unwrap()).unwrap().num_frames();
+        // Une seconde de son : sans gapless, le silence d'encodeur (≈ 1 105 frames) s'y ajoutait
+        // à chaque ré-export.
+        assert!(
+            (44_100 - 50..=44_100 + 50).contains(&frames),
+            "{frames} frames"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_opus_file_that_symphonia_cannot_read_is_decoded_by_ffmpeg() {
+        let dir = std::env::temp_dir().join(format!("lev_opus_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ogg = dir.join("tone.ogg");
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=1:sample_rate=48000",
+            ])
+            .args(["-c:a", "libopus"])
+            .arg(&ogg)
+            .status();
+        if !matches!(made, Ok(s) if s.success()) {
+            return; // pas de ffmpeg avec libopus : rien à vérifier ici
+        }
+        let buf = decode(ogg.to_str().unwrap()).unwrap();
+        assert_eq!(buf.sample_rate, 48_000);
+        assert!(
+            (47_000..=49_000).contains(&buf.num_frames()),
+            "{}",
+            buf.num_frames()
+        );
+        assert!(buf.samples[0].iter().any(|s| s.abs() > 0.1));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

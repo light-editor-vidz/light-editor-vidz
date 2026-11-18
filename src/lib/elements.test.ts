@@ -100,6 +100,13 @@ describe("updateElementInProject", () => {
     const next = updateElementInProject(p, el.id, { x: 42 });
     expect(next.compositions[0].elements[0].x).toBe(42);
   });
+
+  it("returns the same project when the patch changes nothing", () => {
+    const el = createTitleElement();
+    const p = addElementToComposition(project([emptyComposition("a")]), "a", el);
+    expect(updateElementInProject(p, el.id, { x: el.x })).toBe(p);
+    expect(updateElementInProject(p, "missing", { x: 1 })).toBe(p);
+  });
 });
 
 describe("reorderElementInProject", () => {

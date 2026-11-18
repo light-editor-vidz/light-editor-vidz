@@ -3,6 +3,7 @@ import { useCommandParams } from "./hooks/useCommandParams";
 import type { PanelCtx } from "./hooks/useCommandParams";
 import { useCommitSession } from "./hooks/useCommitSession";
 import { useT } from "./lib/langContext";
+import { previewCommand } from "./lib/tauri";
 import type { Command, FilterCommand, ImageMeta } from "./types";
 import { ResetIcon, Section, Spinner } from "./ui/PanelParts";
 import { Slider as BaseSlider } from "./ui/Slider";
@@ -426,6 +427,30 @@ export function FiltersPanel({
 
   useEffect(() => () => onPreview(null), [onPreview]);
 
+  // Vignettes des préréglages calculées par le backend (le CSS n'en est qu'une approximation :
+  // Froid, Lomo, Croquis… n'y ressemblaient pas au rendu réel). Le CSS sert en attendant.
+  const [presetThumbs, setPresetThumbs] = useState<{ source: string; urls: Record<string, string> }>({
+    source: "",
+    urls: {},
+  });
+  const thumbSource = tabId && image ? `${tabId}:${image.preview}` : "";
+  useEffect(() => {
+    if (!tabId || !thumbSource) return;
+    let cancelled = false;
+    void Promise.allSettled(PRESETS.map((p) => previewCommand(tabId, p.cmd, 160))).then((results) => {
+      if (cancelled) return;
+      const urls: Record<string, string> = {};
+      results.forEach((r, i) => {
+        if (r.status === "fulfilled") urls[PRESETS[i].id] = r.value;
+      });
+      setPresetThumbs({ source: thumbSource, urls });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tabId, thumbSource]);
+  const backendThumb = (id: string) => (presetThumbs.source === thumbSource ? presetThumbs.urls[id] : undefined);
+
   /** Application ponctuelle (préréglage, duotone) : une étape à part entière. */
   const applyOnce = (cmd: Command) => {
     endSession();
@@ -495,10 +520,10 @@ export function FiltersPanel({
                 <div className="w-full aspect-video overflow-hidden rounded-sm bg-slate-800">
                   {image ? (
                     <img
-                      src={image.thumbnail || image.preview}
+                      src={backendThumb(preset.id) ?? (image.thumbnail || image.preview)}
                       alt={presetName}
                       className="w-full h-full object-cover"
-                      style={{ filter: preset.css, imageRendering: "auto" }}
+                      style={{ filter: backendThumb(preset.id) ? undefined : preset.css, imageRendering: "auto" }}
                       draggable={false}
                     />
                   ) : (

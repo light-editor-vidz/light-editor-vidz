@@ -105,6 +105,23 @@ describe("projectStepLabel", () => {
   });
 });
 
+describe("projectStepLabel cache", () => {
+  it("reuses the label of an already compared pair, and recomputes for another translator", () => {
+    const p = project([scene("a")]);
+    const q = { ...p, fps: 60 };
+    const calls: string[] = [];
+    const counting: Translate = (key, vars) => {
+      calls.push(key);
+      return t(key, vars);
+    };
+    expect(projectStepLabel(p, q, counting)).toBe("history.project.settings");
+    const first = calls.length;
+    expect(projectStepLabel(p, q, counting)).toBe("history.project.settings");
+    expect(calls.length).toBe(first);
+    expect(projectStepLabel(p, q, (k) => `fr:${k}`)).toBe("fr:history.project.settings");
+  });
+});
+
 describe("stepLabels", () => {
   it("starts with the opened state, then one label per change", () => {
     const states = [DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, fadeOut: 1 }];

@@ -1,6 +1,7 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { getApi } from "../api";
 import "./FilmStrip.css";
+import { filmStripCache as cache, rememberFilmStrip as remember } from "./filmStripCache";
 
 interface Props {
   /** Le fichier vidéo dont les vignettes sont tirées (par ffmpeg, côté backend). */
@@ -10,9 +11,11 @@ interface Props {
 }
 
 const THUMB_W = 80;
-
+/** Délai sans nouvelle largeur avant de redemander des vignettes. */
+const RESIZE_SETTLE_MS = 300;
 function FilmStrip({ videoPath, duration, trackWidth }: Props) {
   const [thumbs, setThumbs] = useState<string[]>([]);
+  const hasThumbs = useRef(false);
 
   // Depend on the number of thumbnails, not the pixel width: dragging the window
   // edge changes the width on every frame but rarely the count, and each change
@@ -21,18 +24,35 @@ function FilmStrip({ videoPath, duration, trackWidth }: Props) {
 
   useEffect(() => {
     if (!videoPath || duration <= 0 || count <= 0) return;
+    const key = `${videoPath}\n${count}`;
+    const known = cache.get(key);
+    if (known) {
+      setThumbs(known);
+      return;
+    }
     // A late answer for a previous video must not write into the strip of the current one.
     let aborted = false;
-    getApi()
-      .videoThumbnails(videoPath, count)
-      .then((found) => {
-        if (!aborted) setThumbs(found);
-      })
-      .catch(() => {
-        if (!aborted) setThumbs([]);
-      });
+    // Les images déjà là restent affichées pendant un redimensionnement : on attend qu'il se
+    // calme avant d'en redemander (chaque demande fait travailler ffmpeg sur le film).
+    const wait = hasThumbs.current ? RESIZE_SETTLE_MS : 0;
+    const request = () => {
+      getApi()
+        .videoThumbnails(videoPath, count)
+        .then((found) => {
+          if (aborted) return;
+          remember(key, found);
+          setThumbs(found);
+          hasThumbs.current = found.length > 0;
+        })
+        .catch(() => {
+          if (!aborted) setThumbs([]);
+        });
+    };
+    const timer = wait > 0 ? setTimeout(request, wait) : undefined;
+    if (wait === 0) request();
     return () => {
       aborted = true;
+      clearTimeout(timer);
     };
   }, [videoPath, duration, count]);
 

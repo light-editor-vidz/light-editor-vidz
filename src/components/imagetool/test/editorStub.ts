@@ -5,6 +5,8 @@ import type { EditorMode, ImageMeta } from "../types";
 
 export type Editor = ReturnType<typeof useImageEditor>;
 
+const OPEN = { key: "hist.open" };
+
 export const meta = (over: Partial<ImageMeta> = {}): ImageMeta => ({
   width: 800,
   height: 600,
@@ -39,9 +41,9 @@ export function editorStub(over: Partial<Editor> = {}): Editor {
         id: "t1",
         label: "photo.png",
         image: meta(),
-        history: [{ key: "hist.open" }],
+        history: [OPEN],
         historyIndex: 0,
-        savedIndex: 0,
+        savedEntry: OPEN,
         zoom: 1,
       },
     ],

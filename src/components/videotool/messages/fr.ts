@@ -114,6 +114,8 @@ export const fr: Translations = {
   loading_preparing: "Préparation de la vidéo…",
 
   // CropOverlay
+  key_enter: "Entrée",
+  geometry_summary_short: (rotation: number, h: number, v: number) => `${rotation}° / H : ${h}° / V : ${v}°`,
   crop_apply: "✓ Appliquer",
 
   // Subtitles
@@ -144,6 +146,9 @@ export const fr: Translations = {
   subtitles_anim_typewriter: "Machine à écrire",
   subtitles_anim_typewriter_desc: "Les caractères apparaissent un par un",
   subtitles_font: "Police",
+  font_sans_serif: "Sans empattement",
+  font_serif: "Avec empattement",
+  font_monospace: "Chasse fixe",
   subtitles_size: "Taille",
   subtitles_color: "Texte",
   subtitles_outline: "Contour",
@@ -170,6 +175,16 @@ export const fr: Translations = {
   export_stop: "Arrêter l'export",
   export_cancelled: "Export annulé",
   export_nothing: "Rien à exporter : toute la vidéo est coupée.",
+  export_error_stabilization: "La stabilisation n'est pas disponible dans cette version de ffmpeg.",
+  export_error_same_file: "Le fichier de sortie doit être différent de la vidéo source.",
+  export_error_invalid: "Ces réglages d'export ne sont pas valides.",
+  export_error_no_video: "Ce fichier ne contient pas de piste vidéo.",
+  export_error_queue_conflict: "Un autre export en file écrit déjà dans ce fichier.",
+  export_error_no_sequence: "Aucune séquence à fusionner.",
+  export_error_too_many_sequences: "Trop de séquences à fusionner en une fois.",
+  export_error_too_many_frames: "Trop d'images demandées.",
+  export_error_ffmpeg_missing: "ffmpeg n'a pas pu démarrer : vérifiez qu'il est installé.",
+  export_error_write_temp: "Un fichier temporaire n'a pas pu être écrit : vérifiez l'espace disque libre.",
   export_already_running: "Un export est déjà en cours.",
   update_notes: "Nouveautés",
   update_hide_notes: "Masquer",
@@ -222,6 +237,7 @@ export const fr: Translations = {
   hw_vaapi: "VAAPI",
   export_stabilization: "Stabilisation",
   export_queue_add: "Ajouter à la file",
+  export_waiting: (n: number) => `En attente (${n} devant)`,
   export_queued: "Ajouté à la file d'export",
 
   // File d'export

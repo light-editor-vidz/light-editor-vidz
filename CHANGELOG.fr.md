@@ -7,6 +7,31 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-18
+
+Corrections issues d'un audit complet du code.
+
+### Sécurité
+
+- Les chemins de sortie et d'import de l'export de projet, de l'import d'assets et de l'ouverture d'images passent par l'approbation des chemins ; la permission `store:default`, inutilisée, est retirée ; les téléchargements de médias libres sont limités aux hôtes des fournisseurs, y compris après une redirection ; la CSP et le CORS du serveur média sont resserrés.
+
+### Corrigé
+
+- Vidéo : exporter par-dessus le fichier source ne peut plus le supprimer ; l'export est écrit dans un fichier temporaire puis renommé, et une erreur de lecture n'efface plus le montage.
+- Export : la transparence du texte et de l'ombre, l'espacement des lettres, les vidéos de smartphone tournées, l'orientation EXIF des photos, la transition de flou, l'apparition ligne par ligne, le Ken Burns et les couleurs invalides correspondent maintenant à l'aperçu ; les saccades d'images sont supprimées ; chaque vidéo est décodée une seule fois au lieu d'une fois par worker.
+- Quitter attend ou annule les exports en cours, les fichiers temporaires orphelins sont nettoyés au démarrage, et l'annulation pendant la finalisation d'une vidéo est prise en compte.
+- Image : les bombes de décompression sont refusées, retirer l'EXIF garde l'orientation et supprime le GPS, réinitialiser un outil ne rejoue plus d'étapes dans le mauvais repère, l'état « modifié » est fiable, et Ctrl+Q demande confirmation.
+- Sous-titres : un sous-titre généré est conservé si la traduction enchaînée échoue, l'annulation n'est plus perdue, les requêtes POST ne sont rejouées que si c'est sûr, et un avertissement signale que la détection de la parole était indisponible.
+- Plusieurs onglets des vues Vidéo et Audio ne partagent plus leur aperçu, leur annulation ni leur progression.
+- L'ouverture d'un projet depuis sa sauvegarde est signalée ; la file d'export affiche sa position.
+
+### Modifié
+
+- Image : la balance des blancs, le flou et le redimensionnement travaillent en lumière linéaire, et les opérations lourdes sont parallélisées.
+- Audio : la mémoire utilisée lors d'un changement de vitesse est divisée par deux ; la stabilisation est mesurée par segment.
+- Les sources vidéo ne sont plus chargées en mémoire à l'ouverture d'un projet.
+- Les builds de release utilisent la LTO « thin » ; la CI lance aussi clippy, rustfmt, prettier et les audits, et les actions GitHub sont épinglées.
+
 ## [1.2.0] - 2026-11-16
 
 ### Ajouté

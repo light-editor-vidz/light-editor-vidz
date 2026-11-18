@@ -39,8 +39,11 @@ export interface Tab {
   image: ImageMeta;
   history: HistoryEntry[];
   historyIndex: number;
-  /** Position d'historique du dernier export : l'onglet est « modifié » s'il diffère. */
-  savedIndex: number;
+  /**
+   * L'étape d'historique exportée en dernier (comparée par identité, pas par position : une étape
+   * remplacée ou un historique rogné par le budget mémoire ne doit pas passer pour « enregistré »).
+   */
+  savedEntry: HistoryEntry;
   zoom: number;
 }
 

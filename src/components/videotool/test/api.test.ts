@@ -63,7 +63,7 @@ describe("video API — files", () => {
   it("previews through the engine and returns a playable URL", async () => {
     mockInvoke.mockResolvedValue({ path: "/tmp/p.webm", transcoded: true });
     expect(await realApi().previewVideo("/v/a.avi")).toBe("asset://localhost/%2Ftmp%2Fp.webm");
-    expect(mockInvoke).toHaveBeenCalledWith("video_preview", { path: "/v/a.avi", force: false });
+    expect(mockInvoke).toHaveBeenCalledWith("video_preview", { path: "/v/a.avi", force: false, owner: "" });
   });
 
   it("reads a subtitle file as a path and its decoded content", async () => {
@@ -139,8 +139,35 @@ describe("video API — queue and capabilities", () => {
     const progress: number[] = [];
     realApi().onPreviewProgress((p) => progress.push(p));
     await Promise.resolve();
-    handlers["video-preview-progress"]({ payload: 40 });
+    handlers["video-preview-progress"]({ payload: { owner: "", percent: 40 } });
     expect(progress).toEqual([40]);
+  });
+
+  it("keeps preview, cancellation and progress of one tab away from another", async () => {
+    window.electronAPI = {};
+    const a = getApi("tab-a");
+    const b = getApi("tab-b");
+    const seenA: number[] = [];
+    const seenB: number[] = [];
+    a.onPreviewProgress((p) => seenA.push(p));
+    b.onPreviewProgress((p) => seenB.push(p));
+    await Promise.resolve();
+    // Both tabs listen to the same event: each one sees every payload, and keeps only its own.
+    const emit = (payload: unknown) =>
+      mockListen.mock.calls.forEach(
+        ([event, cb]) => event === "video-preview-progress" && (cb as (e: { payload: unknown }) => void)({ payload }),
+      );
+    emit({ owner: "tab-a", percent: 10 });
+    emit({ owner: "tab-b", percent: 70 });
+    expect(seenA).toEqual([10]);
+    expect(seenB).toEqual([70]);
+
+    mockInvoke.mockResolvedValue({ path: "/v/a.mp4", transcoded: false });
+    await a.previewVideo("/v/a.mp4");
+    expect(mockInvoke).toHaveBeenCalledWith("video_preview", { path: "/v/a.mp4", force: false, owner: "tab-a" });
+    await a.cancelFfmpeg();
+    expect(mockInvoke).toHaveBeenCalledWith("video_cancel_preview", { owner: "tab-a" });
+    expect(mockInvoke).not.toHaveBeenCalledWith("video_cancel_preview", { owner: "tab-b" });
   });
 });
 
@@ -182,7 +209,7 @@ describe("video API — a dialog export waits for its job", () => {
     const { api, done } = await start();
     await api.cancelFfmpeg();
     expect(mockInvoke).toHaveBeenCalledWith("video_queue_cancel", { id: 7 });
-    expect(mockInvoke).toHaveBeenCalledWith("video_cancel_preview");
+    expect(mockInvoke).toHaveBeenCalledWith("video_cancel_preview", { owner: "" });
     handlers["video-queue"]({ payload: [job({ status: "cancelled" })] });
     await expect(done).rejects.toThrow("cancelled");
   });

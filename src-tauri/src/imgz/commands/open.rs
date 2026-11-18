@@ -79,6 +79,15 @@ pub fn build_meta(
     build_meta_with(img, format, can_undo, can_redo, encode_preview(img)?)
 }
 
+/// La vignette (≈ 160 px) d'une image, encodée en data URL.
+pub fn thumbnail_of(img: &DynamicImage) -> Result<String, String> {
+    if img.width().max(img.height()) > THUMB_SIDE {
+        encode_preview(&img.thumbnail(THUMB_SIDE, THUMB_SIDE))
+    } else {
+        encode_preview(img)
+    }
+}
+
 /// Comme [`build_meta`], mais avec un `preview` déjà fourni (en pratique l'URL `lcimg` de
 /// l'étape) au lieu d'encoder l'image en data URL.
 pub fn build_meta_with(
@@ -88,12 +97,22 @@ pub fn build_meta_with(
     can_redo: bool,
     preview: String,
 ) -> Result<ImageMeta, String> {
-    let thumbnail = if img.width().max(img.height()) > THUMB_SIDE {
-        encode_preview(&img.thumbnail(THUMB_SIDE, THUMB_SIDE))?
-    } else {
-        encode_preview(img)?
-    };
-    Ok(ImageMeta {
+    let thumbnail = thumbnail_of(img)?;
+    Ok(meta_from(
+        img, format, can_undo, can_redo, preview, thumbnail,
+    ))
+}
+
+/// Les métadonnées d'une image dont l'aperçu et la vignette sont déjà connus.
+pub fn meta_from(
+    img: &DynamicImage,
+    format: &str,
+    can_undo: bool,
+    can_redo: bool,
+    preview: String,
+    thumbnail: String,
+) -> ImageMeta {
+    ImageMeta {
         width: img.width(),
         height: img.height(),
         format: format.to_string(),
@@ -106,8 +125,16 @@ pub fn build_meta_with(
         tools: Vec::new(),
         filename: None,
         path: None,
-    })
+    }
 }
+
+/// Le profil ICC décrit-il un espace RGB ? (signature de l'espace, octets 16 à 19 de l'en-tête)
+fn is_rgb_profile(profile: &[u8]) -> bool {
+    profile.get(16..20) == Some(b"RGB ")
+}
+
+/// Mémoire maximale du tampon décodé d'une image à l'ouverture.
+const MAX_DECODED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 fn load_image_from_path(path_buf: PathBuf) -> Result<(String, ImageMeta, AppHistory), String> {
     let filename = path_buf
@@ -126,10 +153,30 @@ fn load_image_from_path(path_buf: PathBuf) -> Result<(String, ImageMeta, AppHist
         .map(|f| format!("{f:?}").to_lowercase())
         .unwrap_or_else(|| "unknown".to_string());
     let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    // `from_decoder` ne réserve jamais le tampon de sortie, donc les limites d'`image` ne
+    // s'appliquent pas : on refuse ici les dimensions déclarées avant toute allocation (un PNG de
+    // quelques Mo peut annoncer 60 000 × 60 000 px, soit des Go).
+    let (declared_w, declared_h) = decoder.dimensions();
+    super::imaging::check_dims(declared_w, declared_h)?;
+    if decoder.total_bytes() > MAX_DECODED_BYTES {
+        return Err(format!(
+            "Image too large to decode ({declared_w}×{declared_h} px)"
+        ));
+    }
     let orientation = decoder
         .orientation()
         .unwrap_or(image::metadata::Orientation::NoTransforms);
-    let icc = decoder.icc_profile().ok().flatten();
+    // Un profil CMYK ou Gris réinjecté sur des pixels RGB fausserait les couleurs à l'export.
+    let icc = decoder
+        .icc_profile()
+        .ok()
+        .flatten()
+        .filter(|p| is_rgb_profile(p));
+    let exif = decoder
+        .exif_metadata()
+        .ok()
+        .flatten()
+        .map(super::export::with_upright_orientation);
     let mut img = DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
     // Les photos de téléphone stockent l'image couchée et la balise Orientation la redresse.
     img.apply_orientation(orientation);
@@ -139,6 +186,7 @@ fn load_image_from_path(path_buf: PathBuf) -> Result<(String, ImageMeta, AppHist
     history.source_path = Some(path_buf);
     history.format = format.clone();
     history.icc = icc;
+    history.exif = exif;
     history.open(img);
 
     let image = history.current().ok_or("No image loaded")?;
@@ -175,6 +223,7 @@ fn load_all(paths: Vec<PathBuf>, state: &State<'_, AppState>) -> Result<OpenResu
 #[tauri::command]
 pub async fn open_images(
     app: tauri::AppHandle,
+    approved: State<'_, audio_dsp::approval::Approved>,
     state: State<'_, AppState>,
 ) -> Result<OpenResult, String> {
     let files = app
@@ -195,23 +244,131 @@ pub async fn open_images(
 
     let mut path_bufs = Vec::with_capacity(paths.len());
     for path in paths {
-        path_bufs.push(path.into_path().map_err(|e| e.to_string())?);
+        let path = path.into_path().map_err(|e| e.to_string())?;
+        // Le dialogue natif est un geste de l'utilisateur.
+        approved.allow_input(&path);
+        path_bufs.push(path);
     }
-    load_all(path_bufs, &state)
+    let result = load_all(path_bufs, &state)?;
+    let opened: Vec<String> = result
+        .opened
+        .iter()
+        .filter_map(|o| o.meta.path.clone())
+        .collect();
+    remember(&app, &opened);
+    Ok(result)
+}
+
+/// Fichier des images récentes, tenu par Rust : un chemin n'y entre que lorsqu'une image choisie,
+/// déposée ou passée en argument vient d'être ouverte.
+fn recent_file(app: &tauri::AppHandle) -> Option<PathBuf> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("recent-images.json"))
+}
+
+/// Au démarrage : les images récentes redeviennent ouvrables (le frontend garde sa liste, mais
+/// seuls les chemins déjà ouverts par l'utilisateur sont acceptés).
+pub fn approve_recents(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let Some(file) = recent_file(app) else { return };
+    let approved = app.state::<audio_dsp::approval::Approved>();
+    for path in audio_dsp::recent::read(&file) {
+        approved.allow_input(path);
+    }
+}
+
+fn remember(app: &tauri::AppHandle, opened: &[String]) {
+    if let Some(file) = recent_file(app) {
+        for path in opened {
+            audio_dsp::recent::record(&file, path);
+        }
+    }
+}
+
+/// Sépare les chemins approuvés de ceux que l'utilisateur n'a jamais désignés.
+fn split_approved(
+    approved: &audio_dsp::approval::Approved,
+    paths: Vec<String>,
+) -> (Vec<PathBuf>, Vec<FailedOpen>) {
+    let mut allowed = Vec::new();
+    let mut refused = Vec::new();
+    for path in paths {
+        match approved.check_input(&path) {
+            Ok(()) => allowed.push(PathBuf::from(path)),
+            Err(e) => refused.push(FailedOpen {
+                path,
+                error: e.to_string(),
+            }),
+        }
+    }
+    (allowed, refused)
+}
+
+async fn open_paths(
+    approved: &audio_dsp::approval::Approved,
+    state: &State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<OpenResult, String> {
+    let (allowed, refused) = split_approved(approved, paths);
+    let mut result = load_all(allowed, state)?;
+    result.failed.extend(refused);
+    Ok(result)
 }
 
 #[tauri::command]
 pub async fn open_images_by_paths(
+    app: tauri::AppHandle,
+    approved: State<'_, audio_dsp::approval::Approved>,
     state: State<'_, AppState>,
     paths: Vec<String>,
 ) -> Result<OpenResult, String> {
-    load_all(paths.into_iter().map(PathBuf::from).collect(), &state)
+    let result = open_paths(&approved, &state, paths).await?;
+    let opened: Vec<String> = result
+        .opened
+        .iter()
+        .filter_map(|o| o.meta.path.clone())
+        .collect();
+    remember(&app, &opened);
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use image::{DynamicImage, Rgba, RgbaImage};
+
+    /// Comme la commande, mais tous les chemins sont d'abord approuvés (dialogue, dépôt…).
+    async fn open_paths(
+        state: State<'_, AppState>,
+        paths: Vec<String>,
+    ) -> Result<OpenResult, String> {
+        let approved = audio_dsp::approval::Approved::default();
+        for p in &paths {
+            approved.allow_input(p);
+        }
+        super::open_paths(&approved, &state, paths).await
+    }
+
+    #[test]
+    fn a_path_nobody_approved_is_refused_not_read() {
+        let h = Harness::empty();
+        let img = temp_image("png", &solid_image(2, 2));
+        let path = img.to_str().unwrap().to_string();
+        let approved = audio_dsp::approval::Approved::default();
+
+        let result =
+            block_on(super::open_paths(&approved, &h.state(), vec![path.clone()])).unwrap();
+        assert!(result.opened.is_empty());
+        assert_eq!(result.failed.len(), 1);
+        assert!(h.state().0.lock().unwrap().is_empty());
+
+        approved.allow_input(&path);
+        let result = block_on(super::open_paths(&approved, &h.state(), vec![path])).unwrap();
+        assert_eq!(result.opened.len(), 1);
+    }
 
     fn solid_image(w: u32, h: u32) -> DynamicImage {
         let mut img = RgbaImage::new(w, h);
@@ -344,7 +501,7 @@ mod tests {
         let a = temp_image("png", &solid_image(3, 3));
         let b = temp_image("bmp", &solid_image(5, 2));
 
-        let result = block_on(open_images_by_paths(
+        let result = block_on(open_paths(
             h.state(),
             vec![
                 a.to_str().unwrap().to_string(),
@@ -368,7 +525,7 @@ mod tests {
         let h = Harness::empty();
         let ok = temp_image("png", &solid_image(2, 2));
 
-        let result = block_on(open_images_by_paths(
+        let result = block_on(open_paths(
             h.state(),
             vec![
                 "/tmp/notes.txt".to_string(),
@@ -390,7 +547,7 @@ mod tests {
         let upper = path.with_file_name("PIC.PNG");
         std::fs::rename(&path, &upper).unwrap();
 
-        let result = block_on(open_images_by_paths(
+        let result = block_on(open_paths(
             h.state(),
             vec![upper.to_str().unwrap().to_string()],
         ))
@@ -408,7 +565,7 @@ mod tests {
         let broken = dir.join("broken.png");
         std::fs::write(&broken, b"xx").unwrap();
 
-        let result = block_on(open_images_by_paths(
+        let result = block_on(open_paths(
             h.state(),
             vec![broken.to_str().unwrap().to_string()],
         ))
@@ -423,7 +580,7 @@ mod tests {
     fn opening_an_empty_list_yields_nothing() {
         let h = Harness::empty();
 
-        let result = block_on(open_images_by_paths(h.state(), vec![])).unwrap();
+        let result = block_on(open_paths(h.state(), vec![])).unwrap();
         let opened = result.opened;
 
         assert!(opened.is_empty());
@@ -438,7 +595,7 @@ mod tests {
         std::fs::write(&broken, b"xx").unwrap();
         let ok = temp_image("png", &solid_image(2, 2));
 
-        let result = block_on(open_images_by_paths(
+        let result = block_on(open_paths(
             h.state(),
             vec![
                 broken.to_str().unwrap().to_string(),
@@ -508,5 +665,62 @@ mod tests {
         .unwrap();
         let thumb = image::load_from_memory(&bytes).unwrap();
         assert_eq!((thumb.width(), thumb.height()), (160, 80));
+    }
+
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for &byte in data {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    /// Un PNG valide de 1×1 dont l'en-tête annonce `w × h` : quelques dizaines d'octets, mais le
+    /// décodage complet réserverait des Go.
+    fn png_declaring(w: u32, h: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        solid_image(1, 1)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        bytes[16..20].copy_from_slice(&w.to_be_bytes());
+        bytes[20..24].copy_from_slice(&h.to_be_bytes());
+        let crc = crc32(&bytes[12..29]);
+        bytes[29..33].copy_from_slice(&crc.to_be_bytes());
+        bytes
+    }
+
+    #[test]
+    fn a_decompression_bomb_is_refused_before_anything_is_allocated() {
+        let dir = std::env::temp_dir().join(format!("lev_bomb_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bomb.png");
+        std::fs::write(&path, png_declaring(60_000, 60_000)).unwrap();
+
+        let error = load_image_from_path(path).err().expect("must be refused");
+        assert!(error.contains("exceeds the limit"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_rgb_icc_profiles_are_kept() {
+        let profile = |space: &[u8; 4]| {
+            let mut p = vec![0u8; 128];
+            p[16..20].copy_from_slice(space);
+            p
+        };
+        assert!(is_rgb_profile(&profile(b"RGB ")));
+        assert!(!is_rgb_profile(&profile(b"CMYK")));
+        assert!(!is_rgb_profile(&profile(b"GRAY")));
+        assert!(!is_rgb_profile(&[1, 2, 3]));
     }
 }

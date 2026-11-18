@@ -115,7 +115,11 @@ export interface VideoApi {
   mergeSequences: (path: string, sequences: Sequence[]) => Promise<string>;
   openSubtitleFile: () => Promise<{ filePath: string; content: string } | null>;
   onPreviewProgress: (callback: (progress: number) => void) => () => void;
-  exportVideo: (options: ExportRequest) => Promise<{ success: boolean; outputPath: string }>;
+  /** `onQueued` reçoit l'identifiant du travail dès qu'il est dans la file (position d'attente). */
+  exportVideo: (
+    options: ExportRequest,
+    onQueued?: (id: number) => void,
+  ) => Promise<{ success: boolean; outputPath: string }>;
   onProgress: (callback: (progress: number) => void) => () => void;
 }
 
@@ -138,9 +142,18 @@ const subscribe = <T>(event: string, callback: (payload: T) => void): (() => voi
 };
 
 // Les exports lancés depuis la fenêtre d'export (qui les attend) : « Arrêter » les annule où
-// qu'ils en soient dans la file.
-const dialogJobs = new Set<number>();
-const progressListeners = new Set<(pct: number) => void>();
+// qu'ils en soient dans la file. Chaque onglet Vidéo (`owner`) a les siens : fermer la fenêtre de
+// l'un n'annule rien chez l'autre, et sa barre de progression ne suit que ses travaux.
+interface OwnerState {
+  dialogJobs: Set<number>;
+  progressListeners: Set<(pct: number) => void>;
+}
+const ownerStates = new Map<string, OwnerState>();
+const ownerState = (owner: string): OwnerState => {
+  let state = ownerStates.get(owner);
+  if (!state) ownerStates.set(owner, (state = { dialogJobs: new Set(), progressListeners: new Set() }));
+  return state;
+};
 
 /** Convertit un fichier local en URL lisible par `<video>` (protocole `asset:`), après l'avoir autorisé. */
 async function fileUrl(path: string): Promise<string> {
@@ -156,115 +169,130 @@ const assetUrl = (path: string) => {
   return url;
 };
 
-const tauriApi: VideoApi = {
-  getPathForFile: () => "",
-  toFileUrl: fileUrl,
-  toStreamUrl: (url) => invoke<string>("video_stream_url", { path: localPaths.get(url) ?? url }),
-  listSubs: listMediaSubs,
-  saveSub: saveMediaSub,
-  removeSub: removeMediaSub,
-  addAfterExport: (outputPath, projects, srt) => invoke("video_add_after_export", { outputPath, projects, srt }),
-  onAddedToProjects: (callback) => subscribe<AddReport>("video-export-added", callback),
-  openVideo: () => invoke<string | null>("video_pick_file"),
-  saveVideo: async (defaultName, format) => {
-    const choice = await invoke<{ path: string; confirm_overwrite: boolean } | null>("video_pick_output", {
-      defaultName: defaultName ?? null,
-      format: format ?? "",
-    });
-    if (!choice) return null;
-    if (choice.confirm_overwrite) {
-      const name = choice.path.split(/[\\/]/).pop() ?? choice.path;
-      const lang = i18n.resolvedLanguage === "fr" ? "fr" : "en";
-      const ok = await ask(translations[lang].overwrite_confirm(name), { kind: "warning" });
-      if (!ok) return null;
-    }
-    return choice.path;
-  },
-  cancelFfmpeg: async () => {
-    await Promise.all([...dialogJobs].map((id) => invoke("video_queue_cancel", { id })));
-    await invoke("video_cancel_preview");
-  },
-  getCapabilities: () => invoke("video_capabilities"),
-  queueAdd: async (options) => ({ id: await invoke<number>("video_queue_add", { options }) }),
-  queueList: () => invoke("video_queue_list"),
-  queueCancel: (id) => invoke("video_queue_cancel", { id }),
-  queueClearFinished: () => invoke("video_queue_clear_finished"),
-  queueReveal: async (id) => {
-    const jobs = await invoke<QueueJob[]>("video_queue_list");
-    const job = jobs.find((j) => j.id === id);
-    if (job && job.status === "done") await revealItemInDir(job.outputPath);
-  },
-  onQueueUpdate: (callback) => subscribe<QueueJob[]>("video-queue", callback),
-  listRecent: async () => {
-    const items = await invoke<{ path: string; name: string; dir: string }[]>("video_recent_list");
-    return items.map((i) => ({ kind: "video" as const, openedAt: 0, ...i }));
-  },
-  removeRecent: (path) => invoke("video_recent_forget", { path }),
-  clearRecent: () => invoke("video_recent_forget", { path: null }),
-  previewVideo: async (filePath, force = false) => {
-    const preview = await invoke<{ path: string; transcoded: boolean }>("video_preview", {
-      path: filePath,
-      force,
-    });
-    return assetUrl(preview.path);
-  },
-  detectScenes: (path) => invoke<Sequence[]>("video_detect_scenes", { path }),
-  videoThumbnails: (path, count) => invoke<string[]>("video_thumbnails", { path, count }),
-  videoFrames: (path, times) => invoke<string[]>("video_frames", { path, times }),
-  extractAudio: (path) => invoke<string | null>("video_extract_audio", { path }),
-  mergeSequences: (path, sequences) => invoke<string>("video_merge_sequences", { path, sequences }),
-  openSubtitleFile: async () => {
-    const r = await invoke<{ path: string; content: string } | null>("video_pick_subtitles");
-    return r && { filePath: r.path, content: r.content };
-  },
-  onPreviewProgress: (callback) => subscribe<number>("video-preview-progress", callback),
-  // La fenêtre d'export attend la fin de son travail : il passe par la file, dont les
-  // instantanés disent où il en est.
-  exportVideo: async (options) => {
-    // Écouter d'abord, puis relire la file : un travail vite terminé ne laisse pas la fenêtre en attente.
-    let onJobs: (jobs: QueueJob[]) => void = () => {};
-    const off = await listen<QueueJob[]>("video-queue", (e) => onJobs(e.payload));
-    let id: number;
-    try {
-      id = await invoke<number>("video_queue_add", { options });
-    } catch (e) {
-      off();
-      throw e;
-    }
-    dialogJobs.add(id);
-    return new Promise((resolve, reject) => {
-      const done = () => {
-        onJobs = () => {};
+const makeTauriApi = (owner: string): VideoApi => {
+  const { dialogJobs, progressListeners } = ownerState(owner);
+  return {
+    getPathForFile: () => "",
+    toFileUrl: fileUrl,
+    toStreamUrl: (url) => invoke<string>("video_stream_url", { path: localPaths.get(url) ?? url }),
+    listSubs: listMediaSubs,
+    saveSub: saveMediaSub,
+    removeSub: removeMediaSub,
+    addAfterExport: (outputPath, projects, srt) => invoke("video_add_after_export", { outputPath, projects, srt }),
+    onAddedToProjects: (callback) => subscribe<AddReport>("video-export-added", callback),
+    openVideo: () => invoke<string | null>("video_pick_file"),
+    saveVideo: async (defaultName, format) => {
+      const choice = await invoke<{ path: string; confirm_overwrite: boolean } | null>("video_pick_output", {
+        defaultName: defaultName ?? null,
+        format: format ?? "",
+      });
+      if (!choice) return null;
+      if (choice.confirm_overwrite) {
+        const name = choice.path.split(/[\\/]/).pop() ?? choice.path;
+        const lang = i18n.resolvedLanguage === "fr" ? "fr" : "en";
+        const ok = await ask(translations[lang].overwrite_confirm(name), { kind: "warning" });
+        if (!ok) return null;
+      }
+      return choice.path;
+    },
+    cancelFfmpeg: async () => {
+      await Promise.all([...dialogJobs].map((id) => invoke("video_queue_cancel", { id })));
+      await invoke("video_cancel_preview", { owner });
+    },
+    getCapabilities: () => invoke("video_capabilities"),
+    queueAdd: async (options) => ({ id: await invoke<number>("video_queue_add", { options }) }),
+    queueList: () => invoke("video_queue_list"),
+    queueCancel: (id) => invoke("video_queue_cancel", { id }),
+    queueClearFinished: () => invoke("video_queue_clear_finished"),
+    queueReveal: async (id) => {
+      const jobs = await invoke<QueueJob[]>("video_queue_list");
+      const job = jobs.find((j) => j.id === id);
+      if (job && job.status === "done") await revealItemInDir(job.outputPath);
+    },
+    onQueueUpdate: (callback) => subscribe<QueueJob[]>("video-queue", callback),
+    listRecent: async () => {
+      const items = await invoke<{ path: string; name: string; dir: string }[]>("video_recent_list");
+      return items.map((i) => ({ kind: "video" as const, openedAt: 0, ...i }));
+    },
+    removeRecent: (path) => invoke("video_recent_forget", { path }),
+    clearRecent: () => invoke("video_recent_forget", { path: null }),
+    previewVideo: async (filePath, force = false) => {
+      const preview = await invoke<{ path: string; transcoded: boolean }>("video_preview", {
+        path: filePath,
+        force,
+        owner,
+      });
+      return assetUrl(preview.path);
+    },
+    detectScenes: (path) => invoke<Sequence[]>("video_detect_scenes", { path, owner }),
+    videoThumbnails: (path, count) => invoke<string[]>("video_thumbnails", { path, count }),
+    videoFrames: (path, times) => invoke<string[]>("video_frames", { path, times }),
+    extractAudio: (path) => invoke<string | null>("video_extract_audio", { path, owner }),
+    mergeSequences: (path, sequences) => invoke<string>("video_merge_sequences", { path, sequences, owner }),
+    openSubtitleFile: async () => {
+      const r = await invoke<{ path: string; content: string } | null>("video_pick_subtitles");
+      return r && { filePath: r.path, content: r.content };
+    },
+    onPreviewProgress: (callback) =>
+      subscribe<{ owner: string; percent: number }>("video-preview-progress", (p) => {
+        if (p.owner === owner) callback(p.percent);
+      }),
+    // La fenêtre d'export attend la fin de son travail : il passe par la file, dont les
+    // instantanés disent où il en est.
+    exportVideo: async (options, onQueued) => {
+      // Écouter d'abord, puis relire la file : un travail vite terminé ne laisse pas la fenêtre en attente.
+      let onJobs: (jobs: QueueJob[]) => void = () => {};
+      const off = await listen<QueueJob[]>("video-queue", (e) => onJobs(e.payload));
+      let id: number;
+      try {
+        id = await invoke<number>("video_queue_add", { options });
+      } catch (e) {
         off();
-        dialogJobs.delete(id);
-      };
-      onJobs = (jobs) => {
-        const job = jobs.find((j) => j.id === id);
-        if (!job) return;
-        progressListeners.forEach((l) => l(job.progress));
-        if (job.status === "done") {
-          done();
-          resolve({ success: true, outputPath: job.outputPath });
-        } else if (job.status === "error") {
-          done();
-          reject(new Error(job.error ?? "Export failed"));
-        } else if (job.status === "cancelled") {
-          done();
-          reject(new Error("cancelled"));
-        }
-      };
-      invoke<QueueJob[]>("video_queue_list")
-        .then((jobs) => onJobs(jobs))
-        .catch(() => {});
-    });
-  },
-  onProgress: (callback) => {
-    progressListeners.add(callback);
-    return () => progressListeners.delete(callback);
-  },
+        throw e;
+      }
+      dialogJobs.add(id);
+      onQueued?.(id);
+      return new Promise((resolve, reject) => {
+        const done = () => {
+          onJobs = () => {};
+          off();
+          dialogJobs.delete(id);
+        };
+        onJobs = (jobs) => {
+          const job = jobs.find((j) => j.id === id);
+          if (!job) return;
+          progressListeners.forEach((l) => l(job.progress));
+          if (job.status === "done") {
+            done();
+            resolve({ success: true, outputPath: job.outputPath });
+          } else if (job.status === "error") {
+            done();
+            reject(new Error(job.error ?? "Export failed"));
+          } else if (job.status === "cancelled") {
+            done();
+            reject(new Error("cancelled"));
+          }
+        };
+        invoke<QueueJob[]>("video_queue_list")
+          .then((jobs) => onJobs(jobs))
+          .catch(() => {});
+      });
+    },
+    onProgress: (callback) => {
+      progressListeners.add(callback);
+      return () => progressListeners.delete(callback);
+    },
+  };
 };
 
-/** L'API de la vue : la maquette des tests si elle existe, sinon le moteur Tauri. */
-export function getApi(): VideoApi {
-  return { ...tauriApi, ...(typeof window !== "undefined" ? (window.electronAPI ?? {}) : {}) } as VideoApi;
+const tauriApis = new Map<string, VideoApi>();
+
+/**
+ * L'API de la vue : la maquette des tests si elle existe, sinon le moteur Tauri. `owner` identifie
+ * l'onglet Vidéo : l'aperçu, l'annulation et la progression ne concernent que lui.
+ */
+export function getApi(owner = ""): VideoApi {
+  let api = tauriApis.get(owner);
+  if (!api) tauriApis.set(owner, (api = makeTauriApi(owner)));
+  return { ...api, ...(typeof window !== "undefined" ? (window.electronAPI ?? {}) : {}) } as VideoApi;
 }

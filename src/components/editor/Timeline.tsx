@@ -1,4 +1,5 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { NumberField } from "./properties/NumberField";
+import { memo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Scissors, Trash2, Copy, Search, Plus, ChevronLeft, ChevronRight } from "lucide-react";
 import type { Project } from "../../bindings/Project";
@@ -69,7 +70,7 @@ function formatRulerLabel(seconds: number): string {
 
 const COMP_COLORS = ["#5c86ff", "#a45cff", "#2fc4b6", "#ff8a5c", "#38d17a"];
 
-export default function Timeline({
+function Timeline({
   project,
   activeCompositionId,
   selectedElementIds,
@@ -111,14 +112,20 @@ export default function Timeline({
   function handleRulerPointerDown(e: ReactPointerEvent) {
     onSeek(timeFromClientX(e.clientX));
     function onMove(ev: PointerEvent) {
+      if (ev.buttons === 0) {
+        onUp();
+        return;
+      }
       onSeek(timeFromClientX(ev.clientX));
     }
     function onUp() {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     }
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   }
 
   function startCompositionResize(comp: Composition, e: ReactPointerEvent) {
@@ -338,15 +345,16 @@ export default function Timeline({
                   </span>
                 )}
                 {i < project.compositions.length - 1 && (
-                  <input
-                    type="number"
+                  // NumberField garde le texte en cours de frappe : « 0. » puis « 0.5 » restent tapables
+                  // (un champ contrôlé qui renvoie Number("") = 0 effaçait la saisie).
+                  <NumberField
                     className="timeline-scene-overlap mono"
                     step={0.1}
                     min={0}
                     value={comp.overlap_next}
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => onUpdateOverlap(comp.id, Number(e.target.value))}
+                    onChange={(value) => onUpdateOverlap(comp.id, value)}
                     title={t("timeline.overlap")}
                   />
                 )}
@@ -421,3 +429,5 @@ export default function Timeline({
     </section>
   );
 }
+
+export default memo(Timeline);

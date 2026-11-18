@@ -241,4 +241,16 @@ describe("VideoPlayer — canvas access", () => {
     const { container } = render(<Harness />);
     expect(container.querySelector("video")?.getAttribute("crossorigin")).toBe("anonymous");
   });
+
+  it("keeps the chosen speed when the source URL changes", () => {
+    const { container, rerender } = render(<Harness speed={2} src="asset://a.mp4" />);
+    const video = container.querySelector("video") as HTMLVideoElement;
+    expect(video.playbackRate).toBe(2);
+
+    // Le navigateur remet la vitesse à 1× quand l'URL change.
+    video.playbackRate = 1;
+    rerender(<Harness speed={2} src="http://127.0.0.1/a.mp4" />);
+
+    expect(video.playbackRate).toBe(2);
+  });
 });

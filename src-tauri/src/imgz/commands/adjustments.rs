@@ -2,7 +2,9 @@ use image::{DynamicImage, ImageBuffer, Rgba};
 
 #[cfg(test)]
 use super::imaging::clamp_u8;
-use super::imaging::{apply_lut, blur_rgba, build_lut, by_depth, par_pixels, Sample};
+use super::imaging::{
+    apply_lut, blur_rgba, build_lut, by_depth, in_linear_light, par_pixels, Sample,
+};
 
 // ── colour-space helpers ──────────────────────────────────────────────────────
 
@@ -347,9 +349,16 @@ where
     let t = temperature / 100.0;
     let g = tint / 100.0;
     let mults = [1.0 + t * 0.20, 1.0 + g * 0.10, 1.0 - t * 0.20];
+    if mults == [1.0; 3] {
+        return S::into_image(rgba);
+    }
+    // Les gains s'appliquent à la lumière, pas aux valeurs encodées : en espace gamma ils
+    // déplaceraient les teintes des ombres et des hautes lumières de façon inégale.
     par_pixels(&mut rgba, |_, _, px| {
         for ch in 0..3 {
-            px[ch] = S::from_255(px[ch].to_255() * mults[ch]);
+            if mults[ch] != 1.0 {
+                px[ch] = S::from_255(in_linear_light(px[ch].to_255(), |l| l * mults[ch]));
+            }
         }
     });
     S::into_image(rgba)
@@ -363,10 +372,10 @@ fn sharpen_g<S: Sample>(img: &DynamicImage, amount: f32, radius: f32, threshold:
 where
     Rgba<S>: image::Pixel<Subpixel = S>,
 {
-    let rgba: Buf<S> = S::buffer_of(img);
-    let blurred = blur_rgba(&rgba, radius.max(0.1));
+    // Travail en place : la copie initiale est la seule du tampon d'entrée.
+    let mut result: Buf<S> = S::buffer_of(img);
+    let blurred = blur_rgba(&result, radius.max(0.1));
     let factor = amount / 100.0;
-    let mut result = rgba.clone();
     par_pixels(&mut result, |x, y, px| {
         let blur = blurred.get_pixel(x, y);
         for ch in 0..3 {
@@ -945,7 +954,11 @@ mod command_tests {
 
         adjust_white_balance(h.state(), TAB.into(), 100.0, 0.0).unwrap();
 
-        assert_eq!(h.pixel(0, 0), [120, 100, 80, 255]);
+        // Gains appliqués à la lumière (×1,2 et ×0,8), pas aux valeurs encodées (120 / 80).
+        let p = h.pixel(0, 0);
+        assert!((107..=111).contains(&p[0]), "{p:?}");
+        assert_eq!(p[1], 100);
+        assert!((88..=92).contains(&p[2]), "{p:?}");
     }
 
     #[test]
@@ -954,7 +967,10 @@ mod command_tests {
 
         adjust_white_balance(h.state(), TAB.into(), -100.0, 0.0).unwrap();
 
-        assert_eq!(h.pixel(0, 0), [80, 100, 120, 255]);
+        let p = h.pixel(0, 0);
+        assert!((88..=92).contains(&p[0]), "{p:?}");
+        assert_eq!(p[1], 100);
+        assert!((107..=111).contains(&p[2]), "{p:?}");
     }
 
     #[test]
@@ -963,7 +979,9 @@ mod command_tests {
 
         adjust_white_balance(h.state(), TAB.into(), 0.0, 100.0).unwrap();
 
-        assert_eq!(h.pixel(0, 0), [100, 110, 100, 255]);
+        let p = h.pixel(0, 0);
+        assert_eq!((p[0], p[2]), (100, 100));
+        assert!((103..=106).contains(&p[1]), "{p:?}");
     }
 
     #[test]

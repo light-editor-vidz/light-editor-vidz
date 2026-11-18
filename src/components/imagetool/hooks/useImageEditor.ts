@@ -1,4 +1,6 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import i18n from "i18next";
+import { describeError } from "../../../lib/errors";
 import {
   applyCommand,
   canvasResizeImage,
@@ -31,8 +33,9 @@ function clampZoom(z: number) {
   return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
 }
 
+/** Le message d'une erreur du moteur, traduit quand l'erreur porte un code connu. */
 function errorText(err: unknown) {
-  return err instanceof Error ? err.message : String(err);
+  return describeError(err);
 }
 
 /**
@@ -92,6 +95,8 @@ interface ImageEditorActions {
   handleResetTool: (tool: ResetTool) => Promise<number>;
   handleGotoHistory: (index: number) => Promise<void>;
   handleCloseTab: (id: string) => Promise<void>;
+  /** La dernière opération a échoué (les boîtes de dialogue restent alors ouvertes). */
+  lastEditFailed?: () => boolean;
   handleCloseOtherTabs: () => Promise<void>;
   handleCloseAllTabs: () => Promise<void>;
   setActiveTab: (id: string) => void;
@@ -151,31 +156,59 @@ export function useImageEditor(): ImageEditorState & ImageEditorActions {
     [commitTabs],
   );
 
+  // Un compteur et non un booléen : deux opérations qui se chevauchent ne doivent pas faire
+  // disparaître l'indicateur quand la première se termine, ni laisser annuler pendant la seconde.
+  const pending = useRef(0);
+  // La dernière opération a-t-elle échoué ? Les boîtes de dialogue (Redimensionner, Canevas) ne se
+  // referment pas sur un échec : l'utilisateur garde ses valeurs et voit l'erreur.
+  const lastFailed = useRef(false);
+  const lastEditFailed = useCallback(() => lastFailed.current, []);
   const withLoading = useCallback(async (fn: () => Promise<void>) => {
+    pending.current += 1;
     setIsLoading(true);
     setError(null);
+    lastFailed.current = false;
     try {
       await fn();
     } catch (err) {
+      lastFailed.current = true;
       setError(errorText(err));
     } finally {
-      setIsLoading(false);
+      pending.current -= 1;
+      setIsLoading(pending.current > 0);
     }
+  }, []);
+
+  // Faux une fois l'onglet fermé : une ouverture encore en cours de décodage rendrait sinon ses
+  // images à un historique que plus personne ne libérera (environ 200 Mo par photo).
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
   }, []);
 
   const createTabsFromOpened = useCallback(
     ({ opened, failed }: OpenResult) => {
+      if (!alive.current) {
+        for (const { tabId } of opened) void closeTab(tabId).catch(() => {});
+        return;
+      }
       setOpenFailures(failed);
       if (opened.length === 0) return;
-      const newTabs: Tab[] = opened.map(({ tabId, meta }) => ({
-        id: tabId,
-        label: meta.filename ?? "Image",
-        image: meta,
-        history: [{ key: "hist.open" }],
-        historyIndex: 0,
-        savedIndex: 0,
-        zoom: 1,
-      }));
+      const newTabs: Tab[] = opened.map(({ tabId, meta }) => {
+        const open: HistoryEntry = { key: "hist.open" };
+        return {
+          id: tabId,
+          label: meta.filename ?? i18n.t("imageTool.untitled"),
+          image: meta,
+          history: [open],
+          historyIndex: 0,
+          savedEntry: open,
+          zoom: 1,
+        };
+      });
       commitTabs((prev) => [...prev, ...newTabs]);
       commitActive(newTabs[newTabs.length - 1].id);
       setMode("idle");
@@ -273,7 +306,7 @@ export function useImageEditor(): ImageEditorState & ImageEditorActions {
       let written: string | null = null;
       await withLoading(async () => {
         written = await exportImage(id, format, quality, output);
-        if (written) updateTab(id, (tab) => ({ ...tab, savedIndex: tab.historyIndex }));
+        if (written) updateTab(id, (tab) => ({ ...tab, savedEntry: tab.history[tab.historyIndex] }));
       });
       return written;
     },
@@ -285,7 +318,8 @@ export function useImageEditor(): ImageEditorState & ImageEditorActions {
     async (fn: (id: string) => Promise<ImageMeta>, allowed: (tab: Tab) => boolean) => {
       const id = activeRef.current;
       const tab = tabsRef.current.find((t) => t.id === id);
-      if (!id || !tab || !allowed(tab)) return;
+      // Annuler/rétablir pendant un calcul en cours ferait réapparaître l'effet annulé.
+      if (!id || !tab || !allowed(tab) || pending.current > 0) return;
       await withLoading(async () => {
         const result = await fn(id);
         updateTab(id, (t) => ({ ...t, image: result, historyIndex: result.historyIndex }));
@@ -402,7 +436,7 @@ export function useImageEditor(): ImageEditorState & ImageEditorActions {
     async (tabId: string) => {
       await withLoading(async () => {
         if (await stripExif(tabId)) {
-          updateTab(tabId, (tab) => ({ ...tab, savedIndex: tab.historyIndex }));
+          updateTab(tabId, (tab) => ({ ...tab, savedEntry: tab.history[tab.historyIndex] }));
         }
       });
     },
@@ -473,6 +507,7 @@ export function useImageEditor(): ImageEditorState & ImageEditorActions {
     handleResetTool,
     handleGotoHistory,
     handleCloseTab,
+    lastEditFailed,
     handleCloseOtherTabs,
     handleCloseAllTabs,
     setActiveTab,

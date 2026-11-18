@@ -107,8 +107,13 @@ export function UpdaterProvider({ lang, fetchNotes, checkOnStart = true, beforeR
       .catch(() => {});
   }, []);
 
+  // Un téléchargement est en cours : une seconde demande (ou une nouvelle vérification qui remet
+  // « Mettre à jour » à l'écran) ne doit pas en lancer un deuxième.
+  const installing = useRef(false);
+
   const run = useCallback(
     async (manual: boolean) => {
+      if (installing.current) return;
       setPhase("checking");
       setNotice(null);
       try {
@@ -158,8 +163,16 @@ export function UpdaterProvider({ lang, fetchNotes, checkOnStart = true, beforeR
 
   const install = useCallback(async () => {
     const found = pending.current;
-    if (!found) return;
+    if (!found || installing.current) return;
+    installing.current = true;
     try {
+      // Unsaved work is written BEFORE the package is installed: once installed, a refusal to
+      // restart would leave the app updated on disk but still running the old version.
+      if (beforeRestart && !(await beforeRestart())) {
+        setPhase("available");
+        setNotice({ type: "error", key: "upd.saveFirst" });
+        return;
+      }
       // The updater installs the package that matches how the app was installed, then the
       // app restarts.
       setPhase("downloading");
@@ -177,15 +190,12 @@ export function UpdaterProvider({ lang, fetchNotes, checkOnStart = true, beforeR
         }
       });
       setPhase("installing");
-      if (beforeRestart && !(await beforeRestart())) {
-        setPhase("idle");
-        setNotice({ type: "error", key: "upd.saveFirst" });
-        return;
-      }
       await relaunch();
     } catch {
       setPhase("idle");
       setNotice({ type: "error", key: "upd.failed" });
+    } finally {
+      installing.current = false;
     }
   }, [beforeRestart]);
 

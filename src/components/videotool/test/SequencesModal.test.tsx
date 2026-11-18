@@ -185,6 +185,22 @@ describe("SequencesModal", () => {
     ]);
   });
 
+  it("fetches the thumbnails of a very cut film by batches of 200, so none is missing", async () => {
+    const many = Array.from({ length: 450 }, (_, i) => ({ start: i, end: i + 1 }));
+    const videoFrames = vi.fn(async (_path: string, times: number[]) =>
+      times.map((t) => `data:image/jpeg;base64,F${t}`),
+    );
+    window.electronAPI = { ...window.electronAPI, videoFrames };
+    setup(async () => many);
+    await screen.findByText("Sequence 1");
+    await act(async () => {});
+    await act(async () => {});
+    await act(async () => {});
+
+    expect(videoFrames.mock.calls.map(([, times]) => times.length)).toEqual([200, 200, 50]);
+    expect(document.querySelectorAll("img.seq-thumb")).toHaveLength(450);
+  });
+
   it("keeps the placeholder when a thumbnail is unavailable", async () => {
     window.electronAPI = { ...window.electronAPI, videoFrames: async () => ["", "", ""] };
     setup();

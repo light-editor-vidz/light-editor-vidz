@@ -21,6 +21,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { getApi } from "../api";
 import type { Sequence } from "../api";
 import { useT } from "../i18n";
+import { useVideoOwner } from "../owner";
 import { formatTimePrecise, formatTime } from "../utils/time";
 import { moveItem } from "../utils/sequences";
 import "./SequencesModal.css";
@@ -106,7 +107,11 @@ function SortableCard({ item, onToggle, onPlay, looping }: CardProps) {
   );
 }
 
+/** Nombre de vignettes demandées par requête (le maximum accepté par le moteur). */
+const THUMBNAIL_BATCH = 200;
+
 export default function SequencesModal({ videoUrl, videoPath, onCancel, onApply }: Props) {
+  const owner = useVideoOwner();
   const { t } = useT();
   const [items, setItems] = useState<Item[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -136,21 +141,33 @@ export default function SequencesModal({ videoUrl, videoPath, onCancel, onApply 
 
   useEffect(() => {
     let alive = true;
-    getApi()
+    getApi(owner)
       .detectScenes(videoPath)
       .then((found) => {
         if (!alive) return;
         setItems(found.map((s, i) => ({ ...s, id: i, selected: true })));
-        // Les vignettes arrivent après : la liste est utilisable sans attendre.
-        getApi()
-          .videoFrames(
-            videoPath,
-            found.map((s) => (s.start + s.end) / 2),
-          )
-          .then((frames) => {
-            if (alive) setItems((list) => list && list.map((i) => ({ ...i, thumb: frames[i.id] || undefined })));
-          })
-          .catch(() => {});
+        // Les vignettes arrivent après, par lots de 200 (le maximum d'une requête) : la liste est
+        // utilisable sans attendre et un film très découpé n'en perd aucune. Fermer la fenêtre
+        // arrête la suite (`alive`).
+        void (async () => {
+          for (let from = 0; from < found.length; from += THUMBNAIL_BATCH) {
+            if (!alive) return;
+            const times = found.slice(from, from + THUMBNAIL_BATCH).map((s) => (s.start + s.end) / 2);
+            try {
+              const frames = await getApi().videoFrames(videoPath, times);
+              if (!alive) return;
+              setItems(
+                (list) =>
+                  list &&
+                  list.map((i) =>
+                    i.id >= from && i.id < from + times.length ? { ...i, thumb: frames[i.id - from] || undefined } : i,
+                  ),
+              );
+            } catch {
+              // Pas de vignette pour ce lot : les suivants sont tentés quand même.
+            }
+          }
+        })();
       })
       .catch(() => {
         if (alive) setFailed(true);
@@ -158,11 +175,11 @@ export default function SequencesModal({ videoUrl, videoPath, onCancel, onApply 
     return () => {
       alive = false;
     };
-  }, [videoPath]);
+  }, [videoPath, owner]);
 
   const cancel = () => {
     // Une détection encore en cours est interrompue.
-    if (!items) void getApi().cancelFfmpeg();
+    if (!items) void getApi(owner).cancelFfmpeg();
     onCancel();
   };
 

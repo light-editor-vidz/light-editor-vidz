@@ -381,11 +381,27 @@ describe("VideoElementView", () => {
     const node = view.container.querySelector("video") as HTMLVideoElement;
     const read = equipVideo(node, 60, 5);
 
-    // 5,1 s demandé contre 5 s en cours : sous le seuil de 0,25 s.
-    view.rerender(<VideoElementView element={el} projectDir="/p" localTime={5.1} playing={false} panTransform="" />);
+    // 5,01 s demandé contre 5 s en cours : moins d'une demi-image, en pause.
+    view.rerender(<VideoElementView element={el} projectDir="/p" localTime={5.01} playing={false} panTransform="" />);
     await act(async () => {});
 
     expect(read()).toBe(5);
+  });
+
+  it("suit le pas-à-pas image par image quand la vidéo est en pause", async () => {
+    const el = video({ video_offset: 0 });
+    const view = render(
+      <VideoElementView element={el} projectDir="/p" localTime={0} playing={false} panTransform="" />,
+    );
+    await act(async () => {});
+    const node = view.container.querySelector("video") as HTMLVideoElement;
+    const read = equipVideo(node, 60, 5);
+
+    // Une image plus loin (≈ 0,033 s) : la coupe doit se faire sur l'image affichée.
+    view.rerender(<VideoElementView element={el} projectDir="/p" localTime={5.034} playing={false} panTransform="" />);
+    await act(async () => {});
+
+    expect(read()).toBeCloseTo(5.034, 5);
   });
 
   it("applique le volume et le muet de l'élément", async () => {

@@ -21,14 +21,14 @@ export function hasBeforeExitTasks(): boolean {
 /** Attend tous les travaux enregistrés. Retourne `false` si l'un d'eux a échoué : l'appelant
  * doit alors renoncer à arrêter l'application (des données seraient perdues). */
 export async function runBeforeExit(): Promise<boolean> {
-  const results = await Promise.all(
-    Array.from(tasks).map(async (task) => {
-      try {
-        return (await task()) !== false;
-      } catch {
-        return false;
-      }
-    }),
-  );
-  return results.every(Boolean);
+  // Une tâche après l'autre : plusieurs onglets avec des modifications poseraient sinon leurs
+  // questions « Quitter ? » toutes en même temps. La première réponse négative arrête la suite.
+  for (const task of Array.from(tasks)) {
+    try {
+      if ((await task()) === false) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }

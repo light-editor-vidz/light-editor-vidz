@@ -141,7 +141,7 @@ describe("useImageEditor — opening images", () => {
     expect(result.current.tabs[0].label).toBe("photo.png");
     expect(result.current.history).toEqual([{ key: "hist.open" }]);
     expect(result.current.historyIndex).toBe(0);
-    expect(result.current.tabs[0].savedIndex).toBe(0);
+    expect(result.current.tabs[0].savedEntry).toBe(result.current.tabs[0].history[0]);
   });
 
   it("falls back to a generic label when the file name is unknown", async () => {
@@ -380,13 +380,13 @@ describe("useImageEditor — edits and history", () => {
       await result.current.handleFlip("horizontal");
       await result.current.handleExport("png");
     });
-    expect(result.current.tabs[0].savedIndex).toBe(1);
+    expect(result.current.tabs[0].savedEntry).toBe(result.current.tabs[0].history[1]);
 
     await act(async () => {
       await result.current.handleFlip("vertical");
     });
 
-    expect(result.current.tabs[0].savedIndex).toBe(1);
+    expect(result.current.tabs[0].savedEntry).toBe(result.current.tabs[0].history[1]);
     expect(result.current.historyIndex).toBe(2);
   });
 
@@ -398,7 +398,7 @@ describe("useImageEditor — edits and history", () => {
       await result.current.handleExport("png");
     });
 
-    expect(result.current.tabs[0].savedIndex).toBe(0);
+    expect(result.current.tabs[0].savedEntry).toBe(result.current.tabs[0].history[0]);
   });
 });
 
@@ -719,7 +719,7 @@ describe("useImageEditor — EXIF", () => {
     });
 
     expect(tauri.stripExif).toHaveBeenCalledWith("t1");
-    expect(result.current.tabs[0].savedIndex).toBe(1);
+    expect(result.current.tabs[0].savedEntry).toBe(result.current.tabs[0].history[1]);
   });
 });
 
@@ -801,6 +801,50 @@ describe("useImageEditor — adjustments and filters", () => {
     expect(keys(result.current.history)).toEqual(["hist.open", "hist.cmd.exposure"]);
     expect(result.current.historyIndex).toBe(1);
     expect(position).toBe(1);
+  });
+
+  it("stays modified after an exported step is replaced (same position, different content)", async () => {
+    const { result } = await withOpenImage();
+    await act(async () => {
+      await result.current.handleCommand({ type: "exposure", exposure: 1 });
+      await result.current.handleExport("png");
+    });
+    const tab = () => result.current.tabs[0];
+    expect(tab().history[tab().historyIndex]).toBe(tab().savedEntry);
+
+    await act(async () => {
+      await result.current.handleCommand({ type: "exposure", exposure: 2 }, { replace: true });
+    });
+
+    expect(tab().historyIndex).toBe(1);
+    expect(tab().history[tab().historyIndex]).not.toBe(tab().savedEntry);
+  });
+
+  it("ignores undo while an operation is still computing, so a cancelled effect cannot come back", async () => {
+    const { result } = await withOpenImage();
+    await act(async () => {
+      await result.current.handleFlip("horizontal");
+    });
+    let release: () => void = () => {};
+    vi.mocked(tauri.applyCommand).mockImplementationOnce(
+      () => new Promise((resolve) => (release = () => resolve(backend.push("t1")))),
+    );
+
+    let slow: Promise<unknown> | undefined;
+    act(() => {
+      slow = result.current.handleCommand({ type: "invert" });
+    });
+    await act(async () => {
+      await result.current.handleUndo();
+    });
+    expect(tauri.undoImage).not.toHaveBeenCalled();
+    expect(result.current.isLoading).toBe(true);
+
+    await act(async () => {
+      release();
+      await slow;
+    });
+    expect(result.current.isLoading).toBe(false);
   });
 
   it("adds a step when asked to replace on the original image", async () => {
@@ -903,5 +947,26 @@ describe("useImageEditor — clipboard", () => {
     });
 
     expect(write).not.toHaveBeenCalled();
+  });
+
+  it("frees the images of an open that finishes after the editor was closed", async () => {
+    let finish: (r: {
+      opened: { tabId: string; meta: ReturnType<FakeBackend["meta"]> }[];
+      failed: [];
+    }) => void = () => {};
+    vi.mocked(tauri.openImagesByPaths).mockReturnValueOnce(new Promise((resolve) => (finish = resolve as never)));
+    const { result, unmount } = renderHook(() => useImageEditor());
+
+    let opening: Promise<void> | undefined;
+    act(() => {
+      opening = result.current.handleOpenByPaths(["/p/a.png"]);
+    });
+    unmount();
+    await act(async () => {
+      finish({ opened: [backend.open("late")], failed: [] });
+      await opening;
+    });
+
+    expect(tauri.closeTab).toHaveBeenCalledWith("late");
   });
 });

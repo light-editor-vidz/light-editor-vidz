@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { History as HistoryIcon, Pause, Play, Redo2, Undo2 } from "lucide-react";
+import { ask } from "@tauri-apps/plugin-dialog";
+import { registerBeforeExit } from "../../lib/lifecycle";
 import { useRegisterMenuActions, useMenuBridge, useTabActive } from "../../lib/menuBridge";
 import { createPlaybackClock, useClockValue } from "../../lib/playbackClock";
 import { keptDuration, keptSegments, realToVirtual, virtualToReal, MIN_CUT, type Cut } from "../../lib/audiotool/cuts";
@@ -12,6 +14,7 @@ import {
   audioPickFile,
   audioPickOutput,
   audioProcess,
+  audioRelease,
   fetchAudioData,
   type AudioInfo,
 } from "../../lib/audiotool/commands";
@@ -57,7 +60,11 @@ import Spectrum from "./Spectrum";
 import "./audiotool.css";
 
 /** Nombre de tranches de la forme d'onde demandées au moteur. */
-const WAVEFORM_POINTS = 900;
+/** Mémoire maximale du PCM décodé de l'aperçu (f32, au taux du contexte audio, 48 kHz au plus). */
+const PREVIEW_PCM_BUDGET_BYTES = 512 * 1024 ** 2;
+const previewPcmBytes = (seconds: number, channels: number) => seconds * 48000 * Math.max(1, channels) * 4;
+/** Points de la forme d'onde : assez pour rester lisible sur un long fichier (900 points = 9 s par pixel sur 3 h). */
+const WAVEFORM_POINTS = 3000;
 
 interface Props {
   /** Fichier à ouvrir ; `null` = onglet vide (zone de dépôt et fichiers récents). */
@@ -65,6 +72,8 @@ interface Props {
   /** Un fichier est choisi dans cet onglet. */
   onOpen: (path: string) => void;
   onClose: () => void;
+  /** Ce que l'onglet demande avant de se fermer : confirmer si des modifications seraient perdues. */
+  registerCloseGuard?: (guard: () => Promise<boolean>) => () => void;
 }
 
 interface Loaded {
@@ -102,8 +111,8 @@ const isTyping = (el: EventTarget | null): boolean => {
 
 /** La vue Audio (ex-LightCutSoundz) : couper, fondre, normaliser, changer la vitesse, filtrer, puis
  * exporter un fichier audio — aux couleurs de l'éditeur. */
-export default function AudioTool({ path, onOpen, onClose }: Props) {
-  const { t } = useTranslation();
+export default function AudioTool({ path, onOpen, onClose, registerCloseGuard }: Props) {
+  const { t, i18n } = useTranslation();
   const tabActive = useTabActive();
   const { setFlags } = useMenuBridge();
   const [engine] = useState(() => new PreviewEngine());
@@ -155,23 +164,15 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
     void Promise.resolve().then(() => {
       if (!cancelled) say(t("audioTool.msg.loading"));
     });
-    // L'aperçu est lu par le protocole `asset:`, qui ne sert que les fichiers que le moteur connaît ;
-    // il se décode pendant que le moteur décode de son côté.
-    const preview = audioAllowAsset(path)
-      .then(() => fetchAudioData(path))
-      .then((data) => engine.decode(data))
-      .then(
-        (buffer) => ({ buffer, error: null as unknown }),
-        (error: unknown) => ({ buffer: null, error }),
-      );
+    // L'aperçu est lu par le protocole `asset:`, qui ne sert que les fichiers que le moteur connaît.
+    // L'éditeur s'ouvre dès que le moteur a répondu ; le fichier n'est lu (et décodé) pour
+    // l'aperçu qu'ensuite, et seulement s'il tient dans le budget mémoire.
     audioLoad(path, WAVEFORM_POINTS)
-      .then(async (result) => {
-        const { buffer, error } = await preview;
+      .then((result) => {
         if (cancelled) return;
-        // Tout est rassemblé d'abord, puis appliqué : un échec — ou un chargement plus récent —
-        // laisse l'éditeur tel qu'il était.
+        // Un échec — ou un chargement plus récent — laisse l'éditeur tel qu'il était.
         engine.pause();
-        engine.load(buffer, result.duration, result.waveform);
+        engine.load(null, result.duration, result.waveform);
         engine.setParams(toParams(DEFAULT_SETTINGS));
         settingsRef.current = DEFAULT_SETTINGS;
         setSettings(DEFAULT_SETTINGS);
@@ -180,10 +181,32 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
         pendingCutStart.current = null;
         clock.set(0);
         setPlaying(false);
-        setHasPreview(buffer !== null);
+        setHasPreview(false);
         setLoaded({ path, info: result });
-        if (error) say(t("audioTool.msg.previewUnavailable"), "warning");
-        else setToast(null);
+        // Le PCM décodé est tenu en mémoire : au-delà d'un budget, on renonce à l'aperçu plutôt que
+        // de faire tomber la WebView.
+        if (previewPcmBytes(result.duration, result.channels) > PREVIEW_PCM_BUDGET_BYTES) {
+          say(t("audioTool.msg.previewTooLong"), "warning");
+          return;
+        }
+        say(t("audioTool.msg.previewPreparing"));
+        audioAllowAsset(path)
+          .then(() => fetchAudioData(path))
+          .then((bytes) => {
+            // Onglet fermé pendant la lecture du fichier : ne pas recréer un contexte audio que
+            // `dispose()` vient de fermer.
+            if (cancelled) throw new Error("cancelled");
+            return engine.decode(bytes);
+          })
+          .then((buffer) => {
+            if (cancelled) return;
+            engine.setBuffer(buffer);
+            setHasPreview(true);
+            setToast(null);
+          })
+          .catch(() => {
+            if (!cancelled) say(t("audioTool.msg.previewUnavailable"), "warning");
+          });
       })
       .catch((e: unknown) => {
         if (!cancelled) say(t("audioTool.msg.error", { error: describe(e) }), "error");
@@ -196,8 +219,11 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
 
   // Ce qui joue suit les coupes et les réglages.
   useEffect(() => {
-    if (loaded) engine.setKept(kept);
-  }, [engine, loaded, kept]);
+    if (!loaded) return;
+    engine.setKept(kept);
+    // La tête a été retraduite le long des nouvelles coupes : l'affichage la suit.
+    clock.set(engine.currentTime());
+  }, [engine, loaded, kept, clock]);
   useEffect(() => {
     engine.setParams(toParams(settings));
   }, [engine, settings]);
@@ -227,7 +253,18 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
     if (!tabActive) engine.pause();
   }, [tabActive, engine]);
   if (!tabActive && playing) setPlaying(false);
-  useEffect(() => () => engine.dispose(), [engine]);
+  // Fermer l'onglet libère le contexte audio, et le décodage que le moteur garde en mémoire.
+  const loadedPath = useRef<string | null>(null);
+  useEffect(() => {
+    loadedPath.current = loaded?.path ?? null;
+  }, [loaded]);
+  useEffect(
+    () => () => {
+      engine.dispose();
+      if (loadedPath.current) void audioRelease(loadedPath.current)?.catch(() => {});
+    },
+    [engine],
+  );
 
   // ─── Lecture ──────────────────────────────────────────────────────────────
 
@@ -347,15 +384,21 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
   );
   const problemText = problem ? describe(problem) : "";
 
+  // Identifiant de cet onglet pour l'export : sa progression et son annulation lui sont propres.
+  const [owner] = useState(() => crypto.randomUUID());
+
   // ─── Export ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!processing) return;
-    const unlisten = listen<number>("audio-export-progress", (e) => setProgress(e.payload));
+    // L'événement est diffusé à tous les onglets : chacun ne suit que son propre export.
+    const unlisten = listen<{ owner: string; percent: number }>("audio-export-progress", (e) => {
+      if (e.payload.owner === owner) setProgress(e.payload.percent);
+    });
     return () => {
       void unlisten.then((off) => off());
     };
-  }, [processing]);
+  }, [processing, owner]);
 
   async function runExport() {
     if (!loaded || processing || problem || noDestination(toComputer, projects)) return;
@@ -395,6 +438,7 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
           },
           output,
         ),
+        owner,
       );
       setExportOpen(false);
       if (toComputer) say(t("audioTool.export.done", { name: baseName(output) }), "success");
@@ -437,8 +481,25 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
 
   // ─── Menu et clavier ──────────────────────────────────────────────────────
 
+  // Coupes, fondus et réglages ne sont rien tant qu'ils ne sont pas exportés : fermer l'onglet ou la
+  // fenêtre les perdrait sans prévenir.
+  const hasEdits = useRef(false);
+  useEffect(() => {
+    hasEdits.current = canUndo(history);
+  }, [history]);
+  const confirmClose = useCallback(async () => {
+    if (!hasEdits.current) return true;
+    try {
+      return await ask(t("audioTool.closeConfirm"), { kind: "warning" });
+    } catch {
+      return true;
+    }
+  }, [t]);
+  useEffect(() => registerCloseGuard?.(confirmClose), [registerCloseGuard, confirmClose]);
+  useEffect(() => registerBeforeExit(confirmClose), [confirmClose]);
+
   useRegisterMenuActions({
-    closeProject: onClose,
+    closeProject: () => void confirmClose().then((ok) => ok && onClose()),
     openExport,
     undo: handleUndo,
     redo: handleRedo,
@@ -610,7 +671,7 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
           processing={processing}
           progress={progress}
           onExport={() => void runExport()}
-          onCancel={() => void audioCancel()}
+          onCancel={() => void audioCancel(owner)}
           noDestination={noDestination(toComputer, projects)}
           addToProjects={
             <AddToProjects
@@ -628,7 +689,14 @@ export default function AudioTool({ path, onOpen, onClose }: Props) {
           source={{ kind: "file", path: loaded.path }}
           label={loaded.path}
           onClose={() => setSubsOpen(false)}
-          onAssociate={(srt, id) => void saveMediaSub(loaded.path, { id, label: "#1", srt })}
+          onAssociate={(srt, id) =>
+            void saveMediaSub(loaded.path, {
+              id,
+              // Un libellé par génération (date et heure, dans la langue de l'interface), pas « #1 » à chaque fois.
+              label: new Date().toLocaleString(i18n.language, { dateStyle: "short", timeStyle: "short" }),
+              srt,
+            })
+          }
         />
       )}
       {toast && <ToastView toast={toast} />}

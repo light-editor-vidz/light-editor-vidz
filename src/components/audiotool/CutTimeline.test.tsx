@@ -332,4 +332,18 @@ describe("CutTimeline — clavier", () => {
     expect(onMark).not.toHaveBeenCalled();
     expect(onSeekBy).not.toHaveBeenCalled();
   });
+
+  it("le champ de temps reprend la valeur retenue quand la saisie est sans effet", () => {
+    // La coupe de 10 s à 30 s : mettre son début à 29,99 s est refusé (durée minimale), donc rien
+    // ne change côté parent — le texte tapé ne doit pas rester affiché.
+    setup([cut("a", 10, 30)], "a");
+    const [start] = screen.getAllByTitle("M:SS.s") as HTMLInputElement[];
+    const before = start.value;
+
+    fireEvent.focus(start);
+    fireEvent.change(start, { target: { value: "garbage" } });
+    fireEvent.blur(start);
+
+    expect(start.value).toBe(before);
+  });
 });

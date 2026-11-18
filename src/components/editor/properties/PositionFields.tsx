@@ -17,18 +17,20 @@ export function PositionFields({ element, onUpdate }: { element: Element; onUpda
           Y
           <NumberField className="properties-input mono" value={element.y} onChange={(v) => onUpdate({ y: v })} />
         </label>
-        <label className="properties-mini-field">
-          W
+        <label className="properties-mini-field" title={t("properties.width")}>
+          {t("properties.widthShort")}
           <NumberField
+            aria-label={t("properties.width")}
             className="properties-input mono"
             value={element.width}
             min={1}
             onChange={(v) => onUpdate({ width: v })}
           />
         </label>
-        <label className="properties-mini-field">
-          H
+        <label className="properties-mini-field" title={t("properties.height")}>
+          {t("properties.heightShort")}
           <NumberField
+            aria-label={t("properties.height")}
             className="properties-input mono"
             value={element.height}
             min={1}

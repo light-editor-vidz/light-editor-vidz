@@ -8,7 +8,7 @@
 #   Linux (other) → .AppImage in ~/.local/bin, registered in the applications menu
 #
 # Re-run the same command to upgrade an existing install.
-set -eo pipefail
+set -euo pipefail
 
 REPO="light-editor-vidz/light-editor-vidz"
 TAP="light-editor-vidz/tap"
@@ -24,6 +24,33 @@ RUNTIME_DEPS=""
 log() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
+# Everything downloaded goes into one private directory, removed however the script ends.
+WORK="$(mktemp -d)"
+cleanup() { rm -rf "$WORK"; }
+trap cleanup EXIT
+
+# sha256_of <file>
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
+  else die "sha256sum or shasum is required to verify the download"
+  fi
+}
+
+# verify <file> <asset-url> — the file must match the line of SHA256SUMS published next to the asset
+# in the same release. A missing or different checksum stops the installation: the package is
+# installed with root rights (deb) or run by the user (AppImage).
+verify() {
+  sums_url="${2%/*}/SHA256SUMS"
+  fetch "$sums_url" "$WORK/SHA256SUMS" || die "Cannot download $sums_url — refusing to install an unverified file."
+  name="$(basename "$2")"
+  expected="$(awk -v n="$name" '{ f=$2; sub(/^\*/, "", f); if (f == n) { print $1; exit } }' "$WORK/SHA256SUMS")"
+  [ -n "$expected" ] || die "$name is not listed in SHA256SUMS — refusing to install it."
+  actual="$(sha256_of "$1")"
+  [ "$actual" = "$expected" ] || die "Checksum mismatch for $name (expected $expected, got $actual)."
+  log "Checksum verified."
+}
+
 # fetch <url> [output] — writes to <output>, or to stdout when omitted
 fetch() {
   if command -v curl >/dev/null 2>&1; then
@@ -38,11 +65,16 @@ fetch() {
 # latest_asset <extension> <arch-regex> — download URL of the first asset of the latest release
 # with that extension whose name matches the CPU architecture (the release ships x86_64 and arm64).
 latest_asset() {
-  fetch "https://api.github.com/repos/$REPO/releases/latest" \
-    | grep -o "\"browser_download_url\": *\"[^\"]*\\.$1\"" \
-    | sed 's/.*"\(https[^"]*\)"/\1/' \
-    | grep -E "$2" \
-    | head -1
+  json="$WORK/release.json"
+  fetch "https://api.github.com/repos/$REPO/releases/latest" "$json" || return 0
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.assets[].browser_download_url' "$json"
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys; [print(a["browser_download_url"]) for a in json.load(open(sys.argv[1])).get("assets", [])]' "$json"
+  else
+    # Last resort: the API pretty-prints one key per line.
+    grep -o '"browser_download_url": *"[^"]*"' "$json" | sed 's/.*"\(https[^"]*\)"/\1/'
+  fi | grep -E "\\.$1\$" | grep -E "$2" | head -1 || true
 }
 
 # The Linux installers are built for amd64 and arm64 only.
@@ -91,12 +123,12 @@ install_macos() {
 install_deb() {
   url="$(latest_asset deb "_($LINUX_ARCH)\\.deb")"
   [ -n "$url" ] || die "No .deb in the latest release — see https://github.com/$REPO/releases"
-  tmp="$(mktemp -d)/$(basename "$url")"
+  tmp="$WORK/$(basename "$url")"
   log "Downloading $(basename "$url")…"
   fetch "$url" "$tmp"
+  verify "$tmp" "$url"
   log "Installing the .deb package (sudo required)…"
   sudo apt-get install -y "$tmp"
-  rm -rf "$(dirname "$tmp")"
   log "Done. Launch $APP_NAME from your applications menu."
 }
 
@@ -111,8 +143,13 @@ install_appimage() {
 
   target="$bin_dir/$APP_SLUG.AppImage"
   log "Downloading $(basename "$url")…"
-  fetch "$url" "$target"
-  chmod +x "$target"
+  # Into the work directory first: an interrupted download never replaces a working install, and
+  # `mv` swaps the file even while the application is running (no "text file busy").
+  download="$WORK/$(basename "$url")"
+  fetch "$url" "$download"
+  verify "$download" "$url"
+  chmod +x "$download"
+  mv -f "$download" "$target"
 
   fetch "$ICON_URL" "$icon_dir/$APP_SLUG.png" 2>/dev/null || true
 
@@ -137,6 +174,7 @@ EOF
   log "Done. Installed to $target — launch $APP_NAME from your applications menu."
 }
 
+main() {
 echo "$APP_NAME installer"
 
 case "$(uname -s)" in
@@ -156,3 +194,7 @@ case "$(uname -s)" in
     die "Unsupported platform: $(uname -s). Download manually from https://github.com/$REPO/releases"
     ;;
 esac
+}
+
+# Called last: a truncated download (curl | bash) never runs a half-read script.
+main "$@"

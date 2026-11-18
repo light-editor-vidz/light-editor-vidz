@@ -110,7 +110,7 @@ const qa = (sel: string) => [...document.querySelectorAll(sel)] as HTMLElement[]
 /** Presses `target`, moves the pointer `dx` pixels to the right, then releases. */
 function drag(target: HTMLElement, dx: number) {
   fireEvent.pointerDown(target, { clientX: 200, clientY: 0 });
-  fireEvent.pointerMove(window, { clientX: 200 + dx, clientY: 0 });
+  fireEvent.pointerMove(window, { buttons: 1, clientX: 200 + dx, clientY: 0 });
   fireEvent.pointerUp(window);
 }
 
@@ -228,7 +228,7 @@ describe("Timeline — the ruler", () => {
     const { onSeek } = setup();
 
     fireEvent.pointerDown(q(".timeline-ruler"), { clientX: 0 });
-    fireEvent.pointerMove(window, { clientX: 6 * PX_PER_SEC });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 6 * PX_PER_SEC });
     fireEvent.pointerUp(window);
 
     expect(onSeek).toHaveBeenLastCalledWith(6);
@@ -240,7 +240,7 @@ describe("Timeline — the ruler", () => {
     fireEvent.pointerDown(q(".timeline-ruler"), { clientX: 0 });
     fireEvent.pointerUp(window);
     onSeek.mockClear();
-    fireEvent.pointerMove(window, { clientX: 300 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 300 });
 
     expect(onSeek).not.toHaveBeenCalled();
   });
@@ -343,6 +343,18 @@ describe("Timeline — scenes", () => {
 
     expect(onUpdateOverlap).toHaveBeenCalledWith("c1", 0.5);
     expect(onSelectComposition).not.toHaveBeenCalled();
+  });
+  it("lets « 0.5 » be typed character by character, clearing the field sends nothing", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const { onUpdateOverlap } = setup({ project: two });
+    const field = qa(".timeline-scene-overlap")[0] as HTMLInputElement;
+
+    await userEvent.clear(field);
+    expect(onUpdateOverlap).not.toHaveBeenCalledWith("c1", 0 + NaN);
+    await userEvent.type(field, "0.5");
+
+    expect(field.value).toBe("0.5");
+    expect(onUpdateOverlap).toHaveBeenLastCalledWith("c1", 0.5);
   });
 });
 

@@ -70,6 +70,38 @@ pub fn sha256_of(path: &Path) -> Result<String> {
     Ok(hex(hasher_after(path)?))
 }
 
+/// Next to a verified model: its size, modification time and SHA-256 when it was checked. A model
+/// the app loads into native code is checked by content once, then by this stamp (a size alone
+/// cannot tell a swapped or damaged file of the same length).
+fn stamp_path(dest: &Path) -> PathBuf {
+    let mut name = dest.file_name().unwrap_or_default().to_os_string();
+    name.push(".verified");
+    dest.with_file_name(name)
+}
+
+fn stamp_of(dest: &Path, sha256: &str) -> Option<String> {
+    let meta = std::fs::metadata(dest).ok()?;
+    let modified = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(format!("{}:{modified}:{sha256}", meta.len()))
+}
+
+fn write_stamp(dest: &Path, sha256: &str) {
+    if let Some(stamp) = stamp_of(dest, sha256) {
+        let _ = std::fs::write(stamp_path(dest), stamp);
+    }
+}
+
+fn has_valid_stamp(dest: &Path, sha256: &str) -> bool {
+    stamp_of(dest, sha256).is_some_and(|now| {
+        std::fs::read_to_string(stamp_path(dest)).ok().as_deref() == Some(now.as_str())
+    })
+}
+
 /// `true` when `dest` is already there with the expected size. A file of another size
 /// (interrupted write, disk full) is deleted so it gets downloaded again.
 pub fn is_present(dest: &Path, expected_size: u64) -> bool {
@@ -92,7 +124,19 @@ pub async fn ensure_file(
 ) -> Result<()> {
     let _guard = lock().lock().await;
     if is_present(dest, expected.size) {
-        return Ok(());
+        if has_valid_stamp(dest, expected.sha256) {
+            return Ok(());
+        }
+        // Present with the right size but never (or no longer) verified by content: checked once.
+        let path = dest.to_path_buf();
+        let actual = tokio::task::spawn_blocking(move || sha256_of(&path))
+            .await
+            .context("hashing task")??;
+        if actual == expected.sha256 {
+            write_stamp(dest, expected.sha256);
+            return Ok(());
+        }
+        let _ = std::fs::remove_file(dest);
     }
 
     let part = part_path(dest);
@@ -112,8 +156,18 @@ pub async fn ensure_file(
         let response = request
             .send()
             .await
-            .map_err(|e| e.without_url())
-            .with_context(|| format!("request to {} failed", expected.url))?
+            .map_err(|e| {
+                let e = e.without_url();
+                // Hors ligne : un code que l'interface traduit, pas une chaîne technique.
+                if e.is_connect() || e.is_timeout() {
+                    coded(
+                        "network_unreachable",
+                        format!("cannot reach {}: {e}", expected.url),
+                    )
+                } else {
+                    anyhow::Error::new(e).context(format!("request to {} failed", expected.url))
+                }
+            })?
             .error_for_status()
             .map_err(|e| e.without_url())
             .with_context(|| format!("HTTP error response for {}", expected.url))?;
@@ -176,6 +230,7 @@ pub async fn ensure_file(
     tokio::fs::rename(&part, dest)
         .await
         .context("moving the downloaded file into place")?;
+    write_stamp(dest, expected.sha256);
     Ok(())
 }
 
@@ -189,6 +244,32 @@ mod tests {
             part_path(Path::new("/m/ggml-small.bin")),
             PathBuf::from("/m/ggml-small.bin.part")
         );
+    }
+
+    #[test]
+    fn a_stamp_vouches_for_the_file_until_it_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("m.bin");
+        std::fs::write(&file, b"12345").unwrap();
+        assert!(!has_valid_stamp(&file, "abc"), "never verified");
+
+        write_stamp(&file, "abc");
+        assert!(has_valid_stamp(&file, "abc"));
+        assert!(
+            !has_valid_stamp(&file, "other"),
+            "another checksum is another model"
+        );
+
+        // Même longueur, autre contenu (et autre date) : le tampon ne vaut plus.
+        std::fs::write(&file, b"54321").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        assert!(!has_valid_stamp(&file, "abc"));
     }
 
     #[test]

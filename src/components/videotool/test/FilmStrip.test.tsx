@@ -2,6 +2,7 @@ import "./setup";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render } from "@testing-library/react";
 import FilmStrip from "../components/FilmStrip";
+import { clearFilmStripCache } from "../components/filmStripCache";
 
 const thumbs = (n: number) => Array.from({ length: n }, (_, i) => `data:image/jpeg;base64,T${i}`);
 
@@ -11,7 +12,10 @@ function mockThumbnails(impl: (path: string, count: number) => Promise<string[]>
   return videoThumbnails;
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  clearFilmStripCache();
+});
 
 describe("FilmStrip", () => {
   it("renders the empty placeholder and asks for nothing without a path, duration or width", () => {
@@ -60,5 +64,38 @@ describe("FilmStrip", () => {
     unmount();
     await act(async () => resolve(thumbs(5)));
     expect(container.querySelectorAll(".filmstrip-thumb")).toHaveLength(0);
+  });
+
+  it("waits for a resize to settle before asking again, and reuses a width already seen", async () => {
+    vi.useFakeTimers();
+    try {
+      const videoThumbnails = mockThumbnails();
+      const { rerender, container } = render(<FilmStrip videoPath="/x.mp4" duration={60} trackWidth={400} />);
+      await act(async () => {});
+      expect(videoThumbnails).toHaveBeenCalledTimes(1);
+
+      // Redimensionnement : les images restent, rien n'est redemandé avant 300 ms de calme.
+      rerender(<FilmStrip videoPath="/x.mp4" duration={60} trackWidth={560} />);
+      rerender(<FilmStrip videoPath="/x.mp4" duration={60} trackWidth={640} />);
+      expect(container.querySelectorAll(".filmstrip-thumb").length).toBeGreaterThan(0);
+      await act(async () => {
+        vi.advanceTimersByTime(299);
+      });
+      expect(videoThumbnails).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        vi.advanceTimersByTime(2);
+      });
+      expect(videoThumbnails).toHaveBeenCalledTimes(2);
+      expect(videoThumbnails).toHaveBeenLastCalledWith("/x.mp4", 8);
+
+      // Retour à la première largeur : déjà connue, ffmpeg n'est pas relancé.
+      rerender(<FilmStrip videoPath="/x.mp4" duration={60} trackWidth={400} />);
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(videoThumbnails).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

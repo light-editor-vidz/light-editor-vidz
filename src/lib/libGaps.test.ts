@@ -189,11 +189,25 @@ describe("startHorizontalDrag", () => {
     const onMove = vi.fn();
     startHorizontalDrag(pointerEvent(100), onMove);
 
-    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 150 }));
-    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 60 }));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 150, buttons: 1 }));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 60, buttons: 1 }));
 
     expect(onMove).toHaveBeenNthCalledWith(1, 50);
     expect(onMove).toHaveBeenNthCalledWith(2, -40);
+    window.dispatchEvent(new PointerEvent("pointerup"));
+  });
+
+  it("ignores micro-movements of a simple click", () => {
+    const onMove = vi.fn();
+    startHorizontalDrag(pointerEvent(100), onMove);
+
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 102, buttons: 1 }));
+    expect(onMove).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 110, buttons: 1 }));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 101, buttons: 1 }));
+    expect(onMove).toHaveBeenNthCalledWith(1, 10);
+    expect(onMove).toHaveBeenNthCalledWith(2, 1);
     window.dispatchEvent(new PointerEvent("pointerup"));
   });
 

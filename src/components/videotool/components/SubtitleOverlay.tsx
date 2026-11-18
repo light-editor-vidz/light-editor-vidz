@@ -1,4 +1,4 @@
-import { useEffect, useState, Fragment, type CSSProperties } from "react";
+import { useEffect, useRef, useState, Fragment, type CSSProperties } from "react";
 import type { SubtitlesState, CropRect } from "../types";
 import type { SubtitleCue } from "../utils/srt";
 import {
@@ -42,12 +42,21 @@ export default function SubtitleOverlay({ videoRef, subtitles, currentTime, crop
   // otherwise (paused, seeking) the prop is exact.
   const [liveTime, setLiveTime] = useState<number | null>(null);
   const active = !!subtitles;
+  const cuesRef = useRef(subtitles?.cues);
+  useEffect(() => {
+    cuesRef.current = subtitles?.cues;
+  }, [subtitles]);
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !active) return;
     let raf = 0;
+    // Entre deux sous-titres, rien ne s'affiche : pas de rendu par image tant qu'aucun n'est actif.
+    let hadCue = true;
     const tick = () => {
-      setLiveTime(video.currentTime);
+      const now = video.currentTime;
+      const hasCue = getActiveCues(cuesRef.current ?? [], now).length > 0;
+      if (hasCue || hadCue) setLiveTime(now);
+      hadCue = hasCue;
       raf = requestAnimationFrame(tick);
     };
     const start = () => {

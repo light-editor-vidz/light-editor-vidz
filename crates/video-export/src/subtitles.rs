@@ -76,7 +76,12 @@ pub fn split_chars_proportional(cue: &Cue) -> Vec<Event> {
 }
 
 fn escape_ass_text(text: &str) -> String {
-    text.replace('\\', "\\\\")
+    // Un `\r` isolé couperait la ligne `Dialogue:` ; une fin de ligne Windows devient un saut.
+    // Une barre oblique inverse suivie d'un espace sans chasse reste littérale : `\\\\`, lui,
+    // s'affichait avec ses deux barres.
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\\', "\\\u{200b}")
         .replace('{', "\\{")
         .replace('}', "\\}")
         .replace('\n', "\\N")
@@ -196,37 +201,53 @@ pub fn expand_cues_to_events(cues: &[Cue], animation: &str, o: &ExpandOptions) -
                 });
             }
             "typewriter" => {
-                for c in split_chars_proportional(cue) {
+                // Each event carries the cumulative text: it is escaped once, character by
+                // character (after the newline normalisation, escaping is per character), not
+                // again from the start for every event.
+                let normalized = Cue {
+                    text: cue.text.replace("\r\n", "\n").replace('\r', "\n"),
+                    ..cue.clone()
+                };
+                let mut escaped = String::new();
+                let mut piece = [0u8; 4];
+                for (c, ch) in split_chars_proportional(&normalized)
+                    .into_iter()
+                    .zip(normalized.text.chars())
+                {
+                    escaped.push_str(&escape_ass_text(ch.encode_utf8(&mut piece)));
                     events.push(Event {
                         start: c.start,
                         end: c.end,
-                        text: escape_ass_text(&c.text),
+                        text: escaped.clone(),
                     });
                 }
             }
             "word-highlight" => {
                 let words = split_words_proportional(cue);
+                // Every word escaped and decorated once, then assembled per event.
+                let plain: Vec<String> = words.iter().map(|w| escape_ass_text(&w.text)).collect();
+                let lit: Vec<String> = plain
+                    .iter()
+                    .map(|e| {
+                        format!(
+                            "{{\\1c{}}}{e}{{\\1c{}}}",
+                            ass_color_tag(&o.accent_color),
+                            ass_color_tag(&o.color)
+                        )
+                    })
+                    .collect();
                 for (i, w) in words.iter().enumerate() {
-                    let text: Vec<String> = words
-                        .iter()
-                        .enumerate()
-                        .map(|(j, other)| {
-                            let escaped = escape_ass_text(&other.text);
-                            if j == i {
-                                format!(
-                                    "{{\\1c{}}}{escaped}{{\\1c{}}}",
-                                    ass_color_tag(&o.accent_color),
-                                    ass_color_tag(&o.color)
-                                )
-                            } else {
-                                escaped
-                            }
-                        })
-                        .collect();
+                    let mut text = String::new();
+                    for j in 0..plain.len() {
+                        if j > 0 {
+                            text.push(' ');
+                        }
+                        text.push_str(if j == i { &lit[j] } else { &plain[j] });
+                    }
                     events.push(Event {
                         start: w.start,
                         end: w.end,
-                        text: text.join(" "),
+                        text,
                     });
                 }
             }
@@ -424,7 +445,7 @@ mod tests {
 
     #[test]
     fn text_is_escaped_for_ass() {
-        assert_eq!(escape_ass_text("a{b}\\c\nd"), "a\\{b\\}\\\\c\\Nd");
+        assert_eq!(escape_ass_text("a{b}\\c\nd"), "a\\{b\\}\\\u{200b}c\\Nd");
     }
 
     #[test]
@@ -574,5 +595,13 @@ mod tests {
     fn without_a_background_the_border_style_is_an_outline() {
         let ass = build_ass_content(&[], &style(), 1280, 720);
         assert!(ass.contains(",0,0,1,2,1,2,20,20,43,1"));
+    }
+
+    #[test]
+    fn ass_text_keeps_a_backslash_literal_and_never_breaks_the_dialogue_line() {
+        assert_eq!(escape_ass_text("a\\b"), "a\\\u{200b}b");
+        assert_eq!(escape_ass_text("a\rb"), "a\\Nb");
+        assert_eq!(escape_ass_text("a\r\nb"), "a\\Nb");
+        assert!(!escape_ass_text("x\ry").contains('\r'));
     }
 }

@@ -83,9 +83,27 @@ fn wrap_line(line: &str) -> String {
     if display_width(&units_text(&units)) <= limit || units.len() < 2 {
         return units_text(&units);
     }
-    // width[a][b]: columns of units a..b on one line
     let n_units = units.len();
-    let width = |a: usize, b: usize| display_width(&render_units(&units[a..b]));
+    // Un paragraphe collé (des centaines d'unités) : l'optimum coûterait O(n⁴) mises en forme,
+    // sans qu'on puisse l'annuler. Au-delà, un découpage glouton suffit.
+    if n_units > MAX_OPTIMAL_UNITS {
+        return greedy_wrap(&units, limit);
+    }
+    // width[a][b]: columns of units a..b on one line, calculated once.
+    let widths: Vec<Vec<usize>> = (0..=n_units)
+        .map(|a| {
+            (0..=n_units)
+                .map(|b| {
+                    if b > a {
+                        display_width(&render_units(&units[a..b]))
+                    } else {
+                        0
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let width = |a: usize, b: usize| widths[a][b];
     let bad_break = |at: usize| {
         usize::from(
             units[at]
@@ -96,8 +114,9 @@ fn wrap_line(line: &str) -> String {
         )
     };
     let start_lines = display_width(&units_text(&units)).div_ceil(limit).max(2);
-    let mut best: Option<Vec<usize>> = None;
-    for lines in start_lines..=n_units {
+    let mut best: Option<(Cost, Vec<usize>)> = None;
+    // Quelques lignes de plus que le minimum suffisent ; au-delà on n'obtient que des mots seuls.
+    for lines in start_lines..=(start_lines + 3).min(n_units) {
         let mut cost: Vec<Vec<Option<Cost>>> = vec![vec![None; n_units + 1]; lines + 1];
         let mut from = vec![vec![0usize; n_units + 1]; lines + 1];
         cost[0][0] = Some((0, 0, 0, 0));
@@ -129,18 +148,41 @@ fn wrap_line(line: &str) -> String {
             cuts.push(at);
         }
         cuts.reverse();
-        best = Some(cuts);
+        // Le meilleur coût, pas le dernier essai : un mot plus long que la limite (une URL) donne
+        // un dépassement à tous les essais, et le dernier était « un mot par ligne ».
+        // À débordement égal, le moins de lignes (l'essai le plus court, déjà gardé) l'emporte.
+        if best.as_ref().is_none_or(|(c, _)| done.0 < c.0) {
+            best = Some((done, cuts));
+        }
         if done.0 == 0 {
             break;
         }
     }
-    let cuts = best.unwrap_or_else(|| vec![0]);
+    let cuts = best.map_or_else(|| vec![0], |(_, cuts)| cuts);
     let mut out = Vec::new();
     for (i, &from) in cuts.iter().enumerate() {
         let to = cuts.get(i + 1).copied().unwrap_or(n_units);
         out.push(render_units(&units[from..to]));
     }
     out.join("\n")
+}
+
+/// Plus grand nombre d'unités (mots) pour lequel on cherche le découpage optimal.
+const MAX_OPTIMAL_UNITS: usize = 60;
+
+/// Remplit chaque ligne jusqu'à la limite, sans retour en arrière : O(n).
+fn greedy_wrap(units: &[Unit], limit: usize) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut start = 0;
+    for end in 1..=units.len() {
+        let too_wide = display_width(&render_units(&units[start..end])) > limit;
+        if too_wide && end - start > 1 {
+            lines.push(render_units(&units[start..end - 1]));
+            start = end - 1;
+        }
+    }
+    lines.push(render_units(&units[start..]));
+    lines.join("\n")
 }
 
 fn units_text(units: &[Unit]) -> String {
@@ -538,5 +580,29 @@ mod tests {
         let ass = to_ass(&[cue(0.0, 1.0, "path\\Nname")]);
 
         assert!(ass.contains("path\\\u{200b}Nname"), "{ass}");
+    }
+
+    #[test]
+    fn a_word_longer_than_the_limit_does_not_turn_into_one_word_per_line() {
+        let text = "see https://example.com/a/very/long/path/that/goes/past/the/limit/of/the/line for details on it";
+        let wrapped = wrap_text(text);
+        // Une URL ne peut pas être coupée : elle prend sa ligne, le reste se regroupe.
+        assert!(wrapped.lines().count() <= 3, "{wrapped}");
+        assert!(wrapped
+            .lines()
+            .any(|l| l.contains("details on it") || l.contains("for details")));
+    }
+
+    #[test]
+    fn a_pasted_paragraph_is_wrapped_quickly_and_loses_no_word() {
+        let text = (0..400)
+            .map(|i| format!("word{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let started = std::time::Instant::now();
+        let wrapped = wrap_text(&text);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert_eq!(wrapped.split_whitespace().count(), 400);
+        assert!(wrapped.lines().all(|l| display_width(l) <= 60), "{wrapped}");
     }
 }

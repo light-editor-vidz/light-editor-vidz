@@ -158,6 +158,45 @@ describe("ExportModal", () => {
     await waitFor(() => expect(exportVideo).toHaveBeenCalled());
   });
 
+  it("shows how many exports are ahead while waiting in the queue", async () => {
+    const saveVideo = vi.fn().mockResolvedValue("/tmp/out.mp4");
+    const exportVideo = vi.fn((_options: unknown, onQueued?: (id: number) => void) => {
+      onQueued?.(5);
+      return new Promise<never>(() => {});
+    });
+    const job = (id: number, status: string) => ({
+      id,
+      name: "x",
+      format: "mp4",
+      status,
+      progress: 0,
+      outputPath: "/o",
+      error: null,
+    });
+    window.electronAPI = {
+      ...window.electronAPI,
+      saveVideo,
+      exportVideo,
+      queueList: vi.fn().mockResolvedValue([job(3, "running"), job(4, "queued"), job(5, "queued")]),
+      onQueueUpdate: () => () => {},
+    } as never;
+    r();
+    fireEvent.click(screen.getByRole("button", { name: /^export(er)?$/i }));
+    expect(await screen.findByText("Waiting (2 ahead)")).toBeInTheDocument();
+  });
+
+  it('is not stuck at 100% when the save dialog of "Export again" is cancelled', async () => {
+    const saveVideo = vi.fn().mockResolvedValueOnce("/tmp/out.mp4").mockResolvedValueOnce(null);
+    const exportVideo = vi.fn().mockResolvedValue({ success: true, outputPath: "/tmp/out.mp4" });
+    window.electronAPI = { ...window.electronAPI, saveVideo, exportVideo };
+    r();
+    fireEvent.click(screen.getByRole("button", { name: /^export(er)?$/i }));
+    const again = await screen.findByRole("button", { name: /again|nouveau/i });
+    fireEvent.click(again);
+    await waitFor(() => expect(saveVideo).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^export(er)?$/i })).toBeEnabled());
+  });
+
   describe("destination", () => {
     beforeEach(() => {
       vi.mocked(listRecentProjects).mockResolvedValue([

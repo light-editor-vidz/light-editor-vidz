@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { useTranslation } from "react-i18next";
 import { MousePointer2, ArrowUp, ArrowDown, Trash2 } from "lucide-react";
 import type { Element } from "../../bindings/Element";
@@ -35,7 +36,7 @@ interface Props {
   onEditLinkedCues?: (src: string, cues: LinkedCue[]) => void;
 }
 
-export default function PropertiesPanel({
+function PropertiesPanel({
   element,
   audioTrack,
   onUpdate,
@@ -79,6 +80,7 @@ export default function PropertiesPanel({
           <AudioProperties track={audioTrack} onUpdate={onUpdateAudio} />
           {audioTrack.subtitles && (
             <LinkedSubtitlesFields
+              key={audioTrack.id}
               subtitles={audioTrack.subtitles}
               onChange={(subtitles) => onUpdateAudio({ subtitles })}
               onEditCues={(cues) => onEditLinkedCues?.(audioTrack.src, cues)}
@@ -138,6 +140,7 @@ export default function PropertiesPanel({
           )}
           {element.type === "video" && element.subtitles && (
             <LinkedSubtitlesFields
+              key={element.id}
               subtitles={element.subtitles}
               onChange={(subtitles) => onUpdate({ subtitles })}
               onEditCues={(cues) => onEditLinkedCues?.(element.src, cues)}
@@ -160,3 +163,5 @@ export default function PropertiesPanel({
     </aside>
   );
 }
+
+export default memo(PropertiesPanel);

@@ -57,6 +57,17 @@ export function remapCues(cues: TimedCue[], kept: { start: number; end: number }
 
 /** Le projet tel qu'il s'affiche et s'exporte : chaque sous-titre activé devient des éléments texte,
  * au-dessus de leur scène, qui suivent le média (position, coupe, vitesse). */
+/** Les répliques d'un média, gardées tant que ce média (objet immuable) et sa place ne changent pas :
+ * le projet est reconstruit à chaque mutation (un drag en fait des centaines), pas ses sous-titres. */
+const cueCache = new WeakMap<object, { key: string; cues: TimedCue[] }>();
+function cachedCues(owner: object, key: string, compute: () => TimedCue[]): TimedCue[] {
+  const hit = cueCache.get(owner);
+  if (hit && hit.key === key) return hit.cues;
+  const cues = compute();
+  cueCache.set(owner, { key, cues });
+  return cues;
+}
+
 export function expandLinkedSubtitles(project: Project): Project {
   const sources: { owner: string; subs: LinkedSubtitles; cues: TimedCue[] }[] = [];
   for (const comp of project.compositions) {
@@ -65,7 +76,9 @@ export function expandLinkedSubtitles(project: Project): Project {
         sources.push({
           owner: el.id,
           subs: el.subtitles,
-          cues: cuesOfVideoElement(el.subtitles.cues, el, comp.start_time, comp.duration),
+          cues: cachedCues(el, `${comp.start_time}:${comp.duration}`, () =>
+            cuesOfVideoElement(el.subtitles!.cues, el, comp.start_time, comp.duration),
+          ),
         });
       }
     }
@@ -75,7 +88,9 @@ export function expandLinkedSubtitles(project: Project): Project {
       sources.push({
         owner: track.id,
         subs: track.subtitles,
-        cues: cuesOfAudioTrack(track.subtitles.cues, track, project.duration),
+        cues: cachedCues(track, String(project.duration), () =>
+          cuesOfAudioTrack(track.subtitles!.cues, track, project.duration),
+        ),
       });
     }
   }

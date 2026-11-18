@@ -56,7 +56,7 @@ const rotateHandle = () => document.querySelector(".element-rotate-handle") as H
 /** Presses `target`, moves the pointer by (dx, dy) pixels, then releases. */
 function drag(target: HTMLElement, dx: number, dy: number, init: Partial<PointerEventInit> = {}) {
   fireEvent.pointerDown(target, { clientX: 100, clientY: 100, ...init });
-  fireEvent.pointerMove(window, { clientX: 100 + dx, clientY: 100 + dy });
+  fireEvent.pointerMove(window, { buttons: 1, clientX: 100 + dx, clientY: 100 + dy });
   fireEvent.pointerUp(window);
 }
 
@@ -121,7 +121,7 @@ describe("ElementInteraction — selecting", () => {
     const { onSelect } = setup();
 
     fireEvent.pointerDown(box(), { clientX: 100, clientY: 100 });
-    fireEvent.pointerMove(window, { clientX: 150, clientY: 100 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 150, clientY: 100 });
     fireEvent.pointerUp(window);
 
     expect(onSelect).not.toHaveBeenCalled();
@@ -164,7 +164,7 @@ describe("ElementInteraction — selecting", () => {
 
     // No laid-out stage to measure against: the drag must be a no-op, not a crash.
     fireEvent.pointerDown(box(), { clientX: 0, clientY: 0 });
-    fireEvent.pointerMove(window, { clientX: 50, clientY: 50 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 50, clientY: 50 });
 
     expect(onSelect).toHaveBeenCalled();
     expect(onChange).not.toHaveBeenCalled();
@@ -208,17 +208,48 @@ describe("ElementInteraction — moving", () => {
 
     drag(box(), 100, 0);
     onChange.mockClear();
-    fireEvent.pointerMove(window, { clientX: 900, clientY: 900 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 900, clientY: 900 });
 
     expect(onChange).not.toHaveBeenCalled();
   });
 });
 
+describe("ElementInteraction — clicks and lost buttons", () => {
+  it("a plain click does not move the element nor create a change", () => {
+    const { onChange } = setup();
+    fireEvent.pointerDown(box(), { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 102, clientY: 101 });
+    fireEvent.pointerUp(window);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("ends the drag when the button was released outside the window", () => {
+    const { onChange } = setup();
+    fireEvent.pointerDown(box(), { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 140, clientY: 100 });
+    const moves = onChange.mock.calls.length;
+    // Plus de bouton enfoncé, mais aucun pointerup n'est arrivé.
+    fireEvent.pointerMove(window, { buttons: 0, clientX: 300, clientY: 100 });
+    fireEvent.pointerMove(window, { buttons: 0, clientX: 320, clientY: 100 });
+    expect(onChange.mock.calls.length).toBe(moves);
+  });
+
+  it("stops following the pointer when the gesture is cancelled", () => {
+    const { onChange } = setup();
+    fireEvent.pointerDown(box(), { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 140, clientY: 100 });
+    const moves = onChange.mock.calls.length;
+    fireEvent.pointerCancel(window);
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 200, clientY: 100 });
+    expect(onChange.mock.calls.length).toBe(moves);
+  });
+});
+
 describe("ElementInteraction — snapping", () => {
   it("snaps the left edge to the stage edge and reports the guide", () => {
-    const { onChange, onGuides } = setup({ x: 1, y: 40, width: 20, height: 20 });
+    const { onChange, onGuides } = setup({ x: 0.5, y: 40, width: 20, height: 20 });
 
-    drag(box(), 1, 0);
+    drag(box(), 4, 0);
 
     expect(lastPatch(onChange).x).toBe(0);
     expect(onGuides).toHaveBeenCalledWith(expect.objectContaining({ vertical: [0] }));
@@ -227,9 +258,9 @@ describe("ElementInteraction — snapping", () => {
   it("snaps the centre to the middle of the stage", () => {
     const { onChange, onGuides } = setup({ x: 39.5, y: 5, width: 20, height: 10 });
 
-    drag(box(), 1, 0);
+    drag(box(), 4, 0);
 
-    // 39.6 + 10 = 49.6, within the 1.2 threshold of the 50 centre line.
+    // 39.9 + 10 = 49.9, within the 1.2 threshold of the 50 centre line.
     expect(lastPatch(onChange).x).toBe(40);
     expect(onGuides).toHaveBeenCalledWith(expect.objectContaining({ vertical: [50] }));
   });
@@ -270,7 +301,7 @@ describe("ElementInteraction — snapping", () => {
     const { onGuides } = setup({ x: 20, y: 20, width: 13, height: 13 });
 
     fireEvent.pointerDown(box(), { clientX: 100, clientY: 100 });
-    fireEvent.pointerMove(window, { clientX: 144, clientY: 144 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 144, clientY: 144 });
 
     expect(onGuides).toHaveBeenLastCalledWith({ vertical: [], horizontal: [] });
   });
@@ -353,7 +384,7 @@ describe("ElementInteraction — resizing", () => {
     const { onGuides } = setup();
 
     fireEvent.pointerDown(handle("e"), { clientX: 100, clientY: 100 });
-    fireEvent.pointerMove(window, { clientX: 200, clientY: 100 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 200, clientY: 100 });
 
     expect(onGuides).not.toHaveBeenCalledWith(expect.objectContaining({ vertical: expect.anything() }));
   });
@@ -365,7 +396,7 @@ describe("ElementInteraction — rotating", () => {
     const { onChange } = setup({ x: 20, y: 20, width: 20, height: 20 });
 
     fireEvent.pointerDown(rotateHandle(), { clientX: 300, clientY: 100 });
-    fireEvent.pointerMove(window, { clientX: 600, clientY: 300 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 600, clientY: 300 });
 
     // Pointer due east of the centre → 90° from the upright position.
     expect(lastPatch(onChange)).toEqual({ rotation: 90 });
@@ -375,7 +406,7 @@ describe("ElementInteraction — rotating", () => {
     const { onChange } = setup({ x: 20, y: 20, width: 20, height: 20 });
 
     fireEvent.pointerDown(rotateHandle(), { clientX: 300, clientY: 100 });
-    fireEvent.pointerMove(window, { clientX: 300, clientY: 0 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 300, clientY: 0 });
 
     expect(lastPatch(onChange)).toEqual({ rotation: 0 });
   });
@@ -384,7 +415,7 @@ describe("ElementInteraction — rotating", () => {
     const { onChange } = setup({ x: 20, y: 20, width: 20, height: 20 });
 
     fireEvent.pointerDown(rotateHandle(), { clientX: 300, clientY: 100 });
-    fireEvent.pointerMove(window, { clientX: 300, clientY: 900 });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: 300, clientY: 900 });
 
     expect(lastPatch(onChange)).toEqual({ rotation: 180 });
   });

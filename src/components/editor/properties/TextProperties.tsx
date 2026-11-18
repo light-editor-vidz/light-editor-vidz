@@ -72,6 +72,9 @@ export function TextProperties({
           <button
             type="button"
             className={`properties-toggle${element.font_weight === "bold" ? " active" : ""}`}
+            title={t("properties.bold")}
+            aria-label={t("properties.bold")}
+            aria-pressed={element.font_weight === "bold"}
             onClick={() => onUpdate({ font_weight: element.font_weight === "bold" ? "normal" : "bold" })}
           >
             B
@@ -79,6 +82,9 @@ export function TextProperties({
           <button
             type="button"
             className={`properties-toggle${element.font_style === "italic" ? " active" : ""}`}
+            title={t("properties.italic")}
+            aria-label={t("properties.italic")}
+            aria-pressed={element.font_style === "italic"}
             onClick={() => onUpdate({ font_style: element.font_style === "italic" ? "normal" : "italic" })}
           >
             I
@@ -171,6 +177,9 @@ export function TextProperties({
           <button
             type="button"
             className={`properties-toggle${element.underline ? " active" : ""}`}
+            title={t("properties.underline")}
+            aria-label={t("properties.underline")}
+            aria-pressed={!!element.underline}
             onClick={() => onUpdate({ underline: !element.underline })}
           >
             <span style={{ textDecoration: "underline" }}>U</span>
@@ -178,6 +187,9 @@ export function TextProperties({
           <button
             type="button"
             className={`properties-toggle${element.strikethrough ? " active" : ""}`}
+            title={t("properties.strikethrough")}
+            aria-label={t("properties.strikethrough")}
+            aria-pressed={!!element.strikethrough}
             onClick={() => onUpdate({ strikethrough: !element.strikethrough })}
           >
             <span style={{ textDecoration: "line-through" }}>S</span>

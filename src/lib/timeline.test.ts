@@ -141,6 +141,14 @@ describe("resolveActiveComposition", () => {
     expect(result?.localTime).toBeCloseTo(1);
   });
 
+  it("picks the incoming scene during an overlap, so the next scene can be reached", () => {
+    const p = recomputeStartTimes(project([comp("a", 5, 1), comp("b", 5)]));
+    const b = p.compositions[1];
+    expect(b.start_time).toBe(4);
+    expect(resolveActiveComposition(p, b.start_time)?.composition.id).toBe("b");
+    expect(resolveActiveComposition(p, 3.9)?.composition.id).toBe("a");
+  });
+
   it("clamps to the last composition when time exceeds total duration", () => {
     const p = recomputeStartTimes(project([comp("a", 3)]));
     const result = resolveActiveComposition(p, 100);

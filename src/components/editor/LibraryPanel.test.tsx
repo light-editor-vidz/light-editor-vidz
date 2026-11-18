@@ -1,12 +1,17 @@
 import type { Project } from "../../bindings/Project";
 import { render, screen, fireEvent, act, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { open } from "@tauri-apps/plugin-dialog";
 import LibraryPanel from "./LibraryPanel";
-import { deleteAsset, importAsset, importStockAsset, listAssets, searchStockAssets } from "../../lib/commands";
+import {
+  deleteAsset,
+  importAsset,
+  importStockAsset,
+  listAssets,
+  pickAssetSource,
+  searchStockAssets,
+} from "../../lib/commands";
 import type { AssetInfo, StockResult } from "../../lib/commands";
 
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("../../lib/assetUrl", () => ({
   assetUrl: (dir: string, path: string) => `asset://${dir}/${path}`,
 }));
@@ -14,11 +19,12 @@ vi.mock("../../lib/commands", () => ({
   deleteAsset: vi.fn(),
   listAssets: vi.fn(),
   importAsset: vi.fn(),
+  pickAssetSource: vi.fn(),
   searchStockAssets: vi.fn(),
   importStockAsset: vi.fn(),
 }));
 
-const mockOpen = vi.mocked(open);
+const mockOpen = vi.mocked(pickAssetSource);
 const mockList = vi.mocked(listAssets);
 const mockDelete = vi.mocked(deleteAsset);
 const mockImport = vi.mocked(importAsset);
@@ -225,18 +231,14 @@ describe("LibraryPanel — local media", () => {
       fireEvent.click(q(".library-import-tile"));
     });
 
-    expect(mockOpen).toHaveBeenCalledWith(
-      expect.objectContaining({
-        filters: [{ name: "Videos", extensions: ["mp4", "m4v", "webm", "mov", "mkv", "avi"] }],
-      }),
-    );
+    expect(mockOpen).toHaveBeenCalledWith("video");
     expect(mockImport).toHaveBeenCalledWith("/p", "video", "/home/me/new.mp4");
     expect(onAddVideo).toHaveBeenCalledWith("assets/video/new.mp4", "new.mp4", true);
     // The listing is refreshed so the new file shows up in the grid.
     expect(mockList).toHaveBeenCalledTimes(2);
   });
 
-  it("filters on image extensions in the image tab", async () => {
+  it("asks the picker for images in the image tab", async () => {
     mockOpen.mockResolvedValue(null);
     await setup({ active: "image" });
 
@@ -244,11 +246,7 @@ describe("LibraryPanel — local media", () => {
       fireEvent.click(q(".library-import-tile"));
     });
 
-    expect(mockOpen).toHaveBeenCalledWith(
-      expect.objectContaining({
-        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"] }],
-      }),
-    );
+    expect(mockOpen).toHaveBeenCalledWith("image");
   });
 
   it("does nothing when the file dialog is dismissed", async () => {
@@ -303,11 +301,7 @@ describe("LibraryPanel — local audio", () => {
       fireEvent.click(screen.getByText("Import an audio file"));
     });
 
-    expect(mockOpen).toHaveBeenCalledWith(
-      expect.objectContaining({
-        filters: [{ name: "Audio", extensions: ["mp3", "wav", "ogg", "m4a", "aac", "flac", "opus"] }],
-      }),
-    );
+    expect(mockOpen).toHaveBeenCalledWith("audio");
     expect(onAddAudio).toHaveBeenCalledWith("assets/audio/song.mp3", "song.mp3", true);
   });
 });
@@ -632,6 +626,22 @@ describe("LibraryPanel — recherche de styles, suppression et pagination", () =
       compositions: [{ id: "c", elements: [{ type: "image", src: "assets/images/a.png" }] }],
     } as unknown as Project;
     await setup({ active: "image", project: usingProject });
+
+    await act(async () => {
+      fireEvent.click(q(".library-asset-delete"));
+    });
+
+    expect(mockDelete).not.toHaveBeenCalled();
+    expect(q(".library-error").textContent).toContain("a.png");
+  });
+
+  it("refuse aussi de supprimer un média qu'Annuler ou Rétablir ferait réapparaître", async () => {
+    mockList.mockResolvedValue([{ filename: "a.png", relative_path: "assets/images/a.png" }]);
+    const previous = {
+      ...emptyProject,
+      compositions: [{ id: "c", elements: [{ type: "image", src: "assets/images/a.png" }] }],
+    } as unknown as Project;
+    await setup({ active: "image", historyProjects: [previous] });
 
     await act(async () => {
       fireEvent.click(q(".library-asset-delete"));

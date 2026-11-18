@@ -305,13 +305,18 @@ pub fn apply_filter(buf: &mut AudioBuffer, spec: &FilterSpec) -> Result<()> {
     // Channel by channel, stage by stage: one contiguous run per biquad, no
     // per-sample indexing.
     let frames = buf.num_frames();
-    for (ch, cascade) in buf.samples.iter_mut().zip(cascades.iter_mut()) {
-        for stage in cascade.iter_mut() {
-            for s in ch[..frames].iter_mut() {
-                *s = stage.process(*s);
-            }
+    // Les canaux sont indépendants : un thread par canal (stéréo : deux cœurs au lieu d'un).
+    std::thread::scope(|scope| {
+        for (ch, cascade) in buf.samples.iter_mut().zip(cascades.iter_mut()) {
+            scope.spawn(move || {
+                for stage in cascade.iter_mut() {
+                    for s in ch[..frames].iter_mut() {
+                        *s = stage.process(*s);
+                    }
+                }
+            });
         }
-    }
+    });
     Ok(())
 }
 

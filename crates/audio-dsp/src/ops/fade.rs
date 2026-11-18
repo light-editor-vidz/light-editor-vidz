@@ -146,9 +146,7 @@ mod tests {
     fn fade_out_leaves_the_head_untouched() {
         let mut buf = make_buf(100, 100);
         fade_out(&mut buf, 0.5, Curve::Linear).unwrap();
-        for i in 0..50 {
-            assert_eq!(buf.samples[0][i], 1.0);
-        }
+        assert!(buf.samples[0][..50].iter().all(|&s| s == 1.0));
     }
 
     #[test]

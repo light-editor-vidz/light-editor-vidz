@@ -1,3 +1,4 @@
+import { TabActiveProvider } from "../../lib/menuBridge";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listen } from "@tauri-apps/api/event";
@@ -219,6 +220,23 @@ describe("GenerateSubtitlesDialog — traduction", () => {
     await waitFor(() => expect(subs.saveSubs).toHaveBeenCalledWith("/v/a.srt", "Subtitles", "srt", SRT));
   });
 
+  it("associates the transcription even when the chained translation fails", async () => {
+    vi.mocked(subs.translateSubs).mockRejectedValue(new Error("expired key"));
+    const onAssociate = vi.fn();
+    render(
+      <GenerateSubtitlesDialog
+        source={{ kind: "file", path: "/v/a.mp4" }}
+        label="a"
+        onClose={vi.fn()}
+        onAssociate={onAssociate}
+      />,
+    );
+    fireEvent.change(await screen.findByLabelText("Translate to"), { target: { value: "fr" } });
+    await generate();
+    await waitFor(() => expect(subs.translateSubs).toHaveBeenCalled());
+    expect(onAssociate).toHaveBeenCalledWith(SRT, expect.any(String));
+  });
+
   it("translates after generating, from the detected or a chosen language", async () => {
     vi.mocked(subs.listSubsLanguages).mockResolvedValue([
       { code: "en", flores_code: "eng_Latn", name: "English" },
@@ -314,5 +332,19 @@ describe("GenerateSubtitlesDialog — cloud, durée et fermeture", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("GenerateSubtitlesDialog — tabs", () => {
+  it("is not shown while its tab is in the background", () => {
+    const view = (active: boolean) => (
+      <TabActiveProvider value={active}>
+        <GenerateSubtitlesDialog source={{ kind: "file", path: "/v/a.mp4" }} label="a" onClose={vi.fn()} />
+      </TabActiveProvider>
+    );
+    const { rerender } = render(view(true));
+    expect(document.querySelector(".modal-backdrop")).not.toHaveAttribute("hidden");
+    rerender(view(false));
+    expect(document.querySelector(".modal-backdrop")).toHaveAttribute("hidden");
   });
 });

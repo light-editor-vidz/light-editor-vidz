@@ -1,9 +1,12 @@
 use image::{DynamicImage, ImageBuffer, Rgba};
+use rayon::prelude::*;
 
 #[cfg(test)]
 use super::imaging::clamp_u8;
 pub use super::imaging::lerp;
-use super::imaging::{blur_rgba, by_depth, is_8bit, par_pixels, Sample};
+use super::imaging::{
+    blur_linear, blur_rgba, by_depth, is_8bit, par_pixels, premultiply, unpremultiply, Sample,
+};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -145,7 +148,9 @@ pub fn pixelate(img: &DynamicImage, size: u32) -> DynamicImage {
         S: Sample,
         Rgba<S>: image::Pixel<Subpixel = S>,
     {
-        let src: Buf<S> = S::buffer_of(img);
+        let mut src: Buf<S> = S::buffer_of(img);
+        // Moyenne en alpha prémultiplié : les pixels transparents (noirs) n'assombrissent pas les blocs.
+        premultiply(&mut src);
         let (w, h) = (src.width(), src.height());
         let size = size.max(1);
         if w == 0 || h == 0 {
@@ -153,14 +158,25 @@ pub fn pixelate(img: &DynamicImage, size: u32) -> DynamicImage {
         }
         let bw = w.div_ceil(size);
         let bh = h.div_ceil(size);
-        let mut sums = vec![[0u64; 5]; (bw * bh) as usize];
-        for (x, y, p) in src.enumerate_pixels() {
-            let cell = &mut sums[((y / size) * bw + x / size) as usize];
-            for c in 0..4 {
-                cell[c] += u64::from(p[c].raw());
-            }
-            cell[4] += 1;
-        }
+        // Une ligne de blocs par tâche : chaque tâche écrit ses propres sommes.
+        let raw = src.as_raw();
+        let sums: Vec<[u64; 5]> = (0..bh)
+            .into_par_iter()
+            .flat_map_iter(|by| {
+                let mut row = vec![[0u64; 5]; bw as usize];
+                for y in by * size..((by + 1) * size).min(h) {
+                    let line = &raw[(y * w) as usize * 4..((y + 1) * w) as usize * 4];
+                    for (x, p) in line.as_chunks::<4>().0.iter().enumerate() {
+                        let cell = &mut row[x / size as usize];
+                        for c in 0..4 {
+                            cell[c] += u64::from(p[c].raw());
+                        }
+                        cell[4] += 1;
+                    }
+                }
+                row
+            })
+            .collect();
         let mut out = src;
         par_pixels(&mut out, |x, y, px| {
             let cell = &sums[((y / size) * bw + x / size) as usize];
@@ -168,6 +184,7 @@ pub fn pixelate(img: &DynamicImage, size: u32) -> DynamicImage {
                 px[c] = S::from_raw(((cell[c] + cell[4] / 2) / cell[4]) as u32);
             }
         });
+        unpremultiply(&mut out);
         S::into_image(out)
     }
     by_depth!(run, img, size)
@@ -198,7 +215,13 @@ pub fn duotone(img: &DynamicImage, shadow: [u8; 3], highlight: [u8; 3]) -> Dynam
 /// proportionnel à la taille de l'image, pour un rendu identique quelle que soit la
 /// résolution.
 pub fn sketch(img: &DynamicImage) -> DynamicImage {
-    fn run<S>(img: &DynamicImage) -> DynamicImage
+    sketch_scaled(img, 1.0)
+}
+
+/// Croquis d'une image réduite d'un facteur `k` : le rayon du flou est celui qu'aurait
+/// l'image d'origine (bornes comprises), ramené à l'échelle de l'aperçu.
+pub fn sketch_scaled(img: &DynamicImage, k: f32) -> DynamicImage {
+    fn run<S>(img: &DynamicImage, k: f32) -> DynamicImage
     where
         S: Sample,
         Rgba<S>: image::Pixel<Subpixel = S>,
@@ -212,7 +235,8 @@ pub fn sketch(img: &DynamicImage) -> DynamicImage {
         map_rgb_buf(&mut inverted, |_, _, r, g, b| {
             (255.0 - r, 255.0 - g, 255.0 - b)
         });
-        let sigma = (gray.width().max(gray.height()) as f32 / 150.0).clamp(2.0, 40.0);
+        let full_side = gray.width().max(gray.height()) as f32 / k;
+        let sigma = (full_side / 150.0).clamp(2.0, 40.0) * k;
         let blurred = blur_rgba(&inverted, sigma);
         let mut result = gray;
         par_pixels(&mut result, |x, y, px| {
@@ -229,7 +253,7 @@ pub fn sketch(img: &DynamicImage) -> DynamicImage {
         });
         S::into_image(result)
     }
-    by_depth!(run, img)
+    by_depth!(run, img, k.clamp(0.001, 1.0))
 }
 
 /// Lomo : saturé, contrasté, vignetté fort.
@@ -349,7 +373,7 @@ pub fn blur_gaussian(img: &DynamicImage, radius: f32) -> DynamicImage {
         S: Sample,
         Rgba<S>: image::Pixel<Subpixel = S>,
     {
-        S::into_image(blur_rgba(&S::buffer_of(img), radius))
+        S::into_image(blur_linear(&S::buffer_of(img), radius))
     }
     by_depth!(run, img, radius)
 }
@@ -361,7 +385,9 @@ pub fn blur_motion(img: &DynamicImage, angle: f32, distance: u32) -> DynamicImag
         S: Sample,
         Rgba<S>: image::Pixel<Subpixel = S>,
     {
-        let rgba: Buf<S> = S::buffer_of(img);
+        let mut rgba: Buf<S> = S::buffer_of(img);
+        // Flou en alpha prémultiplié, alpha compris (il était ignoré : les bords transparents restaient nets).
+        premultiply(&mut rgba);
         let (w, h) = (rgba.width() as i32, rgba.height() as i32);
         let distance = distance.clamp(1, 100) as i32;
         let rad = angle.to_radians();
@@ -378,7 +404,7 @@ pub fn blur_motion(img: &DynamicImage, angle: f32, distance: u32) -> DynamicImag
         offsets.dedup();
         let mut result = rgba.clone();
         par_pixels(&mut result, |x, y, px| {
-            let (mut sum, mut count) = ([0f32; 3], 0f32);
+            let (mut sum, mut count) = ([0f32; 4], 0f32);
             for &(ox, oy) in &offsets {
                 let (sx, sy) = (x as i32 + ox, y as i32 + oy);
                 if sx >= 0 && sx < w && sy >= 0 && sy < h {
@@ -386,6 +412,7 @@ pub fn blur_motion(img: &DynamicImage, angle: f32, distance: u32) -> DynamicImag
                     sum[0] += p[0].to_255();
                     sum[1] += p[1].to_255();
                     sum[2] += p[2].to_255();
+                    sum[3] += p[3].to_255();
                     count += 1.0;
                 }
             }
@@ -393,8 +420,10 @@ pub fn blur_motion(img: &DynamicImage, angle: f32, distance: u32) -> DynamicImag
                 px[0] = S::from_255(sum[0] / count);
                 px[1] = S::from_255(sum[1] / count);
                 px[2] = S::from_255(sum[2] / count);
+                px[3] = S::from_255(sum[3] / count);
             }
         });
+        unpremultiply(&mut result);
         S::into_image(result)
     }
     by_depth!(run, img, angle, distance)
@@ -407,14 +436,15 @@ pub fn blur_radial(img: &DynamicImage, strength: f32, samples: u32) -> DynamicIm
         S: Sample,
         Rgba<S>: image::Pixel<Subpixel = S>,
     {
-        let rgba: Buf<S> = S::buffer_of(img);
+        let mut rgba: Buf<S> = S::buffer_of(img);
+        premultiply(&mut rgba);
         let (w, h) = (rgba.width(), rgba.height());
         let samples = samples.clamp(4, 32);
         let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
         let strength = strength.clamp(0.0, 0.95);
         let mut result = rgba.clone();
         par_pixels(&mut result, |x, y, px| {
-            let mut sum = [0f32; 3];
+            let mut sum = [0f32; 4];
             for i in 0..samples {
                 let t = i as f32 / (samples - 1) as f32;
                 let scale = 1.0 - t * strength;
@@ -428,11 +458,14 @@ pub fn blur_radial(img: &DynamicImage, strength: f32, samples: u32) -> DynamicIm
                 sum[0] += p[0].to_255();
                 sum[1] += p[1].to_255();
                 sum[2] += p[2].to_255();
+                sum[3] += p[3].to_255();
             }
             px[0] = S::from_255(sum[0] / samples as f32);
             px[1] = S::from_255(sum[1] / samples as f32);
             px[2] = S::from_255(sum[2] / samples as f32);
+            px[3] = S::from_255(sum[3] / samples as f32);
         });
+        unpremultiply(&mut result);
         S::into_image(result)
     }
     by_depth!(run, img, strength, samples)
@@ -443,6 +476,38 @@ pub fn blur_radial(img: &DynamicImage, strength: f32, samples: u32) -> DynamicIm
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Moitié gauche rouge opaque, moitié droite transparente (noire dans les données).
+    fn half_transparent() -> DynamicImage {
+        let mut img = image::RgbaImage::new(16, 8);
+        for (x, _, p) in img.enumerate_pixels_mut() {
+            *p = if x < 8 {
+                Rgba([255, 0, 0, 255])
+            } else {
+                Rgba([0, 0, 0, 0])
+            };
+        }
+        DynamicImage::ImageRgba8(img)
+    }
+
+    #[test]
+    fn pixelation_and_directional_blurs_keep_the_colour_and_spread_the_alpha() {
+        let src = half_transparent();
+        for out in [
+            pixelate(&src, 6),
+            blur_motion(&src, 0.0, 4),
+            blur_radial(&src, 0.5, 8),
+        ] {
+            let rgba = out.to_rgba8();
+            for p in rgba.pixels().filter(|p| p[3] > 8) {
+                // Teinte conservée : plus de rouge assombri par le noir des pixels transparents.
+                assert!(p[0] as u32 * 255 >= 235 * p[3] as u32, "{p:?}");
+            }
+        }
+        // Le flou de mouvement étale l'alpha au-delà du bord (il était ignoré).
+        let blurred = blur_motion(&src, 0.0, 4).to_rgba8();
+        assert!(blurred.pixels().any(|p| p[3] > 0 && p[3] < 255));
+    }
 
     #[test]
     fn vignette_factor_center_is_one() {

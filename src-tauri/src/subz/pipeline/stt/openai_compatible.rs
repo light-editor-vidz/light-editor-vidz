@@ -174,12 +174,16 @@ impl SttEngine for OpenAiCompatibleWhisperEngine {
         let total = audio_extract::media_duration_secs(audio)?;
         // Cuts fall in a pause, not in the middle of a word.
         let silences = if total > self.chunk_secs {
-            audio_extract::find_silences(audio)
+            audio_extract::find_silences(audio)?
         } else {
             Vec::new()
         };
         let chunks = audio_extract::plan_chunks(total, self.chunk_secs, &silences);
-        let scratch = tempfile::tempdir().context("creating temporary directory")?;
+        // Nom préfixé : ce que laisse un plantage est balayé au prochain démarrage.
+        let scratch = tempfile::Builder::new()
+            .prefix("lev_subs_scratch_")
+            .tempdir()
+            .context("creating temporary directory")?;
 
         let mut language = "unknown".to_string();
         let mut segments = Vec::new();
@@ -240,6 +244,29 @@ mod tests {
 
     fn transcript_of(json: &str) -> Transcript {
         to_transcript(serde_json::from_str(json).unwrap(), 0.0)
+    }
+
+    #[test]
+    fn the_punctuation_of_the_segment_text_survives_when_words_give_the_times() {
+        let t = transcript_of(
+            r#"{"language":"french","segments":[
+                {"start":0.0,"end":2.0,"text":" Bonjour, le monde !"}
+            ],"words":[
+                {"word":"Bonjour","start":0.0,"end":0.5},
+                {"word":"le","start":0.6,"end":0.9},
+                {"word":"monde","start":1.0,"end":1.5}
+            ]}"#,
+        );
+        let text: String = t
+            .segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            text.contains("Bonjour,") && text.contains("monde !"),
+            "{text}"
+        );
     }
 
     #[test]

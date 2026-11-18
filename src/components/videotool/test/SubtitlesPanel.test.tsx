@@ -247,9 +247,11 @@ describe("SubtitlesPanel — undo granularity and errors", () => {
 describe("SubtitlesPanel — fonts", () => {
   it("only offers families that exist on every platform", () => {
     const { container } = renderWithI18n(<SubtitlesPanel {...makeProps({ subtitles: loaded })} />);
-    const fonts = Array.from(container.querySelectorAll("select option")).map((o) => o.textContent);
+    const fonts = Array.from(container.querySelectorAll("select option")).map((o) => (o as HTMLOptionElement).value);
     expect(fonts).toContain("Arial");
     expect(fonts).toContain("sans-serif");
+    // Les familles génériques sont affichées dans la langue de l'interface.
+    expect(container.querySelector('option[value="sans-serif"]')?.textContent).toBe("Sans-serif");
     for (const missing of ["Calibri", "Segoe UI", "Futura", "Century Gothic", "Palatino"])
       expect(fonts).not.toContain(missing);
   });

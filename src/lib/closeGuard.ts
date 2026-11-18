@@ -1,4 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import i18n from "i18next";
+import { message } from "@tauri-apps/plugin-dialog";
 import { hasBeforeExitTasks, runBeforeExit } from "./lifecycle";
 import { busyWork, confirmQuitWithBusyWork } from "./busyWork";
 
@@ -16,7 +18,13 @@ export async function installCloseGuard(): Promise<() => void> {
       if (!hasBeforeExitTasks() && busy.length === 0) return;
       event.preventDefault();
       if (!(await confirmQuitWithBusyWork())) return;
-      if (await runBeforeExit()) await appWindow.destroy();
+      if (await runBeforeExit()) {
+        await appWindow.destroy();
+      } else {
+        // Une écriture a échoué (peut-être dans un onglet masqué) : la fenêtre reste ouverte, et
+        // on le dit — sinon la croix paraît simplement ne rien faire.
+        await message(i18n.t("quit.saveFailed"), { title: i18n.t("quit.title"), kind: "warning" }).catch(() => {});
+      }
     });
   } catch {
     // Hors de Tauri (tests, navigateur) : pas de fenêtre à garder.

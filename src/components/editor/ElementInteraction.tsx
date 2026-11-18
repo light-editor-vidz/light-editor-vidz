@@ -14,13 +14,16 @@ export interface SnapGuides {
   horizontal: number[];
 }
 
+type Geometry = { x: number; y: number; width: number; height: number };
+
 interface Props {
   geometry: GeometryPatch;
   selected: boolean;
   accentColor: string;
   stageRef: React.RefObject<HTMLDivElement | null>;
-  /** Géométries des autres éléments de la composition (hors soi-même), pour le snapping. */
-  siblings: { x: number; y: number; width: number; height: number }[];
+  /** Les autres éléments (accroche). Une fonction n'est appelée qu'au début d'un geste : le canvas
+   * se redessine à chaque image de lecture, il ne doit pas construire cette liste à chaque fois. */
+  siblings: Geometry[] | (() => Geometry[]);
   onChange: (patch: Partial<GeometryPatch>) => void;
   /** `additive` = shift/cmd/ctrl enfoncé au clic (ajoute/retire de la sélection multiple). */
   onSelect: (additive: boolean) => void;
@@ -89,6 +92,7 @@ export default function ElementInteraction({
     if (!keepSelection) onSelect(additive);
     const rect = stageRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const others = typeof siblings === "function" ? siblings() : siblings;
     dragState.current = {
       startX: e.clientX,
       startY: e.clientY,
@@ -103,9 +107,17 @@ export default function ElementInteraction({
     function onMove(ev: PointerEvent) {
       const state = dragState.current;
       if (!state) return;
+      // Bouton relâché hors de la fenêtre (aucun `pointerup` reçu) : le geste est terminé.
+      if (ev.buttons === 0) {
+        onUp();
+        return;
+      }
       const dxPx = ev.clientX - state.startX;
       const dyPx = ev.clientY - state.startY;
       if (Math.abs(dxPx) > CLICK_SLOP_PX || Math.abs(dyPx) > CLICK_SLOP_PX) state.moved = true;
+      // Un simple clic ne déplace rien : sans cela, il décalait l'élément de quelques pixels et
+      // créait une entrée d'annulation.
+      if (!state.moved) return;
       const dxPct = (dxPx / state.rectWidth) * 100;
       const dyPct = (dyPx / state.rectHeight) * 100;
 
@@ -113,8 +125,8 @@ export default function ElementInteraction({
         let x = clampPosition(state.startGeometry.x + dxPct, state.startGeometry.width);
         let y = clampPosition(state.startGeometry.y + dyPct, state.startGeometry.height);
 
-        const vCandidates = [0, 50, 100, ...siblings.flatMap((s) => [s.x, s.x + s.width / 2, s.x + s.width])];
-        const hCandidates = [0, 50, 100, ...siblings.flatMap((s) => [s.y, s.y + s.height / 2, s.y + s.height])];
+        const vCandidates = [0, 50, 100, ...others.flatMap((s) => [s.x, s.x + s.width / 2, s.x + s.width])];
+        const hCandidates = [0, 50, 100, ...others.flatMap((s) => [s.y, s.y + s.height / 2, s.y + s.height])];
         const w = state.startGeometry.width;
         const h = state.startGeometry.height;
         let vGuide: number | null = null;
@@ -164,10 +176,12 @@ export default function ElementInteraction({
       onGuides?.(null);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     }
 
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   }
 
   return (

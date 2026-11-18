@@ -3,6 +3,12 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { FiltersPanel } from "../FiltersPanel";
+import { previewCommand } from "../lib/tauri";
+
+vi.mock("../lib/tauri", async (orig) => ({
+  ...(await orig<typeof import("../lib/tauri")>()),
+  previewCommand: vi.fn(),
+}));
 
 const mockImage = {
   width: 100,
@@ -30,6 +36,27 @@ function renderPanel(props: Partial<typeof defaultProps> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("FiltersPanel — preset thumbnails", () => {
+  it("shows the backend rendering of each preset instead of a CSS approximation", async () => {
+    vi.mocked(previewCommand).mockImplementation(async (_tab, cmd) => `data:image/png;base64,${cmd.type}`);
+    renderPanel();
+
+    const sketch = await screen.findByAltText("Sketch");
+    await vi.waitFor(() => expect(sketch).toHaveAttribute("src", "data:image/png;base64,sketch"));
+    expect(sketch.style.filter).toBe("");
+    expect(previewCommand).toHaveBeenCalledWith("tab-1", expect.objectContaining({ type: "sepia" }), 160);
+  });
+
+  it("keeps the CSS thumbnail while the backend renders, or when it fails", async () => {
+    vi.mocked(previewCommand).mockRejectedValue(new Error("no"));
+    renderPanel();
+    const sepia = await screen.findByAltText("Sépia");
+    await Promise.resolve();
+    expect(sepia).toHaveAttribute("src", mockImage.thumbnail);
+    expect(sepia.style.filter).toContain("sepia");
+  });
 });
 
 describe("FiltersPanel", () => {

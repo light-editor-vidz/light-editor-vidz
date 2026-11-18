@@ -52,6 +52,11 @@ export function addAudioTrackToProject(project: Project, track: AudioTrack): Pro
 }
 
 export function updateAudioTrackInProject(project: Project, trackId: string, patch: Partial<AudioTrack>): Project {
+  const current = project.audio_tracks.find((t) => t.id === trackId);
+  if (!current) return project;
+  // Patch sans effet : même objet (pas de nouvelle entrée d'annulation).
+  const target = current as unknown as Record<string, unknown>;
+  if (Object.entries(patch).every(([k, v]) => Object.is(target[k], v))) return project;
   return {
     ...project,
     audio_tracks: project.audio_tracks.map((t) => (t.id === trackId ? { ...t, ...patch } : t)),

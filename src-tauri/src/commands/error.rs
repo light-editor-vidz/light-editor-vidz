@@ -34,6 +34,7 @@ const KNOWN: &[(&str, &str)] = &[
     ("Download failed", "download_failed"),
     ("Failed to write the exported video", "write_export"),
     ("Failed to copy file", "copy_file"),
+    ("Download host not allowed", "host_not_allowed"),
 ];
 
 impl From<String> for CommandError {
@@ -62,9 +63,36 @@ impl From<&str> for CommandError {
     }
 }
 
+/// Un refus d'`Approved` (chemin non choisi par l'utilisateur) garde son code ; toute autre erreur
+/// reste « inconnue » avec son message.
+impl From<audio_dsp::error::CmdError> for CommandError {
+    fn from(e: audio_dsp::error::CmdError) -> Self {
+        if e.code == "path_not_approved" {
+            return Self {
+                code: "path_not_approved",
+                detail: e.params.get("path").cloned().unwrap_or_default(),
+                message: e.message,
+            };
+        }
+        Self::from(e.message)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_path_refusal_keeps_its_code_and_names_the_path() {
+        let refusal = audio_dsp::approval::Approved::default()
+            .check_output("/etc/passwd")
+            .unwrap_err();
+        let e = CommandError::from(audio_dsp::error::CmdError::from(refusal));
+        assert_eq!(
+            (e.code, e.detail.as_str()),
+            ("path_not_approved", "/etc/passwd")
+        );
+    }
 
     #[test]
     fn known_messages_get_a_stable_code_and_their_detail() {

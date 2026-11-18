@@ -93,11 +93,7 @@ pub async fn subs_generate_media(
 }
 
 fn mix_path() -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    std::env::temp_dir().join(format!("lev_subs_mix_{}_{nanos}.wav", std::process::id()))
+    super::video_tool::unpredictable_temp("lev_subs_mix_", ".wav")
 }
 
 /// Un nom de fichier sûr pour proposer l'enregistrement : le nom du projet, `.srt`, à côté du
@@ -133,7 +129,6 @@ pub async fn subs_generate_project(
 ) -> Result<PipelineOutput, CommandError> {
     let dir = projects.require(&project_dir).map_err(refuse)?;
     // Annuler ou quitter pendant le mix l'arrête aussi.
-    cancel::reset();
     let _busy = cancel::Busy::enter();
     let mix = mix_path();
     let (mix_out, mix_project, mix_dir) = (mix.clone(), project.clone(), dir.clone());

@@ -39,7 +39,10 @@ pub fn on_first_launch(app: &AppHandle) {
     let args: Vec<String> = std::env::args().collect();
     let files = media_args(&args, &cwd);
     approve(app, &files);
-    *app.state::<PendingOpen>().0.lock().unwrap() = files;
+    *app.state::<PendingOpen>()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = files;
 }
 
 /// Second lancement : la fenêtre ouverte passe devant et reçoit ses fichiers.
@@ -58,7 +61,7 @@ pub fn on_second_launch(app: &AppHandle, args: &[String], cwd: &str) {
 
 #[tauri::command]
 pub fn take_pending_files(pending: State<'_, PendingOpen>) -> Vec<String> {
-    std::mem::take(&mut *pending.0.lock().unwrap())
+    std::mem::take(&mut *pending.0.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
 #[cfg(test)]

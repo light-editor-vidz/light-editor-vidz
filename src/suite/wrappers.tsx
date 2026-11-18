@@ -15,10 +15,12 @@ export function withSuite(
     fetchNotes = () => Promise.resolve(""),
     changelogs = { en: "", fr: "" },
     lang = "en",
+    beforeRestart,
   }: {
     fetchNotes?: (lang: "en" | "fr", version: string) => Promise<string>;
     changelogs?: { en: string; fr: string };
     lang?: "en" | "fr";
+    beforeRestart?: () => Promise<boolean>;
   } = {},
 ) {
   return (
@@ -30,6 +32,7 @@ export function withSuite(
       changelogs={changelogs}
       fetchNotes={fetchNotes}
       checkOnStart={false}
+      beforeRestart={beforeRestart}
     >
       {ui}
     </SuiteRoot>

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { History, Redo2, Undo2 } from "lucide-react";
@@ -11,6 +10,7 @@ import {
   cancelExport,
   exportProject,
   exportProjectAudio,
+  pickVideoExportOutput,
   type AudioExportFormat,
   type ExportOptions,
   type ExportResult,
@@ -19,6 +19,7 @@ import type { Notice } from "./StatusBanner";
 import { expandLinkedSubtitles } from "../../lib/subs/linked";
 import ExportModal from "./ExportModal";
 import { useRegisterMenuActions } from "../../lib/menuBridge";
+import { audioPickOutput } from "../../lib/audiotool/commands";
 import { markBusy } from "../../lib/busyWork";
 
 interface Props {
@@ -38,6 +39,8 @@ interface Props {
   /** Le panneau Historique est affiché. */
   historyOpen?: boolean;
   onToggleHistory?: () => void;
+  /** Prévient l'éditeur qu'un export est en cours (la fermeture de l'onglet doit alors confirmer). */
+  onExportingChange?: (exporting: boolean) => void;
 }
 
 export default function TopBar({
@@ -53,11 +56,16 @@ export default function TopBar({
   onGenerateSubtitles,
   historyOpen = false,
   onToggleHistory,
+  onExportingChange,
 }: Props) {
   const { t } = useTranslation();
   const [exporting, setExporting] = useState(false);
   // Quitter pendant l'export demande confirmation.
   useEffect(() => (exporting ? markBusy("quit.projectExport") : undefined), [exporting]);
+  useEffect(() => {
+    onExportingChange?.(exporting);
+    return () => onExportingChange?.(false);
+  }, [exporting, onExportingChange]);
   const [exportProgress, setExportProgress] = useState(0);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportStartedAt, setExportStartedAt] = useState(0);
@@ -74,10 +82,7 @@ export default function TopBar({
 
   async function handleExport(options: ExportOptions) {
     onNotice(null);
-    const outputPath = await save({
-      defaultPath: `${project.name.trim() || "video"}.mp4`,
-      filters: [{ name: t("topbar.mp4Filter"), extensions: ["mp4"] }],
-    });
+    const outputPath = await pickVideoExportOutput(`${project.name.trim() || "video"}.mp4`);
     if (!outputPath) return;
     await runExport(outputPath, () => exportProject(projectDir, expandLinkedSubtitles(project), outputPath, options));
   }
@@ -85,10 +90,7 @@ export default function TopBar({
   async function handleExportAudio(format: AudioExportFormat) {
     onNotice(null);
     const extension = AUDIO_FORMAT_EXTENSION[format];
-    const outputPath = await save({
-      defaultPath: `${project.name.trim() || "audio"}.${extension}`,
-      filters: [{ name: t("topbar.audioFilter", { ext: extension.toUpperCase() }), extensions: [extension] }],
-    });
+    const outputPath = await audioPickOutput(`${project.name.trim() || "audio"}.${extension}`, extension);
     if (!outputPath) return;
     await runExport(outputPath, () => exportProjectAudio(projectDir, project, outputPath, format));
   }
@@ -136,7 +138,7 @@ export default function TopBar({
           {dirty && !saving && <span className="topbar-dirty-dot" aria-label={t("topbar.unsavedChanges")} />}
         </span>
         <span className="file-badge-meta">
-          {project.width} × {project.height} · {project.fps}fps
+          {project.width} × {project.height} · {t("topbar.fpsShort", { fps: project.fps })}
           {saving ? ` · ${t("topbar.saving")}` : ""}
         </span>
       </div>

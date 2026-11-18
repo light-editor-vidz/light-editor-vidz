@@ -31,6 +31,11 @@ describe("CanvasResizeDialog — rendering", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it("labels the anchor grid with a real word, not an i18n error message", () => {
+    setup();
+    expect(screen.getByText("Anchor")).toBeInTheDocument();
+  });
+
   it("starts from the original size", () => {
     setup();
     expect(screen.getByText("Original: 800 × 400 px — new size must be ≥ original")).toBeInTheDocument();

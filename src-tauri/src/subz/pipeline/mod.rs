@@ -33,6 +33,9 @@ use translate::{
 pub struct PipelineProgress {
     pub stage: String,
     pub fraction: f32,
+    /// The operation the event belongs to, when the frontend named it (see `cancel::Busy::enter_for`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,6 +43,11 @@ pub struct PipelineOutput {
     pub srt_path: String,
     pub srt_content: String,
     pub language: String,
+    /// Codes (translated by the frontend, like error codes) of what degraded the result without
+    /// failing the run: `vad_unavailable` = the speech-detection model could not be fetched, the
+    /// transcription ran without it (more text invented on silences).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<&'static str>,
 }
 
 /// Whether `fraction` is worth an IPC event after `last`: a download streams tens of
@@ -71,6 +79,7 @@ fn emit_progress(app: &AppHandle, stage: &str, fraction: f32) {
         PipelineProgress {
             stage: stage.to_string(),
             fraction,
+            operation_id: cancel::current_operation_id(),
         },
     );
 }
@@ -297,7 +306,6 @@ pub async fn run(
     audio_track: Option<u32>,
 ) -> Result<PipelineOutput> {
     let _busy = cancel::Busy::enter();
-    cancel::reset();
     let input = paths::from_webview(&input_path);
     // Only a file the user picked or dropped: the webview cannot name anything else.
     if !paths::is_allowed_input(&input) {
@@ -320,12 +328,17 @@ pub async fn run(
     };
 
     // Fail on a missing key before spending time on the audio.
-    let cloud_engine = build_cloud_stt(settings.stt_engine, language.clone())?;
+    // Le trousseau système (D-Bus, invite de déverrouillage) peut attendre : pool bloquant.
+    let cloud_engine = {
+        let (choice, language) = (settings.stt_engine, language.clone());
+        blocking(move || build_cloud_stt(choice, language)).await?
+    };
     // A cloud engine gets the audio compressed once, straight from the source.
     let format = cloud_engine
         .as_ref()
         .map_or(AudioFormat::Wav, |engine| engine.audio_format());
 
+    let mut warnings: Vec<&'static str> = Vec::new();
     emit_progress(&app, "extract_audio", 0.0);
     let cache_dir = app
         .path()
@@ -364,6 +377,9 @@ pub async fn run(
             .await
             .ok()
             .and_then(Result::ok);
+            if vad_path.is_none() {
+                warnings.push(VAD_UNAVAILABLE);
+            }
             emit_progress(&app, "download_model", 1.0);
 
             Box::new(
@@ -389,8 +405,12 @@ pub async fn run(
         srt_path: paths::to_webview(&srt_path),
         srt_content,
         language: transcript.language,
+        warnings,
     })
 }
+
+/// Warning code: the voice-activity model was abandoned (offline, slow or failed download).
+const VAD_UNAVAILABLE: &str = "vad_unavailable";
 
 /// How long the optional voice-activity model may take to download.
 const VAD_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(8);
@@ -427,6 +447,24 @@ pub fn validate_languages(
     Ok((source, target))
 }
 
+/// Like [`validate_languages`], for a translation. A source language outside the supported list
+/// (Catalan, Norwegian… detected by the transcription) is no obstacle for a cloud engine, which
+/// detects the language itself: it is simply not sent. Only the local model needs it.
+pub fn validate_translation_languages(
+    source_lang: Option<&str>,
+    target_lang: &str,
+    cloud: bool,
+) -> Result<(Option<String>, String)> {
+    match validate_languages(source_lang, target_lang) {
+        Ok((source, target)) => Ok((source.map(str::to_string), target.to_string())),
+        Err(error) if cloud => {
+            let (_, target) = validate_languages(None, target_lang).map_err(|_| error)?;
+            Ok((None, target.to_string()))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Translates an existing SRT's cue text (keeping timestamps). The result is kept in memory,
 /// offered under the name `<source_name>.<target_lang>.srt`.
 pub async fn translate(
@@ -437,7 +475,6 @@ pub async fn translate(
     target_lang: String,
 ) -> Result<TranslationOutput> {
     let _busy = cancel::Busy::enter();
-    cancel::reset();
     // Only the result of a transcription made by the app.
     if !paths::is_output(&paths::from_webview(&srt_path)) {
         return Err(coded(
@@ -446,9 +483,16 @@ pub async fn translate(
         ));
     }
     let settings = config::load_settings_or_default();
-    let (source_lang, target_lang) = validate_languages(source_lang.as_deref(), &target_lang)?;
-    let source_lang = source_lang.map(str::to_string);
-    let target_lang = target_lang.to_string();
+    // Fail on a missing key or region before downloading anything.
+    let cloud_engine = {
+        let settings = settings.clone();
+        blocking(move || build_cloud_translator(&settings)).await?
+    };
+    let (source_lang, target_lang) = validate_translation_languages(
+        source_lang.as_deref(),
+        &target_lang,
+        cloud_engine.is_some(),
+    )?;
 
     let cues = subtitle_writer::parse_srt(&srt_content);
     if cues.is_empty() {
@@ -459,9 +503,6 @@ pub async fn translate(
         .iter()
         .map(|c| segmentation::flatten_lines(&c.text))
         .collect();
-
-    // Fail on a missing key or region before downloading anything.
-    let cloud_engine = build_cloud_translator(&settings)?;
 
     emit_progress(&app, "translate", 0.0);
     let translated_texts: Vec<String> = match cloud_engine {
@@ -522,6 +563,22 @@ mod tests {
     }
 
     // ── required API keys ────────────────────────────────────────────────────
+
+    #[test]
+    fn a_source_language_outside_the_list_is_left_to_the_cloud_engine_to_detect() {
+        // Catalan : transcrit par whisper, absent de la liste de traduction.
+        assert_eq!(
+            validate_translation_languages(Some("ca"), "fr", true).unwrap(),
+            (None, "fr".to_string())
+        );
+        assert!(validate_translation_languages(Some("ca"), "fr", false).is_err());
+        assert_eq!(
+            validate_translation_languages(Some("en"), "fr", false).unwrap(),
+            (Some("en".to_string()), "fr".to_string())
+        );
+        // La cible, elle, doit toujours être connue.
+        assert!(validate_translation_languages(Some("en"), "xx", true).is_err());
+    }
 
     #[test]
     fn the_local_transcription_engine_needs_no_key() {

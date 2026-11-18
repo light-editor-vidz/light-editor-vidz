@@ -5,9 +5,9 @@
 use crate::ffmpeg::{FfError, Runner};
 use crate::filters;
 use crate::plan::{
-    build_detect_graph, build_filter_complex, burn_options, escape_for_ffmpeg_filter,
-    expected_duration, final_options, gif_tail, hardware_setup, intermediate_options,
-    stabilize_filter, ExportOptions, FilterComplexParams, ProgressTracker, Subtitles,
+    build_detect_graph, build_filter_complex, escape_for_ffmpeg_filter, expected_duration,
+    final_options, gif_tail, hardware_setup, stabilize_filter, ExportOptions, FilterComplexParams,
+    ProgressTracker, Subtitles,
 };
 use crate::subtitles::{
     build_ass_content, expand_cues_to_events, remap_events_to_kept_segments, ExpandOptions,
@@ -61,6 +61,19 @@ pub fn build_export_subtitles_filter(
     ))
 }
 
+/// `-ss` avant `-i` : tout ce qui précède le premier segment conservé n'est ni décodé ni filtré
+/// (les coupes en début de film, sinon, coûtaient un décodage complet de ce qu'on jette).
+/// `-copyts` garde les horodatages d'origine, donc les `trim` du graphe restent valables ; une
+/// seconde de marge évite de couper dans l'image clé de départ.
+fn seek_args(segments: &[crate::plan::Segment]) -> Vec<String> {
+    let first = segments.iter().map(|x| x.start).fold(f64::MAX, f64::min);
+    let seek = (first - 1.0).floor();
+    if !first.is_finite() || seek < 1.0 {
+        return vec![];
+    }
+    vec!["-ss".into(), format!("{seek:.3}"), "-copyts".into()]
+}
+
 fn s(items: &[&str]) -> Vec<String> {
     items.iter().map(|x| x.to_string()).collect()
 }
@@ -107,7 +120,7 @@ pub fn export_video(
         && options.format != "gif"
         && info.streams.iter().any(|st| st.codec_type == "audio");
 
-    let video_chain = build_video_filters(&VideoFilterParams {
+    let mut video_chain = build_video_filters(&VideoFilterParams {
         rotation: options.rotation,
         straighten: options.straighten,
         perspective_h: options.perspective_h,
@@ -130,7 +143,7 @@ pub fn export_video(
     let kept_seconds: f64 = options.segments.iter().map(|x| x.end - x.start).sum();
     let total = expected_duration(&options.segments, options.speed);
     let stabilizing = options.stabilize != "off";
-    let pass_count = u32::from(stabilizing) + 1 + u32::from(subtitles.is_some());
+    let pass_count = u32::from(stabilizing) + 1;
     let mut tracker = ProgressTracker::default();
     let mut report = |index: u32, seconds: f64, out_total: f64| {
         if let Some(p) = tracker.update(index, pass_count, seconds, out_total) {
@@ -140,61 +153,88 @@ pub fn export_video(
     let mut pass = 0;
 
     // Stabilisation, passe 1 : mesurer le mouvement de la caméra sur les images conservées.
-    let mut stab_filter: Option<String> = None;
+    let mut stab_filters: Option<Vec<String>> = None;
     if stabilizing {
-        let trf = work_dir.join("motion.trf").to_string_lossy().into_owned();
+        // One motion file per segment: nothing is measured across a cut, and each segment is
+        // stabilised with its own motion before the join (see `FilterComplexParams::stabilize`).
+        let parts: Vec<String> = (0..options.segments.len())
+            .map(|i| {
+                work_dir
+                    .join(format!("motion-{i}.trf"))
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
         let index = pass;
         pass += 1;
-        let mut args = s(&["-i"]);
+        let mut args = seek_args(&options.segments);
+        args.extend(s(&["-i"]));
         args.push(options.input_path.clone());
         args.extend([
             "-filter_complex".into(),
-            build_detect_graph(&options.segments, &trf, &options.stabilize),
+            build_detect_graph(&options.segments, &parts, &options.stabilize),
         ]);
-        args.extend(s(&["-map", "[vo]", "-f", "null", "-"]));
+        for i in 0..options.segments.len() {
+            args.extend([
+                "-map".into(),
+                format!("[vo{i}]"),
+                "-f".into(),
+                "null".into(),
+                "-".into(),
+            ]);
+        }
         runner.run(&args, &mut |sec| report(index, sec, kept_seconds))?;
-        stab_filter = Some(stabilize_filter(&trf, &options.stabilize));
+        stab_filters = Some(
+            parts
+                .iter()
+                .map(|trf| stabilize_filter(trf, &options.stabilize))
+                .collect(),
+        );
     }
 
-    // Passe principale : couper, joindre, stabiliser, géométrie, couleur, vitesse et encoder en un
-    // seul graphe. Avec des sous-titres, elle n'écrit qu'un intermédiaire : le .ass a besoin des
-    // dimensions de l'image finie.
-    let intermediate = work_dir
-        .join("intermediate.mp4")
-        .to_string_lossy()
-        .into_owned();
-    let first_target = if subtitles.is_some() {
-        intermediate.clone()
-    } else {
-        options.output_path.clone()
-    };
+    // Sous-titres : le .ass a besoin des dimensions de l'image finie. Plutôt que d'encoder deux fois
+    // (un intermédiaire, puis la gravure, avec l'audio réencodé deux fois), on les mesure sur
+    // UNE image du même graphe, puis le filtre `subtitles` rejoint la passe principale.
+    if let Some(sub) = subtitles {
+        let dims = work_dir.join("dims.png").to_string_lossy().into_owned();
+        let graph = build_filter_complex(&FilterComplexParams {
+            segments: &options.segments,
+            video_chain: &video_chain,
+            speed: options.speed,
+            with_audio: false,
+            gif: None,
+            stabilize: None,
+            hardware_filter: "",
+        });
+        let mut args = s(&["-y"]);
+        args.extend(seek_args(&options.segments));
+        args.push("-i".into());
+        args.push(options.input_path.clone());
+        args.extend(["-filter_complex".into(), graph]);
+        args.extend(s(&["-map", "[vout]", "-frames:v", "1", "-update", "1"]));
+        args.push(dims.clone());
+        runner.run(&args, &mut |_| {})?;
+        video_chain.push(build_export_subtitles_filter(
+            runner, &dims, sub, options, work_dir,
+        )?);
+    }
+
+    // Passe principale : couper, joindre, stabiliser, géométrie, couleur, vitesse, sous-titres et
+    // encoder en un seul graphe.
     let main_index = pass;
-    pass += 1;
-    let hardware_for_main = if subtitles.is_some() {
-        None
-    } else {
-        options.hardware.as_deref()
-    };
-    with_fallback(hardware_for_main, warn, |hardware| {
+    with_fallback(options.hardware.as_deref(), warn, |hardware| {
         let (input_args, hw_filter) = hardware_setup(&options.format, hardware, &options.quality);
         let graph = build_filter_complex(&FilterComplexParams {
             segments: &options.segments,
             video_chain: &video_chain,
             speed: options.speed,
             with_audio,
-            gif: if subtitles.is_some() {
-                None
-            } else {
-                gif.as_deref()
-            },
-            stabilize: stab_filter.as_deref(),
-            hardware_filter: if subtitles.is_some() { "" } else { &hw_filter },
+            gif: gif.as_deref(),
+            stabilize: stab_filters.as_deref(),
+            hardware_filter: &hw_filter,
         });
-        let mut args: Vec<String> = if subtitles.is_some() {
-            vec![]
-        } else {
-            input_args
-        };
+        let mut args: Vec<String> = input_args;
+        args.extend(seek_args(&options.segments));
         args.extend([
             "-i".to_string(),
             options.input_path.clone(),
@@ -206,57 +246,17 @@ pub fn export_video(
         if with_audio {
             args.extend(s(&["-map", "[aout]"]));
         }
-        if subtitles.is_some() {
-            args.extend(intermediate_options());
-        } else {
-            args.extend(final_options(&options.format, &options.quality, hardware));
-            if options.format == "gif" {
-                args.extend(s(&["-loop", "0"]));
-            }
+        args.extend(final_options(&options.format, &options.quality, hardware));
+        if options.format == "gif" {
+            args.extend(s(&["-loop", "0"]));
         }
         args.extend([
             "-f".to_string(),
-            if subtitles.is_some() {
-                "mp4".into()
-            } else {
-                options.format.clone()
-            },
-            first_target.clone(),
+            options.format.clone(),
+            options.output_path.clone(),
         ]);
         runner.run(&args, &mut |sec| report(main_index, sec, total))
     })?;
-
-    // Passe des sous-titres : les graver dans l'intermédiaire.
-    if let Some(sub) = subtitles {
-        let filter = build_export_subtitles_filter(runner, &first_target, sub, options, work_dir)?;
-        let index = pass;
-        with_fallback(options.hardware.as_deref(), warn, |hardware| {
-            let burn = burn_options(
-                &options.format,
-                &filter,
-                &options.quality,
-                hardware,
-                gif.as_deref(),
-            );
-            let mut args = burn.input_args;
-            args.extend([
-                "-i".to_string(),
-                first_target.clone(),
-                "-vf".into(),
-                burn.video_filter,
-            ]);
-            if options.format == "gif" {
-                args.extend(s(&["-an", "-loop", "0"]));
-            }
-            args.extend(burn.options);
-            args.extend([
-                "-f".to_string(),
-                options.format.clone(),
-                options.output_path.clone(),
-            ]);
-            runner.run(&args, &mut |sec| report(index, sec, total))
-        })?;
-    }
     Ok(())
 }
 
@@ -400,7 +400,7 @@ mod tests {
         let a = f.calls.borrow()[0].join(" ");
         assert!(
             a.contains(
-                "[vc]crop=640:360:0:0,transpose=1,hue=s=0,setpts=0.5000*PTS,scale=-2:'min(720,ih)'"
+                "[vc]crop=640:360:0:0,transpose=1,hue=s=0,setpts=PTS/2,scale=w='if(gt(iw,ih),-2,min(720,iw))':h='if(gt(iw,ih),min(720,ih),-2)'"
             ),
             "{a}"
         );
@@ -428,12 +428,12 @@ mod tests {
             calls[0].join(" ").contains("vidstabdetect=shakiness=6")
                 && calls[0].join(" ").ends_with("-f null -")
         );
-        assert!(calls[1].join(" ").contains("[vc]vidstabtransform=input="));
+        assert!(calls[1].join(" ").contains("vidstabtransform=input="));
         assert!(progress.contains(&25) || progress.contains(&75) || !progress.is_empty());
     }
 
     #[test]
-    fn subtitles_add_a_burn_pass_after_an_intermediate_one() {
+    fn subtitles_are_burned_in_the_single_encode_after_measuring_one_frame() {
         let f = fake(true);
         let sub = serde_json::json!({
             "cues": [{"start": 1.0, "end": 3.0, "text": "hello there"}],
@@ -446,15 +446,22 @@ mod tests {
         assert_eq!(r, Ok(()));
         let calls = f.calls.borrow();
         assert_eq!(calls.len(), 2);
-        let first = calls[0].join(" ");
-        assert!(first.contains("-preset veryfast -crf 16"));
-        assert!(first.contains("intermediate.mp4"));
-        let second = calls[1].join(" ");
+        // Un cadre pour connaître la taille finale, puis UN seul encodage : plus d'intermédiaire,
+        // plus d'audio réencodé deux fois.
+        let measure = calls[0].join(" ");
         assert!(
-            second.contains("-i ") && second.contains("-vf subtitles="),
-            "{second}"
+            measure.contains("-frames:v 1") && measure.contains("dims.png"),
+            "{measure}"
         );
-        assert!(second.contains("-c:a copy") && second.ends_with("-f mp4 /out.mp4"));
+        assert!(!measure.contains("libx264"), "{measure}");
+        let main = calls[1].join(" ");
+        assert!(main.contains("subtitles="), "{main}");
+        assert!(
+            main.contains("[vout]") && main.ends_with("-f mp4 /out.mp4"),
+            "{main}"
+        );
+        assert!(!main.contains("intermediate"), "{main}");
+        assert_eq!(main.matches("libx264").count(), 1, "{main}");
         let ass = std::fs::read_to_string(dir.path().join("subs.ass")).unwrap();
         assert!(
             ass.contains("PlayResX: 1280") && ass.contains("Dialogue:"),

@@ -99,36 +99,46 @@ fn refuse(message: String) -> CmdError {
     CmdError::from(anyhow::anyhow!(message))
 }
 
+/// Lectures et écritures de fichiers : hors du thread principal, où tournent les commandes
+/// synchrones.
+async fn off_main<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, CmdError> + Send + 'static,
+) -> Result<T, CmdError> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| refuse(e.to_string()))?
+}
+
 #[tauri::command]
-pub fn media_subs_list(
+pub async fn media_subs_list(
     app: AppHandle,
     approved: State<'_, Approved>,
     path: String,
 ) -> Result<Vec<SubEntry>, CmdError> {
     approved.check_input(&path).map_err(CmdError::from)?;
-    Ok(list_in(&store_dir(&app)?, Path::new(&path)))
+    off_main(move || Ok(list_in(&store_dir(&app)?, Path::new(&path)))).await
 }
 
 #[tauri::command]
-pub fn media_subs_save(
+pub async fn media_subs_save(
     app: AppHandle,
     approved: State<'_, Approved>,
     path: String,
     entry: SubEntry,
 ) -> Result<(), CmdError> {
     approved.check_input(&path).map_err(CmdError::from)?;
-    save_in(&store_dir(&app)?, Path::new(&path), entry).map_err(refuse)
+    off_main(move || save_in(&store_dir(&app)?, Path::new(&path), entry).map_err(refuse)).await
 }
 
 #[tauri::command]
-pub fn media_subs_remove(
+pub async fn media_subs_remove(
     app: AppHandle,
     approved: State<'_, Approved>,
     path: String,
     id: String,
 ) -> Result<(), CmdError> {
     approved.check_input(&path).map_err(CmdError::from)?;
-    remove_in(&store_dir(&app)?, Path::new(&path), &id).map_err(refuse)
+    off_main(move || remove_in(&store_dir(&app)?, Path::new(&path), &id).map_err(refuse)).await
 }
 
 /// Le `.srt` qui accompagne un média copié dans un projet.
@@ -156,24 +166,32 @@ fn project_media(
 }
 
 #[tauri::command]
-pub fn project_media_subtitle(
+pub async fn project_media_subtitle(
     projects: State<'_, OpenProjects>,
     project_dir: String,
     src: String,
 ) -> Result<Option<String>, CmdError> {
-    let media = project_media(&projects, &project_dir, &src)?;
-    Ok(fs::read_to_string(sidecar(&media)).ok())
+    let projects = projects.inner().clone();
+    off_main(move || {
+        let media = project_media(&projects, &project_dir, &src)?;
+        Ok(fs::read_to_string(sidecar(&media)).ok())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn set_project_media_subtitle(
+pub async fn set_project_media_subtitle(
     projects: State<'_, OpenProjects>,
     project_dir: String,
     src: String,
     srt: String,
 ) -> Result<(), CmdError> {
-    let media = project_media(&projects, &project_dir, &src)?;
-    fs::write(sidecar(&media), srt).map_err(|e| refuse(e.to_string()))
+    let projects = projects.inner().clone();
+    off_main(move || {
+        let media = project_media(&projects, &project_dir, &src)?;
+        fs::write(sidecar(&media), srt).map_err(|e| refuse(e.to_string()))
+    })
+    .await
 }
 
 /// Le type de média d'un fichier exporté (un GIF est une image pour la médiathèque).
@@ -185,7 +203,8 @@ fn output_kind(filename: &str) -> Option<&'static str> {
 
 /// Copie `output` dans la médiathèque d'un projet, avec son sous-titre s'il en a un.
 fn add_to_project(project: &Path, output: &Path, srt: Option<&str>) -> Result<(), String> {
-    if !project.join("project.json").is_file() {
+    if !crate::commands::project::is_project_dir(project) || !project.join("project.json").is_file()
+    {
         return Err(format!("{} is not a project", project.display()));
     }
     let filename = output
@@ -347,10 +366,23 @@ mod tests {
         assert!(list_in(store.path(), &file).is_empty());
     }
 
+    /// Un dossier de projet : il porte le suffixe `.lvproj`.
     fn project() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::Builder::new()
+            .suffix(".lvproj")
+            .tempdir()
+            .unwrap();
         fs::write(dir.path().join("project.json"), b"{}").unwrap();
         dir
+    }
+
+    #[test]
+    fn a_folder_without_the_project_suffix_is_refused() {
+        let plain = tempfile::tempdir().unwrap();
+        fs::write(plain.path().join("project.json"), b"{}").unwrap();
+        let media = tempfile::tempdir().unwrap();
+        let file = media_in(media.path());
+        assert!(add_to_project(plain.path(), &file, None).is_err());
     }
 
     #[test]

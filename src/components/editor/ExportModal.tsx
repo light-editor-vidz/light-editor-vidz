@@ -20,12 +20,12 @@ type ResolutionChoice = "original" | 1080 | 720 | 480;
 type QualityChoice = "high" | "medium" | "low";
 type ModeChoice = "video" | "audio";
 
-// Noms de formats : identiques dans toutes les langues, donc pas dans les fichiers de traduction.
-const AUDIO_FORMAT_ROWS: { value: AudioExportFormat; label: string }[][] = [
+// Noms de formats : identiques dans toutes les langues, sauf « float » (`labelKey`).
+const AUDIO_FORMAT_ROWS: { value: AudioExportFormat; label: string; labelKey?: string }[][] = [
   [
     { value: "wav16", label: "WAV 16-bit" },
     { value: "wav24", label: "WAV 24-bit" },
-    { value: "wav32f", label: "WAV 32-bit float" },
+    { value: "wav32f", label: "WAV 32-bit float", labelKey: "exportModal.wav32f" },
   ],
   [
     { value: "mp3", label: "MP3" },
@@ -131,7 +131,7 @@ export default function ExportModal({
                       className={`fps-option${audioFormat === opt.value ? " selected" : ""}`}
                       onClick={() => setAudioFormat(opt.value)}
                     >
-                      <span className="fps-value mono">{opt.label}</span>
+                      <span className="fps-value mono">{opt.labelKey ? t(opt.labelKey) : opt.label}</span>
                     </button>
                   ))}
                 </div>

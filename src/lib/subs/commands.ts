@@ -34,6 +34,8 @@ export interface SubsOutput {
   srt_path: string;
   srt_content: string;
   language: string;
+  /** Codes d'avertissement non bloquants (ex. `vad_unavailable`). */
+  warnings?: string[];
 }
 
 /** Les clés d'API qu'un moteur demande : `[nom dans le trousseau, libellé]`, ou `null` (local). */

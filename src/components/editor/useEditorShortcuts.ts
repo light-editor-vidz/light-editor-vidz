@@ -28,6 +28,29 @@ interface Options {
   actions: ShortcutActions;
 }
 
+/** Types d'`<input>` dans lesquels on saisit du texte : les autres (curseur, case à cocher, bouton,
+ * couleur…) laissent passer Espace, Suppr et Ctrl+Z. */
+const TEXT_INPUT_TYPES = new Set(["text", "number", "search", "email", "url", "tel", "password", "date", "time"]);
+
+/** Une fenêtre modale visible est-elle ouverte ? (celles d'un onglet masqué ne comptent pas) */
+export function isModalOpen(): boolean {
+  return Array.from(document.querySelectorAll('[aria-modal="true"], [role="dialog"], .modal-backdrop')).some(
+    (el) => !el.closest("[hidden]"),
+  );
+}
+
+/** La touche est-elle destinée au champ qui a le focus ? */
+export function isTyping(el: Element | null, key: string): boolean {
+  if (!el) return false;
+  const tag = el.tagName.toLowerCase();
+  if (tag === "textarea" || tag === "select" || (el as HTMLElement).isContentEditable) return true;
+  if (tag !== "input") return false;
+  const type = ((el as HTMLInputElement).type || "text").toLowerCase();
+  if (TEXT_INPUT_TYPES.has(type)) return true;
+  // Un curseur utilise les flèches, Début et Fin pour lui-même.
+  return type === "range" && /^(Arrow|Home$|End$|Page)/.test(key);
+}
+
 /**
  * Raccourcis clavier de l'éditeur : un seul abonnement `keydown` pour toute la vie du composant ;
  * le gestionnaire lu à chaque frappe est le dernier défini (ref), il voit donc toujours l'état
@@ -47,8 +70,10 @@ export function useEditorShortcuts({ hasActiveComposition, selectedIds, selected
         actions.save();
         return;
       }
-      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
-      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      if (isTyping(document.activeElement, e.key)) return;
+      // Une fenêtre modale est ouverte : Suppr, Espace, Ctrl+A… ne doivent pas agir sur l'éditeur
+      // qui est derrière elle.
+      if (isModalOpen()) return;
       if (e.key === " ") {
         e.preventDefault();
         if (!e.repeat) actions.togglePlay();

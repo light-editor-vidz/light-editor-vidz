@@ -51,6 +51,13 @@ const FONT_OPTIONS = [
   "monospace",
 ];
 
+/** Familles génériques CSS : leur nom affiché suit la langue (les autres sont des noms propres). */
+const GENERIC_FONT_LABELS: Record<string, "font_sans_serif" | "font_serif" | "font_monospace"> = {
+  "sans-serif": "font_sans_serif",
+  serif: "font_serif",
+  monospace: "font_monospace",
+};
+
 export default function SubtitlesPanel({
   subtitles,
   onImport,
@@ -198,7 +205,7 @@ export default function SubtitlesPanel({
         >
           {FONT_OPTIONS.map((f) => (
             <option key={f} value={f}>
-              {f}
+              {GENERIC_FONT_LABELS[f] ? t[GENERIC_FONT_LABELS[f]] : f}
             </option>
           ))}
         </select>

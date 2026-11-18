@@ -1,4 +1,5 @@
 import { render, screen, act, waitFor } from "@testing-library/react";
+import { resetInstalledMenu } from "./menu";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { getVersion } from "@tauri-apps/api/app";
 import { useSuiteMenu } from "./useSuiteMenu";
@@ -15,6 +16,15 @@ import { withSuite } from "./wrappers";
 
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn() }));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn(() => Promise.resolve(null)) }));
+const close = vi.fn();
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    close,
+    setTheme: () => Promise.resolve(),
+    isFullscreen: vi.fn(),
+    setFullscreen: vi.fn(),
+  }),
+}));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 
 const openSettings = vi.fn();
@@ -46,6 +56,7 @@ async function mount(lang: "en" | "fr" = "en") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetInstalledMenu();
   localStorage.clear();
   vi.mocked(getVersion).mockResolvedValue("1.0.0");
 });
@@ -65,6 +76,14 @@ describe("the menu bar", () => {
     expect(entry("File", "Settings…").accelerator).toBe("CmdOrCtrl+,");
     entry("File", "Settings…").action?.();
     expect(openSettings).toHaveBeenCalled();
+  });
+
+  it("Quit closes the window so the close guard runs, instead of exiting the process", async () => {
+    await mount();
+
+    entry("File", "Quit").action?.();
+
+    expect(close).toHaveBeenCalled();
   });
 
   it("has no Edit menu outside macOS, where copy and paste work anyway", async () => {

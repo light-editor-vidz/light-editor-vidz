@@ -2,17 +2,49 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::Result;
-use reqwest::blocking::{Client, RequestBuilder, Response};
-use reqwest::StatusCode;
+use reqwest::blocking::{Client, Request, RequestBuilder, Response};
+use reqwest::{Method, StatusCode};
 
 use crate::subz::cancel;
 use crate::subz::errors::coded;
 
-/// Long on purpose: uploading an hour of audio or translating hundreds of lines is
+/// Long on purpose (but a request is cut off after 15 minutes, not half an hour, and a request
+/// that keeps failing stops retrying after `TOTAL_BUDGET`): uploading an hour of audio or translating hundreds of lines is
 /// slower than reqwest's 30 s default for blocking clients. The connect timeout still
 /// fails fast on a dead network.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Once this much time went into one request, no further attempt is started: four attempts on a
+/// blocked connection would otherwise add up to two hours.
+const TOTAL_BUDGET: Duration = Duration::from_secs(40 * 60);
+
+/// Bound for the short exchanges (status polling, deletion, lookups): their answer does not
+/// depend on the size of the audio, so a connection silent for this long is blocked. reqwest's
+/// blocking client has no per-read timeout, so this is a total timeout set on those requests only;
+/// the long ones (upload, transcription of a chunk) keep `REQUEST_TIMEOUT`, and are still
+/// abandoned at once when the user cancels.
+const SHORT_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// A file sent as a request body that stops (read error) as soon as the user cancels: an upload
+/// abandoned by its thread would otherwise carry on, and be billed, until its end.
+pub struct CancellableReader<R>(R);
+
+impl<R: std::io::Read> std::io::Read for CancellableReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if cancel::is_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "cancelled by the user",
+            ));
+        }
+        self.0.read(buf)
+    }
+}
+
+pub fn cancellable_file_body(file: std::fs::File) -> Result<reqwest::blocking::Body> {
+    let len = file.metadata()?.len();
+    Ok(reqwest::blocking::Body::sized(CancellableReader(file), len))
+}
 
 /// One client for every cloud engine (shared connection pool and TLS state).
 pub fn client() -> &'static Client {
@@ -21,6 +53,7 @@ pub fn client() -> &'static Client {
         Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .connect_timeout(CONNECT_TIMEOUT)
+            .tcp_keepalive(Duration::from_secs(30))
             .user_agent(concat!("light-gen-subz/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("building the HTTP client")
@@ -67,6 +100,25 @@ pub fn is_retryable_status(status: StatusCode) -> bool {
     matches!(status.as_u16(), 408 | 425 | 429 | 500 | 502 | 503 | 504)
 }
 
+fn is_idempotent(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::GET | Method::HEAD | Method::PUT | Method::DELETE | Method::OPTIONS
+    )
+}
+
+/// Whether a request sent with `method` may be sent again after `status`. A POST is retried only
+/// when the provider says it did not process it (429 too many requests, 503 unavailable, both
+/// with `Retry-After` honoured): after a 500, 502 or 504 the work may have been done, and a
+/// second send would be billed twice (or create a second AssemblyAI job).
+pub fn may_retry(method: &Method, status: StatusCode) -> bool {
+    if is_idempotent(method) {
+        is_retryable_status(status)
+    } else {
+        matches!(status.as_u16(), 429 | 503)
+    }
+}
+
 /// Wait before attempt `attempt + 1`: `Retry-After` when the provider gave one, otherwise
 /// 1 s, 2 s, 4 s… with up to 25 % of jitter.
 pub fn retry_delay(attempt: u32, retry_after: Option<Duration>) -> Duration {
@@ -106,10 +158,10 @@ enum Outcome {
 
 /// One request, sent from a helper thread so a cancellation is honoured while it is in
 /// flight: the thread is abandoned and ends with the request or its timeout.
-fn attempt(request: RequestBuilder) -> Result<Outcome> {
+fn attempt(request: Request) -> Result<Outcome> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let outcome = match request.send() {
+        let outcome = match client().execute(request) {
             Ok(response) if response.status().is_success() => Outcome::Success(response),
             Ok(response) => {
                 let status = response.status();
@@ -150,7 +202,8 @@ fn error_chain(e: &dyn std::error::Error) -> String {
     text
 }
 
-/// Sends the request, retrying a busy or unreachable provider with a growing delay, and
+/// Sends the request, retrying (idempotent calls; a POST only when the provider refused it
+/// untouched, see [`may_retry`]) a busy or unreachable provider with a growing delay, and
 /// turns a non-2xx answer into an error that carries the provider's own explanation
 /// (`error_for_status` throws the body away). `make` builds a fresh request for every
 /// attempt: a streamed body cannot be sent twice. The URL is stripped from transport
@@ -158,18 +211,26 @@ fn error_chain(e: &dyn std::error::Error) -> String {
 /// request in flight.
 pub fn send_checked(make: impl Fn() -> Result<RequestBuilder>, provider: &str) -> Result<Response> {
     let mut tries = 0;
+    let started = std::time::Instant::now();
     loop {
         cancel::check()?;
         tries += 1;
-        let last = tries >= MAX_ATTEMPTS;
-        match attempt(make()?)? {
+        let last = tries >= MAX_ATTEMPTS || started.elapsed() >= TOTAL_BUDGET;
+        let mut request = make()?
+            .build()
+            .map_err(|e| anyhow::anyhow!("building request to {provider}: {}", e.without_url()))?;
+        let method = request.method().clone();
+        if matches!(method, Method::GET | Method::HEAD | Method::DELETE) {
+            request.timeout_mut().get_or_insert(SHORT_REQUEST_TIMEOUT);
+        }
+        match attempt(request)? {
             Outcome::Success(response) => return Ok(response),
             Outcome::Status {
                 status,
                 body,
                 retry_after,
             } => {
-                if !last && is_retryable_status(status) {
+                if !last && may_retry(&method, status) {
                     sleep_cancellable(retry_delay(tries, retry_after))?;
                     continue;
                 }
@@ -180,7 +241,10 @@ pub fn send_checked(make: impl Fn() -> Result<RequestBuilder>, provider: &str) -
                 });
             }
             Outcome::Transport(e) => {
-                let retryable = e.is_connect() || e.is_timeout() || e.is_request();
+                // Seulement quand la requête n'est pas partie (connexion refusée) : après un délai dépassé,
+                // le fournisseur a pu traiter l'envoi, et un nouvel essai facturerait deux fois (ou
+                // créerait un second travail AssemblyAI).
+                let retryable = e.is_connect();
                 if !last && retryable {
                     sleep_cancellable(retry_delay(tries, None))?;
                     continue;
@@ -193,6 +257,18 @@ pub fn send_checked(make: impl Fn() -> Result<RequestBuilder>, provider: &str) -
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn a_blocked_connection_cannot_hold_the_app_for_hours() {
+        // Quatre tentatives à 30 min : 2 h figé. Désormais borné par le budget total.
+        assert!(REQUEST_TIMEOUT <= Duration::from_secs(15 * 60));
+        assert!(TOTAL_BUDGET + REQUEST_TIMEOUT < Duration::from_secs(60 * 60));
     }
 }
 
@@ -375,6 +451,33 @@ mod tests {
 
         assert_eq!(out.code, Some("provider_unavailable"));
         assert_eq!(mock.requests.lock().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn a_post_is_not_resent_after_a_server_error_but_is_after_a_refusal() {
+        let mock = serve(vec![(500, "boom".into()), (200, "{}".into())]);
+        assert!(send_checked(|| Ok(client().post(&mock.url).body("x")), "Test").is_err());
+        assert_eq!(mock.requests.lock().unwrap().len(), 1);
+
+        let mock = serve(vec![(429, "slow".into()), (200, "{}".into())]);
+        assert!(send_checked(|| Ok(client().post(&mock.url).body("x")), "Test").is_ok());
+        assert_eq!(mock.requests.lock().unwrap().len(), 2);
+
+        assert!(may_retry(&Method::GET, StatusCode::BAD_GATEWAY));
+        assert!(!may_retry(&Method::POST, StatusCode::BAD_GATEWAY));
+    }
+
+    #[test]
+    fn an_upload_body_stops_reading_once_cancelled() {
+        use std::io::Read;
+        let mut reader = CancellableReader(std::io::Cursor::new(vec![1u8; 10]));
+        let mut buf = [0u8; 4];
+        let _running = cancel::Busy::enter();
+        cancel::reset();
+        assert_eq!(reader.read(&mut buf).unwrap(), 4);
+        cancel::request();
+        assert!(reader.read(&mut buf).is_err());
+        cancel::reset();
     }
 
     #[test]

@@ -64,6 +64,15 @@ describe("RotationControls", () => {
     expect(onApplyAngle).toHaveBeenNthCalledWith(2, 45, true);
   });
 
+  it("lets a negative angle be typed, « - » first", async () => {
+    renderControls({ onApplyAngle: vi.fn().mockResolvedValue(1) });
+    const input = screen.getByRole("spinbutton", { name: /rotation degrees/i }) as HTMLInputElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, "-30");
+    expect(input.value).toBe("-30");
+    expect(screen.getByRole("slider", { name: /rotation angle slider/i })).toHaveValue("-30");
+  });
+
   it("applies a typed angle on Enter", async () => {
     const onApplyAngle = vi.fn().mockResolvedValue(1);
     renderControls({ onApplyAngle });

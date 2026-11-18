@@ -4,6 +4,7 @@ import type { CropApi } from "./hooks/useCrop";
 import { CropOverlay } from "./CropOverlay";
 import type { CropRect, EditorMode, ImageMeta, PickedColor } from "./types";
 import { useT } from "./lib/langContext";
+import { growMaskBounds, resetMaskBounds } from "./lib/maskBounds";
 
 interface CanvasProps {
   image: ImageMeta | null;
@@ -43,6 +44,8 @@ interface CanvasProps {
   onMaskDirtyChange?: (dirty: boolean) => void;
 }
 
+/** Âge au-delà duquel une ancre de zoom à la molette est périmée (le zoom n'a pas changé). */
+const ANCHOR_MAX_AGE_MS = 500;
 const ZOOM_STEP = 1.15;
 const FIT_MARGIN = 32;
 
@@ -90,7 +93,7 @@ export function Canvas({
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const brushCursorRef = useRef<HTMLDivElement | null>(null);
   const lastStrokeRef = useRef<{ x: number; y: number } | null>(null);
-  const wheelAnchorRef = useRef<{ imgX: number; imgY: number; px: number; py: number } | null>(null);
+  const wheelAnchorRef = useRef<{ imgX: number; imgY: number; px: number; py: number; at: number } | null>(null);
   const zoomRef = useRef(zoom);
   const hasImage = !!image;
 
@@ -140,6 +143,7 @@ export function Canvas({
     if (!maskCanvasRef.current) return;
     const ctx = maskCanvasRef.current.getContext("2d");
     if (ctx) ctx.clearRect(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height);
+    resetMaskBounds(maskCanvasRef.current);
     onMaskDirtyChange?.(false);
   }, [image?.preview, onMaskDirtyChange]);
 
@@ -148,6 +152,7 @@ export function Canvas({
     if (maskClearSignal === undefined || !maskCanvasRef.current || !image) return;
     const ctx = maskCanvasRef.current.getContext("2d");
     if (ctx) ctx.clearRect(0, 0, image.width, image.height);
+    resetMaskBounds(maskCanvasRef.current);
     onMaskDirtyChange?.(false);
   }, [maskClearSignal, image, onMaskDirtyChange]);
 
@@ -203,6 +208,7 @@ export function Canvas({
           imgY: (e.clientY - box.top) / z,
           px: e.clientX,
           py: e.clientY,
+          at: performance.now(),
         };
       }
       const delta = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
@@ -219,6 +225,9 @@ export function Canvas({
     const content = contentRef.current;
     if (!anchor || !el || !content) return;
     wheelAnchorRef.current = null;
+    // À la butée du zoom, `zoom` ne change pas et cet effet ne passe pas : l'ancre restait en
+    // mémoire et faisait sauter le défilement bien plus tard. Une ancre ancienne est ignorée.
+    if (performance.now() - anchor.at > ANCHOR_MAX_AGE_MS) return;
     const box = content.getBoundingClientRect();
     el.scrollLeft += box.left + anchor.imgX * zoom - anchor.px;
     el.scrollTop += box.top + anchor.imgY * zoom - anchor.py;
@@ -379,6 +388,8 @@ export function Canvas({
     ctx.moveTo(last.x, last.y);
     ctx.lineTo(p.x, p.y);
     ctx.stroke();
+    growMaskBounds(e.currentTarget, last.x, last.y, ctx.lineWidth / 2);
+    growMaskBounds(e.currentTarget, p.x, p.y, ctx.lineWidth / 2);
     lastStrokeRef.current = p;
     onMaskDirtyChange?.(true);
   };
@@ -419,7 +430,7 @@ export function Canvas({
               <polyline points="21 15 16 10 5 21" />
             </svg>
             <h2 className="home-name">
-              LightCut<span className="home-name-accent">Imgz</span>
+              LightEditor<span className="home-name-accent">Vidz</span>
             </h2>
             <p className="home-subtitle">{t("home.drop")}</p>
             <p className="home-or">{t("home.or")}</p>
@@ -520,6 +531,9 @@ export function Canvas({
             data-testid="canvas-image"
             style={{
               imageRendering: zoom >= 3 ? "pixelated" : "auto",
+              // L'aperçu d'un réglage remplace l'image : sur une image translucide, l'original
+              // visible en dessous se mélangeait à lui (la mise en page est conservée).
+              visibility: previewSrc ? "hidden" : undefined,
               ...(liveRotation
                 ? {
                     left: (boxWidth - displayWidth) / 2,

@@ -15,6 +15,14 @@ pub mod test_support;
 pub const MAX_HISTORY_BYTES: usize = 1 << 30;
 /// Nombre maximal d'étapes conservées par onglet.
 pub const MAX_HISTORY_ENTRIES: usize = 100;
+/// Budget de tous les onglets ensemble : chacun reçoit sa part (jamais moins de `MIN_TAB_BYTES`).
+pub const MAX_TOTAL_HISTORY_BYTES: usize = 3 << 30;
+pub const MIN_TAB_BYTES: usize = 256 << 20;
+
+/// Part de mémoire d'historique d'un onglet quand `tabs` onglets sont ouverts.
+pub fn tab_budget(tabs: usize) -> usize {
+    (MAX_TOTAL_HISTORY_BYTES / tabs.max(1)).clamp(MIN_TAB_BYTES, MAX_HISTORY_BYTES)
+}
 
 /// Numérote les états d'historique : une URL d'image ne désigne jamais deux images différentes.
 static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
@@ -32,6 +40,9 @@ pub struct AppHistory {
     pub format: String,
     /// Profil colorimétrique ICC du fichier d'origine, réinjecté à l'export.
     pub icc: Option<Vec<u8>>,
+    /// Métadonnées EXIF du fichier d'origine (TIFF brut, orientation remise à 1 : les pixels ont
+    /// déjà été redressés à l'ouverture), réinjectées à l'export.
+    pub exif: Option<Vec<u8>>,
 }
 
 impl Default for AppHistory {
@@ -50,6 +61,7 @@ impl AppHistory {
             source_path: None,
             format: "png".to_string(),
             icc: None,
+            exif: None,
         }
     }
 
@@ -90,9 +102,14 @@ impl AppHistory {
     /// Abandonne les plus anciennes étapes (jamais l'originale) tant que le budget
     /// d'étapes ou de mémoire est dépassé.
     fn enforce_budget(&mut self) {
+        self.trim_to(MAX_HISTORY_BYTES);
+    }
+
+    /// Comme `enforce_budget`, avec une limite de mémoire donnée (la part de cet onglet).
+    pub fn trim_to(&mut self, max_bytes: usize) {
         let bytes = |h: &Self| h.entries.iter().map(|e| e.as_bytes().len()).sum::<usize>();
         while self.entries.len() > 2
-            && (self.entries.len() > MAX_HISTORY_ENTRIES || bytes(self) > MAX_HISTORY_BYTES)
+            && (self.entries.len() > MAX_HISTORY_ENTRIES || bytes(self) > max_bytes)
         {
             self.entries.remove(1);
             self.logs.remove(1);
@@ -151,6 +168,15 @@ pub struct AppState(pub Mutex<HashMap<String, AppHistory>>);
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn each_tab_gets_a_share_of_the_total_history_budget() {
+        use super::*;
+        assert_eq!(tab_budget(1), MAX_HISTORY_BYTES);
+        assert_eq!(tab_budget(6), MAX_TOTAL_HISTORY_BYTES / 6);
+        assert_eq!(tab_budget(100), MIN_TAB_BYTES);
+        assert_eq!(tab_budget(0), MAX_HISTORY_BYTES);
+    }
+
     use super::*;
     use image::{DynamicImage, Rgba, RgbaImage};
 

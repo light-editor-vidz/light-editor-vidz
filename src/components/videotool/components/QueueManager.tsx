@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getApi } from "../api";
 import { useT } from "../i18n";
+import { engineErrorText } from "../engineError";
 import type { QueueJob } from "../api";
 import "./QueueManager.css";
 
@@ -123,7 +124,9 @@ export default function QueueManager() {
                       <div className="queue-fill" style={{ width: `${job.progress}%` }} />
                     </div>
                   )}
-                  {job.status === "error" && job.error && <div className="queue-error">{job.error}</div>}
+                  {job.status === "error" && job.error && (
+                    <div className="queue-error">{engineErrorText(job.error, t)}</div>
+                  )}
                   <div className="queue-actions">
                     {isActive(job) && (
                       <button className="btn-ghost" onClick={() => cancel(job.id)}>

@@ -30,7 +30,11 @@ export async function busyWork(): Promise<string[]> {
 
 /** Vrai si l'on peut quitter : rien n'est en cours, ou l'utilisateur accepte de l'interrompre. */
 export async function confirmQuitWithBusyWork(): Promise<boolean> {
-  const keys = await busyWork();
+  return confirmInterrupt(await busyWork());
+}
+
+/** Demande à l'utilisateur d'accepter d'interrompre ces travaux (clés de traduction). */
+export async function confirmInterrupt(keys: string[]): Promise<boolean> {
   if (keys.length === 0) return true;
   const list = keys.map((key) => `• ${i18n.t(key)}`).join("\n");
   try {

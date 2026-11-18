@@ -174,12 +174,17 @@ export function reorderComposition(project: Project, compId: string, direction: 
   return recomputeTimeline({ ...project, compositions });
 }
 
-/** Composition active à l'instant global `t`, avec le temps local (relatif à son début). */
+/**
+ * Composition active à l'instant global `t`, avec le temps local (relatif à son début). Pendant un
+ * chevauchement, c'est la **dernière** scène qui contient `t` (la scène entrante) : se placer au
+ * début d'une scène suivante la rend active, au lieu de rester sur la précédente.
+ */
 export function resolveActiveComposition(
   project: Project,
   t: number,
 ): { composition: Composition; localTime: number } | null {
-  for (const comp of project.compositions) {
+  for (let i = project.compositions.length - 1; i >= 0; i--) {
+    const comp = project.compositions[i];
     if (t >= comp.start_time && t < comp.start_time + comp.duration) {
       return { composition: comp, localTime: t - comp.start_time };
     }

@@ -46,11 +46,11 @@ sha2 = "0.11"
 futures-util = "0.3"
 hound = "3"
 dirs = "7"
+# Préversion épinglée exactement : l'API d'ort change entre rc (pas de garantie semver), à relever à la main.
 ort = "=2.0.0-rc.15"
 tokenizers = "0.23"
 zeroize = "1"
 tempfile = "3"
-# Le trousseau de sous-titres est en v4 ; celui des clés d'assets reste en v3.
 tauri-plugin-single-instance = "2"
 keyring4 = { package = "keyring", version = "4" }
 # Recherche/téléchargement d'assets libres de droit (Pexels, Pixabay, Freesound, Openverse).
@@ -59,7 +59,6 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 futures = "0.3"
 # Écriture asynchrone des téléchargements (déjà une dépendance transitive de reqwest/tauri).
 tokio = { version = "1", features = ["fs", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "apple-native", "windows-native"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

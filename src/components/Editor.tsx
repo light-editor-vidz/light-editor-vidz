@@ -5,7 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { Project } from "../bindings/Project";
 import type { ShapeType } from "../bindings/ShapeType";
 import type { AudioTrack } from "../bindings/AudioTrack";
-import { loadProject, newProject, pickTextFile, saveProject } from "../lib/commands";
+import { loadProject, newProject, pickTextFile, saveProject, takeProjectRecovery } from "../lib/commands";
 import { parseLegacyProject } from "../lib/legacyImport";
 import type { Element } from "../bindings/Element";
 import {
@@ -60,7 +60,10 @@ import { projectStepLabel, stepLabels, type Translate } from "../lib/historyLabe
 import { createPlaybackClock, useClockValue } from "../lib/playbackClock";
 import { useAutosave } from "../lib/useAutosave";
 import { registerBeforeExit } from "../lib/lifecycle";
-import { preloadMedia, dropIdleMedia } from "../lib/mediaCache";
+import { confirmInterrupt } from "../lib/busyWork";
+import type { TransitionType } from "../bindings/TransitionType";
+import { useStableCallback } from "../lib/useStableCallback";
+import { dropIdleMedia } from "../lib/mediaCache";
 import { clampPosition } from "../lib/geometry";
 import TopBar from "./editor/TopBar";
 import { useMenuBridge, useRegisterMenuActions, useTabActive } from "../lib/menuBridge";
@@ -86,11 +89,42 @@ interface Props {
   /** `intent: "new"` : retour à l'accueil avec la fenêtre de création de projet ouverte. */
   onBack: (intent?: "new") => void;
   onOpenProject: (dir: string, notice?: string) => void;
+  /** « Nouveau projet » : va à l'accueil sans fermer cet onglet (à défaut, `onBack("new")`). */
+  onNewProject?: () => void;
   /** Message affiché à l'ouverture (ex : médias à ré-importer après un import legacy). */
   initialNotice?: string | null;
+  /** Ce que l'onglet demande avant de se fermer : enregistrer, et confirmer si un export tourne. */
+  registerCloseGuard?: (guard: () => Promise<boolean>) => () => void;
 }
 
-export default function Editor({ projectDir, onBack, onOpenProject, initialNotice = null }: Props) {
+/** Les réglages à choix (gras, alignement, mode de fusion…) sont des actions ponctuelles : deux
+ * bascules rapprochées restent deux entrées d'annulation, au lieu de fusionner en une. */
+const DISCRETE_KEYS = new Set([
+  "alignment",
+  "vertical_alignment",
+  "font_weight",
+  "font_style",
+  "blend_mode",
+  "shape_type",
+  "fit_mode",
+  "loop_video",
+  "muted",
+  "underline",
+  "strikethrough",
+]);
+function isDiscretePatch(patch: ElementPatch): boolean {
+  const keys = Object.keys(patch);
+  return keys.length > 0 && keys.every((k) => DISCRETE_KEYS.has(k));
+}
+
+export default function Editor({
+  projectDir,
+  onBack,
+  onOpenProject,
+  onNewProject,
+  initialNotice = null,
+  registerCloseGuard,
+}: Props) {
   const { t } = useTranslation();
   const [history, dispatch] = useReducer(historyReducer, initialHistory);
   const { present: project, saved: savedProject, past, future } = history;
@@ -116,6 +150,7 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
 
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
 
+  const hiddenByResize = useRef(0);
   const projectRef = useRef(project);
   useEffect(() => {
     projectRef.current = project;
@@ -133,8 +168,16 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
         // Si le projet a dû être réparé, il diffère du disque : rester "non enregistré"
         // pour que la sauvegarde automatique persiste la réparation.
         dispatch({ type: "load", project: repaired, saved: repaired === p ? p : null });
+        // Rouvert depuis la sauvegarde (le fichier principal était illisible) : à signaler.
+        return takeProjectRecovery(projectDir)
+          .then((recovered) => {
+            if (recovered) setNotice({ kind: "warning", message: t("editor.recoveredFromBackup") });
+          })
+          .catch(() => {});
       })
       .catch((e) => setLoadError(describeError(e)));
+    // `t` n'est pas une dépendance : un changement de langue ne doit pas recharger le projet.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectDir]);
 
   const { saving, saveError, flush } = useAutosave({
@@ -153,6 +196,20 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
   useEffect(() => {
     flushRef.current = flush;
   }, [flush]);
+  const exportingRef = useRef(false);
+  const onExportingChange = useCallback((exporting: boolean) => {
+    exportingRef.current = exporting;
+  }, []);
+  // La croix de l'onglet passe par le même chemin que Ctrl+W : si l'écriture échoue (clé USB
+  // retirée…), l'onglet reste ouvert avec son bandeau d'erreur au lieu de perdre le travail.
+  useEffect(
+    () =>
+      registerCloseGuard?.(async () => {
+        if (exportingRef.current && !(await confirmInterrupt(["quit.projectExport"]))) return false;
+        return flushRef.current();
+      }),
+    [registerCloseGuard],
+  );
   useEffect(() => {
     const unregister = registerBeforeExit(() => flushRef.current());
     return () => {
@@ -190,18 +247,96 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
     return () => cancelAnimationFrame(raf);
   }, [playing, clock]);
 
+  /** Lecture / pause. Lancée à la fin du projet, la lecture repart du début (sinon le premier
+   * pas d'horloge dépassait la durée et s'arrêtait aussitôt, sans rien jouer). */
+  const togglePlay = useCallback(() => {
+    setPlaying((was) => {
+      if (!was) {
+        const duration = projectRef.current?.duration ?? 0;
+        if (duration > 0 && clock.get() >= duration - 0.001) clock.set(0);
+      }
+      return !was;
+    });
+  }, [clock]);
+
   /** Applique une mutation au projet en poussant l'état précédent dans l'historique d'annulation.
    * `coalesceKey` : les mutations rapprochées portant la même clé (drag, slider, frappe continue)
    * fusionnent en une seule entrée d'historique — voir `src/lib/history.ts`. */
-  const mutate = useCallback((fn: (p: Project) => Project, coalesceKey?: string) => {
-    dispatch({ type: "mutate", fn, key: coalesceKey, now: performance.now() });
+  // Un drag émet une mutation par `pointermove` (plusieurs centaines par seconde) : chacune
+  // refaisait le rendu de tout l'éditeur et relançait l'autosave. Les mutations qui portent une
+  // clé de fusion sont regroupées : au plus une par image d'écran, composées dans l'ordre.
+  const pendingMutations = useRef<{ fns: ((p: Project) => Project)[]; key: string; frame: number } | null>(null);
+  const flushMutations = useCallback(() => {
+    const pending = pendingMutations.current;
+    if (!pending) return;
+    pendingMutations.current = null;
+    cancelAnimationFrame(pending.frame);
+    const fn = (p: Project) => pending.fns.reduce((acc, step) => step(acc), p);
+    dispatch({ type: "mutate", fn, key: pending.key, now: performance.now() });
   }, []);
+  // Seuls les gestes à la souris sont regroupés : une frappe ou un clic isolé s'applique tout de suite.
+  const pointerHeld = useRef(false);
+  useEffect(() => {
+    const down = () => {
+      pointerHeld.current = true;
+    };
+    const up = () => {
+      pointerHeld.current = false;
+      flushMutations();
+    };
+    // Le clavier et la saisie dans un champ ne sont jamais un geste à la souris en cours.
+    const typed = () => {
+      pointerHeld.current = false;
+    };
+    window.addEventListener("keydown", typed, true);
+    window.addEventListener("input", typed, true);
+    window.addEventListener("change", typed, true);
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    return () => {
+      window.removeEventListener("keydown", typed, true);
+      window.removeEventListener("input", typed, true);
+      window.removeEventListener("change", typed, true);
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+    };
+  }, [flushMutations]);
+  const mutate = useCallback(
+    (fn: (p: Project) => Project, coalesceKey?: string) => {
+      if (!coalesceKey || !pointerHeld.current) {
+        // Une action ponctuelle (ou au clavier) passe après celles déjà en attente.
+        flushMutations();
+        dispatch({ type: "mutate", fn, key: coalesceKey, now: performance.now() });
+        return;
+      }
+      if (pendingMutations.current && pendingMutations.current.key !== coalesceKey) flushMutations();
+      if (pendingMutations.current) pendingMutations.current.fns.push(fn);
+      else pendingMutations.current = { fns: [fn], key: coalesceKey, frame: requestAnimationFrame(flushMutations) };
+    },
+    [flushMutations],
+  );
+  useEffect(() => flushMutations, [flushMutations]);
 
+  const historyProjects = useMemo(() => [...past, ...future], [past, future]);
   const canUndo = past.length > 0;
   const canRedo = future.length > 0;
-  const handleUndo = useCallback(() => dispatch({ type: "undo" }), []);
-  const handleRedo = useCallback(() => dispatch({ type: "redo" }), []);
-  const handleGoto = useCallback((index: number) => dispatch({ type: "goto", index }), []);
+  const handleUndo = useCallback(() => {
+    flushMutations();
+    dispatch({ type: "undo" });
+  }, [flushMutations]);
+  const handleRedo = useCallback(() => {
+    flushMutations();
+    dispatch({ type: "redo" });
+  }, [flushMutations]);
+  const handleGoto = useCallback(
+    (index: number) => {
+      flushMutations();
+      dispatch({ type: "goto", index });
+    },
+    [flushMutations],
+  );
   const [showHistory, setShowHistory] = useState(false);
   const ht = useCallback<Translate>((key, vars) => t(key, vars ?? {}), [t]);
   const historyLabels = useMemo(
@@ -325,18 +460,6 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
     });
   }, [activeComposition]);
 
-  // Les vidéos de la scène active et de la suivante sont chargées à l'avance : elles ne sont pas
-  // relues depuis le disque au moment où la tête de lecture les atteint.
-  useEffect(() => {
-    if (!project || !activeId) return;
-    const index = project.compositions.findIndex((c) => c.id === activeId);
-    for (const comp of project.compositions.slice(index, index + 2)) {
-      for (const el of comp.elements) {
-        if (el.type === "video") preloadMedia(projectDir, el.src);
-      }
-    }
-  }, [project, activeId, projectDir]);
-
   function addAndSelect(element: ReturnType<typeof createTitleElement>) {
     const active = getActive();
     if (!project || !active) return;
@@ -380,7 +503,7 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
       // Un drag (x,y en rafale), un slider (volume…) ou la frappe (content) fusionnent en une
       // seule entrée d'annulation ; la clé inclut les champs touchés pour que deux réglages
       // différents restent deux entrées distinctes.
-      `el:${elementId}:${Object.keys(patch).sort().join(",")}`,
+      isDiscretePatch(patch) ? undefined : `el:${elementId}:${Object.keys(patch).sort().join(",")}`,
     );
   }
 
@@ -543,7 +666,7 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
     selectedElementIds,
     actions: {
       save: handleSave,
-      togglePlay: () => setPlaying((p) => !p),
+      togglePlay,
       nudge: handleNudge,
       seekBy: handleSeekBy,
       seekTo: (time) => clock.set(time ?? projectRef.current?.duration ?? 0),
@@ -561,13 +684,109 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
     },
   });
 
+  // Gestionnaires d'identité stable : les panneaux (`memo`) ne se re-rendent pas à chaque mutation
+  // du projet (un drag en émet une par image) quand leurs données n'ont pas changé.
+  const sAddTitle = useStableCallback(() => addAndSelect(createTitleElement()));
+  const sAddSubtitle = useStableCallback(() => addAndSelect(createSubtitleElement()));
+  const sAddStyledText = useStableCallback((preset: TextStylePreset) => addAndSelect(createStyledTextElement(preset)));
+  const sAddImage = useStableCallback((src: string, name: string) => addAndSelect(createImageElement(src, name)));
+  const sAddVideo = useStableCallback((src: string, name: string, subtitlesOn?: boolean) => {
+    void addVideo(src, name, subtitlesOn);
+  });
+  const sAddAudio = useStableCallback((src: string, name: string, subtitlesOn?: boolean) => {
+    void addAndSelectAudio(src, name, subtitlesOn);
+  });
+  const sAddShape = useStableCallback((shapeType: ShapeType) => addAndSelect(createShapeElement(shapeType)));
+  const sOpenSettings = useStableCallback(() => setShowSettings(true));
+  const sSeekToStart = useStableCallback(() => {
+    if (activeComposition) clock.set(activeComposition.start_time);
+  });
+  const sSeekToNext = useStableCallback(() => {
+    const p = projectRef.current;
+    if (!p || !activeComposition) return;
+    const idx = p.compositions.findIndex((c) => c.id === activeComposition.id);
+    const next = p.compositions[idx + 1];
+    clock.set(next ? next.start_time : p.duration);
+  });
+  const sSetTransitionIn = useStableCallback((transitionType: TransitionType | null) => {
+    if (activeComposition) mutate((p) => setCompositionTransitionIn(p, activeComposition.id, transitionType));
+  });
+  const sSetTransitionOut = useStableCallback((transitionType: TransitionType | null) => {
+    if (activeComposition) mutate((p) => setCompositionTransitionOut(p, activeComposition.id, transitionType));
+  });
+  const sSelectElement = useStableCallback(handleSelectElement);
+  const sMarqueeSelect = useStableCallback(handleMarqueeSelect);
+  const sUpdateElement = useStableCallback(handleUpdateElement);
+  const sUpdateSelected = useStableCallback((patch: ElementPatch) => {
+    if (selectedId) handleUpdateElement(selectedId, patch);
+  });
+  const sUpdateAudio = useStableCallback(handleUpdateAudio);
+  const sReorder = useStableCallback(handleReorder);
+  const sSelectLayer = useStableCallback((id: string, additive: boolean) => handleSelectElement(id, additive));
+  const sReorderLayer = useStableCallback(handleReorderLayer);
+  const sDeleteLayer = useStableCallback((id: string) => {
+    mutate((p) => deleteElementsFromProject(p, [id]));
+    setSelectedIds((prev) => prev.filter((x) => x !== id));
+  });
+  const sAlign = useStableCallback(handleAlign);
+  const sDistribute = useStableCallback(handleDistribute);
+  const sGroup = useStableCallback(handleGroup);
+  const sUngroup = useStableCallback(handleUngroup);
+  const sSubsForSelection = useStableCallback(openSubsForSelection);
+  const sEditLinkedCues = useStableCallback(editLinkedCues);
+  const sSelectComposition = useStableCallback((id: string) => {
+    const comp = projectRef.current?.compositions.find((c) => c.id === id);
+    if (comp) clock.set(comp.start_time);
+  });
+  const sTimelineSelect = useStableCallback((id: string) => handleSelectElement(id, false));
+  const sAddComposition = useStableCallback(() => mutate(addComposition));
+  const sSeek = useStableCallback((time: number) => clock.set(time));
+  const sResizeComposition = useStableCallback((compId: string, duration: number) => {
+    mutate((p) => updateCompositionDuration(p, compId, duration), `comp:${compId}:duration`);
+    // Un élément qui commence après la fin de la scène n'est plus visible : on le dit (une
+    // seule fois par changement du nombre d'éléments masqués, pas à chaque pixel du drag).
+    const comp = projectRef.current?.compositions.find((c) => c.id === compId);
+    const hidden = comp ? comp.elements.filter((el) => el.start_time >= duration).length : 0;
+    if (hidden !== hiddenByResize.current) {
+      hiddenByResize.current = hidden;
+      if (hidden > 0) setNotice({ kind: "warning", message: t("editor.sceneHidesElements", { count: hidden }) });
+    }
+  });
+  const sUpdateOverlap = useStableCallback((compId: string, overlap: number) =>
+    mutate((p) => setCompositionOverlap(p, compId, overlap), `comp:${compId}:overlap`),
+  );
+  const sRenameComposition = useStableCallback((compId: string, name: string) =>
+    mutate((p) => renameComposition(p, compId, name)),
+  );
+  const sReorderComposition = useStableCallback((compId: string, direction: 1 | -1) =>
+    mutate((p) => reorderComposition(p, compId, direction)),
+  );
+  const sDeleteComposition = useStableCallback((compId: string) => mutate((p) => removeComposition(p, compId)));
+  const sDuplicateComposition = useStableCallback((compId: string) => {
+    const current = projectRef.current;
+    if (!current) return;
+    const { project: next, newId } = duplicateComposition(current, compId);
+    mutate(() => next);
+    const copy = next.compositions.find((c) => c.id === newId);
+    if (copy) clock.set(copy.start_time);
+  });
+  const sUpdateElementTiming = useStableCallback((elementId: string, startTime: number, duration: number | null) =>
+    mutate((p) => updateElementTiming(p, elementId, startTime, duration), `timing:${elementId}`),
+  );
+  const sUpdateAudioTiming = useStableCallback((trackId: string, startTime: number, duration: number | null) =>
+    mutate((p) => updateAudioTrackInProject(p, trackId, { start_time: startTime, duration }), `timing:${trackId}`),
+  );
+  const sSplit = useStableCallback(handleSplitSelected);
+  const sDelete = useStableCallback(handleDeleteSelected);
+  const sDuplicate = useStableCallback(handleDuplicateSelected);
+
   const dirty = project !== null && project !== savedProject;
   // Ce que le canvas affiche : le projet, plus les sous-titres activés de ses médias.
   const shownProject = useMemo(() => (project ? expandLinkedSubtitles(project) : null), [project]);
 
   // The menu bar acts on this editor while it is open.
   useRegisterMenuActions({
-    newProject: () => void afterSave(() => onBack("new")),
+    newProject: () => void afterSave(() => (onNewProject ? onNewProject() : onBack("new"))),
     openProject: () => void handleOpenProjectDialog(),
     openRecent: (dir: string) => void afterSave(() => onOpenProject(dir)),
     importLegacy: () => void handleImportLegacy(),
@@ -640,6 +859,7 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
         onGenerateSubtitles={openSubsForProject}
         historyOpen={showHistory}
         onToggleHistory={() => setShowHistory((s) => !s)}
+        onExportingChange={onExportingChange}
       />
       {showHistory && (
         <HistoryPanel
@@ -666,14 +886,15 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
           active={leftTab}
           projectDir={projectDir}
           project={project}
-          onAddTitle={() => addAndSelect(createTitleElement())}
-          onAddSubtitle={() => addAndSelect(createSubtitleElement())}
-          onAddStyledText={(preset: TextStylePreset) => addAndSelect(createStyledTextElement(preset))}
-          onAddImage={(src, name) => addAndSelect(createImageElement(src, name))}
-          onAddVideo={(src, name, subtitlesOn) => void addVideo(src, name, subtitlesOn)}
-          onAddAudio={(src, name, subtitlesOn) => void addAndSelectAudio(src, name, subtitlesOn)}
-          onAddShape={(shapeType: ShapeType) => addAndSelect(createShapeElement(shapeType))}
-          onOpenSettings={() => setShowSettings(true)}
+          historyProjects={historyProjects}
+          onAddTitle={sAddTitle}
+          onAddSubtitle={sAddSubtitle}
+          onAddStyledText={sAddStyledText}
+          onAddImage={sAddImage}
+          onAddVideo={sAddVideo}
+          onAddAudio={sAddAudio}
+          onAddShape={sAddShape}
+          onOpenSettings={sOpenSettings}
         />
         <CanvasStage
           project={shownProject ?? project}
@@ -681,23 +902,15 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
           composition={shownProject?.compositions.find((c) => c.id === activeComposition.id) ?? activeComposition}
           clock={clock}
           playing={playing}
-          onTogglePlay={() => setPlaying((p) => !p)}
-          onSeekToStart={() => clock.set(activeComposition.start_time)}
+          onTogglePlay={togglePlay}
+          onSeekToStart={sSeekToStart}
           selectedIds={selectedIds}
-          onSelectElement={handleSelectElement}
-          onMarqueeSelect={handleMarqueeSelect}
-          onUpdateElement={handleUpdateElement}
-          onSetTransitionIn={(transitionType) =>
-            mutate((p) => setCompositionTransitionIn(p, activeComposition.id, transitionType))
-          }
-          onSetTransitionOut={(transitionType) =>
-            mutate((p) => setCompositionTransitionOut(p, activeComposition.id, transitionType))
-          }
-          onSeekToNext={() => {
-            const idx = project.compositions.findIndex((c) => c.id === activeComposition.id);
-            const next = project.compositions[idx + 1];
-            clock.set(next ? next.start_time : project.duration);
-          }}
+          onSelectElement={sSelectElement}
+          onMarqueeSelect={sMarqueeSelect}
+          onUpdateElement={sUpdateElement}
+          onSetTransitionIn={sSetTransitionIn}
+          onSetTransitionOut={sSetTransitionOut}
+          onSeekToNext={sSeekToNext}
           onUndo={handleUndo}
           onRedo={handleRedo}
           canUndo={canUndo}
@@ -706,24 +919,21 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
         <PropertiesPanel
           element={findElement(project, selectedId)}
           audioTrack={findAudioTrack(project, selectedId)}
-          onUpdate={(patch) => selectedId && handleUpdateElement(selectedId, patch)}
-          onUpdateAudio={handleUpdateAudio}
-          onReorder={handleReorder}
+          onUpdate={sUpdateSelected}
+          onUpdateAudio={sUpdateAudio}
+          onReorder={sReorder}
           activeCompositionDuration={activeComposition.duration}
           elements={activeComposition.elements}
           selectedIds={selectedIds}
-          onSelectLayer={(id, additive) => handleSelectElement(id, additive)}
-          onReorderLayer={handleReorderLayer}
-          onDeleteLayer={(id) => {
-            mutate((p) => deleteElementsFromProject(p, [id]));
-            setSelectedIds((prev) => prev.filter((x) => x !== id));
-          }}
-          onAlign={handleAlign}
-          onDistribute={handleDistribute}
-          onGroup={handleGroup}
-          onUngroup={handleUngroup}
-          onGenerateSubtitles={openSubsForSelection}
-          onEditLinkedCues={editLinkedCues}
+          onSelectLayer={sSelectLayer}
+          onReorderLayer={sReorderLayer}
+          onDeleteLayer={sDeleteLayer}
+          onAlign={sAlign}
+          onDistribute={sDistribute}
+          onGroup={sGroup}
+          onUngroup={sUngroup}
+          onGenerateSubtitles={sSubsForSelection}
+          onEditLinkedCues={sEditLinkedCues}
         />
       </div>
       <Timeline
@@ -732,37 +942,21 @@ export default function Editor({ projectDir, onBack, onOpenProject, initialNotic
         selectedElementIds={selectedIds}
         clock={clock}
         canSplit={selectedIds.length === 1 && !isAudioSelected}
-        onSelectComposition={(id) => {
-          const comp = project.compositions.find((c) => c.id === id);
-          if (comp) clock.set(comp.start_time);
-        }}
-        onSelectElement={(id) => handleSelectElement(id, false)}
-        onAddComposition={() => mutate(addComposition)}
-        onSeek={(time) => clock.set(time)}
-        onResizeComposition={(compId, duration) =>
-          mutate((p) => updateCompositionDuration(p, compId, duration), `comp:${compId}:duration`)
-        }
-        onUpdateOverlap={(compId, overlap) =>
-          mutate((p) => setCompositionOverlap(p, compId, overlap), `comp:${compId}:overlap`)
-        }
-        onRenameComposition={(compId, name) => mutate((p) => renameComposition(p, compId, name))}
-        onReorderComposition={(compId, direction) => mutate((p) => reorderComposition(p, compId, direction))}
-        onDeleteComposition={(compId) => mutate((p) => removeComposition(p, compId))}
-        onDuplicateComposition={(compId) => {
-          const { project: next, newId } = duplicateComposition(project, compId);
-          mutate(() => next);
-          const copy = next.compositions.find((c) => c.id === newId);
-          if (copy) clock.set(copy.start_time);
-        }}
-        onUpdateElementTiming={(elementId, startTime, duration) =>
-          mutate((p) => updateElementTiming(p, elementId, startTime, duration), `timing:${elementId}`)
-        }
-        onUpdateAudioTiming={(trackId, startTime, duration) =>
-          mutate((p) => updateAudioTrackInProject(p, trackId, { start_time: startTime, duration }), `timing:${trackId}`)
-        }
-        onSplit={handleSplitSelected}
-        onDelete={handleDeleteSelected}
-        onDuplicate={handleDuplicateSelected}
+        onSelectComposition={sSelectComposition}
+        onSelectElement={sTimelineSelect}
+        onAddComposition={sAddComposition}
+        onSeek={sSeek}
+        onResizeComposition={sResizeComposition}
+        onUpdateOverlap={sUpdateOverlap}
+        onRenameComposition={sRenameComposition}
+        onReorderComposition={sReorderComposition}
+        onDeleteComposition={sDeleteComposition}
+        onDuplicateComposition={sDuplicateComposition}
+        onUpdateElementTiming={sUpdateElementTiming}
+        onUpdateAudioTiming={sUpdateAudioTiming}
+        onSplit={sSplit}
+        onDelete={sDelete}
+        onDuplicate={sDuplicate}
         searchQuery={timelineSearch}
         onSearchChange={setTimelineSearch}
       />

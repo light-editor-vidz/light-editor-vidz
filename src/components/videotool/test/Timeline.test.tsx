@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 import Timeline from "../components/Timeline";
 import { LangProvider } from "../i18n";
+import { TabActiveProvider } from "../../../lib/menuBridge";
 import type { TrimSegment } from "../types";
 
 class ResizeObserverStub {
@@ -628,6 +629,30 @@ describe("Timeline — keyboard and typed times", () => {
     fireEvent.click(container.querySelector(".tl-cut")!);
     fireEvent.keyDown(window, { key: "Delete" });
     expect(onCutSegmentsChange).toHaveBeenCalledWith([]);
+  });
+
+  it("ignores Delete while its tab is hidden or a modal is open", () => {
+    const onCutSegmentsChange = vi.fn();
+    const props = makeProps({ cutSegments: [{ id: "a", start: 10, end: 30 }], onCutSegmentsChange });
+    const hidden = render(
+      <TabActiveProvider value={false}>
+        <LangProvider>
+          <Timeline {...props} />
+        </LangProvider>
+      </TabActiveProvider>,
+    );
+    fireEvent.click(hidden.container.querySelector(".tl-cut")!);
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(onCutSegmentsChange).not.toHaveBeenCalled();
+    hidden.unmount();
+
+    const { container } = r(props);
+    fireEvent.click(container.querySelector(".tl-cut")!);
+    const modal = document.body.appendChild(document.createElement("div"));
+    modal.className = "modal-backdrop";
+    fireEvent.keyDown(window, { key: "Delete" });
+    modal.remove();
+    expect(onCutSegmentsChange).not.toHaveBeenCalled();
   });
 
   it("does nothing on Delete when no cut is selected", () => {

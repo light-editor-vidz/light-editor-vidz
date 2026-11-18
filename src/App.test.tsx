@@ -1,7 +1,8 @@
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 import App from "./App";
+import { importAsset } from "./lib/commands";
 import { inertBridge, useTabActive } from "./lib/menuBridge";
 import { mediaKind, pickMediaFile } from "./lib/openMedia";
 
@@ -55,6 +56,15 @@ vi.mock("./lib/openMedia", () => ({
   pickMediaFile: vi.fn(),
   mediaKind: vi.fn(),
   takePendingFiles: vi.fn(async () => []),
+}));
+vi.mock("./lib/commands", async (orig) => ({
+  ...(await orig<typeof import("./lib/commands")>()),
+  importAsset: vi.fn(async () => "assets/images/x.png"),
+}));
+vi.mock("@tauri-apps/api/event", async (orig) => ({
+  ...(await orig<typeof import("@tauri-apps/api/event")>()),
+  emit: vi.fn(async () => {}),
+  listen: vi.fn(() => Promise.resolve(() => {})),
 }));
 const editorMounts = vi.hoisted(() => ({ count: 0 }));
 vi.mock("./components/Editor", () => ({
@@ -145,6 +155,16 @@ beforeEach(() => {
   inertBridge.actions.current = {};
 });
 
+// Les outils sont chargés à la demande (`lazy`) : un premier rendu attend leur module, les suivants
+// sont synchrones. Ils sont donc chargés une fois pour toutes avant les tests.
+beforeAll(async () => {
+  const view = render(<App />);
+  for (const tool of ["tool-audio", "tool-image", "tool-video"]) fireEvent.click(screen.getByText(tool));
+  await screen.findByText("audio:empty");
+  await screen.findByText("video:empty");
+  view.unmount();
+});
+
 describe("App — onglets", () => {
   it("démarre sur l'accueil, sans autre onglet", () => {
     render(<App />);
@@ -203,6 +223,26 @@ describe("App — onglets", () => {
     fireEvent.click(screen.getByText("new"));
 
     expect(screen.getByText("home (new)")).toBeVisible();
+  });
+
+  it("Fichier > Nouveau projet depuis un onglet Audio mène à l'accueil sans fermer l'onglet", () => {
+    render(<App />);
+    fireEvent.click(screen.getByText("tool-audio"));
+    expect(inertBridge.actions.current.newProject).toBeTypeOf("function");
+
+    act(() => inertBridge.actions.current.newProject?.());
+
+    expect(screen.getByText("home (new)")).toBeVisible();
+    expect(tab("Audio")).toBeInTheDocument();
+  });
+
+  it("Fichier > Projets récents ouvre un projet depuis un onglet Image ou Vidéo", () => {
+    render(<App />);
+    fireEvent.click(screen.getByText("tool-video"));
+
+    act(() => inertBridge.actions.current.openRecent?.("/projets/demo"));
+
+    expect(screen.getByText("editor:/projets/demo")).toBeVisible();
   });
 
   it("le bouton Audio de l'accueil ouvre un onglet audio vide", () => {
@@ -329,6 +369,31 @@ describe("App — ouvrir un fichier", () => {
 
     expect(screen.getByText("audio:/m/a.wav")).toBeVisible();
     expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
+  it("importe dans le projet affiché un média déposé dessus, au lieu d'ouvrir un outil", async () => {
+    mockKind.mockResolvedValueOnce("image");
+    render(<App />);
+    fireEvent.click(screen.getByText("home")); // ouvre /projets/demo
+    await waitFor(() => expect(dropHandler.current).not.toBeNull());
+
+    await act(async () => {
+      await dropHandler.current?.({ payload: { type: "drop", paths: ["/m/photo.png"] } });
+    });
+
+    expect(importAsset).toHaveBeenCalledWith("/projets/demo", "image", "/m/photo.png");
+    expect(screen.queryByText(/^image:/)).toBeNull();
+  });
+
+  it("ouvre comme un projet un dossier .lvproj déposé", async () => {
+    render(<App />);
+    await waitFor(() => expect(dropHandler.current).not.toBeNull());
+
+    await act(async () => {
+      await dropHandler.current?.({ payload: { type: "drop", paths: ["/p/clip.lvproj"] } });
+    });
+
+    expect(screen.getByText("editor:/p/clip.lvproj")).toBeVisible();
   });
 
   it("ignore les autres événements de glisser-déposer", async () => {

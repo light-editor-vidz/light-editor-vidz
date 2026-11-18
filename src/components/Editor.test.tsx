@@ -1,14 +1,15 @@
 import { render, screen, fireEvent, act, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { open } from "@tauri-apps/plugin-dialog";
-import { listAssets, loadProject, newProject, pickTextFile, saveProject } from "../lib/commands";
-import { createTitleElement } from "../lib/elements";
+import { listAssets, loadProject, newProject, pickTextFile, saveProject, takeProjectRecovery } from "../lib/commands";
+import { createTitleElement, createVideoElement } from "../lib/elements";
 import type { Project } from "../bindings/Project";
 import type { Composition } from "../bindings/Composition";
 import type { Element } from "../bindings/Element";
 import type { AudioTrack } from "../bindings/AudioTrack";
 import Editor from "./Editor";
 import { inertBridge } from "../lib/menuBridge";
+import { preloadMedia } from "../lib/mediaCache";
 
 /** What the menu bar would trigger: the actions the editor registered. */
 const menu = () => inertBridge.actions.current;
@@ -21,6 +22,7 @@ vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), revealItemInDir: vi.fn() }));
 vi.mock("../lib/commands", () => ({
   loadProject: vi.fn(),
+  takeProjectRecovery: vi.fn(() => Promise.resolve(false)),
   saveProject: vi.fn(),
   newProject: vi.fn(),
   pickTextFile: vi.fn(),
@@ -172,6 +174,13 @@ describe("Editor — chargement du projet", () => {
     expect(onBack).toHaveBeenCalled();
   });
 
+  it("prévient quand le projet a été rouvert depuis sa sauvegarde", async () => {
+    vi.mocked(takeProjectRecovery).mockResolvedValueOnce(true);
+    await renderEditor();
+
+    expect(await screen.findByText(/previous version \(backup\) was opened/)).toBeInTheDocument();
+  });
+
   it("répare silencieusement un projet sans aucune scène", async () => {
     await renderEditor(makeProject({ compositions: [], duration: 0 }));
 
@@ -238,6 +247,15 @@ describe("Editor — sauvegarde", () => {
     expect(mockSave).toHaveBeenCalledTimes(1);
   });
 
+  it("ne précharge pas les vidéos en mémoire (lecture par flux Range)", async () => {
+    const video = { ...createVideoElement("assets/videos/clip.mp4", "clip"), id: "v1" } as Element;
+    vi.mocked(preloadMedia).mockClear();
+    await renderEditor(makeProject({ compositions: [comp({ elements: [el("one"), video] })] }));
+    key("a", { ctrlKey: true });
+    key("g", { ctrlKey: true });
+    expect(preloadMedia).not.toHaveBeenCalled();
+  });
+
   it("signale les modifications non enregistrées puis efface le témoin", async () => {
     await renderEditor();
     expect(screen.queryByLabelText("Unsaved changes (autosave pending)")).not.toBeInTheDocument();
@@ -302,6 +320,48 @@ describe("Editor — sauvegarde", () => {
     act(() => menu().closeProject?.());
     await act(async () => {});
 
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it("le garde de fermeture d'onglet enregistre, et refuse la fermeture si l'écriture échoue", async () => {
+    let guard: (() => Promise<boolean>) | null = null;
+    mockLoad.mockResolvedValue(makeProject());
+    render(
+      <Editor
+        projectDir="/p"
+        onBack={vi.fn()}
+        onOpenProject={vi.fn()}
+        registerCloseGuard={(g) => {
+          guard = g;
+          return () => {};
+        }}
+      />,
+    );
+    await act(async () => {});
+    key("a", { ctrlKey: true });
+    key("Delete");
+
+    mockSave.mockClear();
+    mockSave.mockResolvedValue(undefined as never);
+    expect(await guard!()).toBe(true);
+    expect(mockSave).toHaveBeenCalledTimes(1);
+
+    key("z", { ctrlKey: true }); // une nouvelle modification en attente
+    mockSave.mockRejectedValue(new Error("clé USB retirée"));
+    expect(await guard!()).toBe(false);
+  });
+
+  it("Nouveau projet passe par onNewProject quand il est fourni, sans fermer l'onglet", async () => {
+    mockLoad.mockResolvedValue(makeProject());
+    const onBack = vi.fn();
+    const onNewProject = vi.fn();
+    render(<Editor projectDir="/p" onBack={onBack} onOpenProject={vi.fn()} onNewProject={onNewProject} />);
+    await act(async () => {});
+
+    act(() => menu().newProject?.());
+    await act(async () => {});
+
+    expect(onNewProject).toHaveBeenCalledTimes(1);
     expect(onBack).not.toHaveBeenCalled();
   });
 
@@ -408,6 +468,22 @@ describe("Editor — lecture", () => {
     expect(timecode()).toBe("00:01:00 / 00:15:00");
   });
 
+  it("repart du début quand on lance la lecture à la fin du projet", async () => {
+    vi.useFakeTimers();
+    mockLoad.mockResolvedValue(makeProject());
+    render(<Editor projectDir="/p" onBack={vi.fn()} onOpenProject={vi.fn()} />);
+    await act(async () => {});
+    key("End");
+    expect(timecode()).toBe("00:15:00 / 00:15:00");
+
+    key(" ");
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(timecode()).toBe("00:01:00 / 00:15:00");
+  });
+
   it("ignore la répétition clavier de la barre d'espace", async () => {
     vi.useFakeTimers();
     mockLoad.mockResolvedValue(makeProject());
@@ -443,23 +519,23 @@ describe("Editor — lecture", () => {
 
   it("s'arrête et se cale sur la fin quand la lecture atteint la durée du projet", async () => {
     vi.useFakeTimers();
-    mockLoad.mockResolvedValue(makeProject());
+    mockLoad.mockResolvedValue(makeProject({ duration: 0.5 }));
     render(<Editor projectDir="/p" onBack={vi.fn()} onOpenProject={vi.fn()} />);
     await act(async () => {});
 
-    key("End");
     key(" ");
     await act(async () => {
       vi.advanceTimersByTime(1000);
     });
     // Arrêté net sur la durée, sans la dépasser.
-    expect(timecode()).toBe("00:15:00 / 00:15:00");
+    const end = timecode();
+    expect(end).toMatch(/^00:00:15 \//);
 
     // Et la lecture est bien coupée : le temps ne bouge plus.
     await act(async () => {
       vi.advanceTimersByTime(2000);
     });
-    expect(timecode()).toBe("00:15:00 / 00:15:00");
+    expect(timecode()).toBe(end);
   });
 
   it("bascule la lecture depuis le bouton du canvas", async () => {
@@ -1288,7 +1364,7 @@ describe("Editor — glissers sur la timeline", () => {
    * (`Element` désigne un élément de projet dans ce fichier — d'où `HTMLElement` ici.) */
   function dragBy(handle: HTMLElement, deltaPx: number) {
     fireEvent.pointerDown(handle, { clientX: 0 });
-    fireEvent.pointerMove(window, { clientX: deltaPx });
+    fireEvent.pointerMove(window, { buttons: 1, clientX: deltaPx });
     fireEvent.pointerUp(window, { clientX: deltaPx });
   }
 
@@ -1300,6 +1376,30 @@ describe("Editor — glissers sur la timeline", () => {
     dragBy(handle, 80);
 
     expect((await savedProject()).compositions[0].duration).toBeCloseTo(12, 5);
+  });
+
+  it("deux bascules rapprochées d'un réglage à choix restent deux entrées d'annulation", async () => {
+    await renderEditor();
+    fireEvent.pointerDown(document.querySelector(".element-interaction")!);
+    const underline = () => screen.getByRole("button", { name: "Underline" });
+
+    fireEvent.click(underline());
+    fireEvent.click(underline());
+    expect(underline()).toHaveAttribute("aria-pressed", "false");
+
+    key("z", { ctrlKey: true }); // annule seulement la seconde bascule
+    expect(underline()).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("prévient quand raccourcir une scène rend des éléments invisibles", async () => {
+    const late = { ...el("late"), start_time: 8 } as Element;
+    await renderEditor(makeProject({ compositions: [comp({ elements: [el("one"), late] })] }));
+    const handle = document.querySelector(".timeline-scene-resize") as HTMLElement;
+
+    // 10 s → 5 s : l'élément qui commence à 8 s n'est plus visible.
+    dragBy(handle, -200);
+
+    expect(await screen.findByText(/1 element\(s\) start after the end of this scene/)).toBeInTheDocument();
   });
 
   it("ne laisse pas une scène descendre sous la durée minimale", async () => {

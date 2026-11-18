@@ -186,7 +186,7 @@ impl SttEngine for AssemblyAiEngine {
                 Ok(client
                     .post(format!("{base}/upload"))
                     .header("authorization", self.api_key.as_str())
-                    .body(file))
+                    .body(http::cancellable_file_body(file)?))
             },
             PROVIDER,
         )?
@@ -210,18 +210,41 @@ impl SttEngine for AssemblyAiEngine {
         let status_url = format!("{base}/transcript/{}", created.id);
         let result = self.wait_and_fetch(&status_url, total, &mut on_progress);
 
-        // Best effort: the transcript stays on AssemblyAI's servers until deleted, and
-        // the provider only removes a finished one — after a cancellation or a timeout
-        // the job may still be running and this is refused. The uploaded audio has no
-        // delete endpoint at all (it expires on their side).
-        let _ = client
-            .delete(&status_url)
-            .header("authorization", self.api_key.as_str())
-            .send();
+        // Best effort: the transcript stays on AssemblyAI's servers until deleted. A finished one
+        // is deleted at once; after a cancellation or an error the job may still be running and
+        // the provider refuses, so the deletion is retried a few times from a background thread
+        // (the cancellation must not wait for it). The uploaded audio has no delete endpoint
+        // (it expires on their side).
+        let delete = |url: String, key: String| {
+            let client = http::client();
+            for attempt in 0..DELETE_ATTEMPTS {
+                if attempt > 0 {
+                    std::thread::sleep(DELETE_RETRY_DELAY);
+                }
+                let sent = client
+                    .delete(&url)
+                    .header("authorization", key.as_str())
+                    .timeout(Duration::from_secs(15))
+                    .send();
+                if sent.is_ok_and(|r| r.status().is_success() || r.status() == 404) {
+                    return;
+                }
+            }
+        };
+        if result.is_ok() {
+            delete(status_url, self.api_key.to_string());
+        } else {
+            let key = self.api_key.to_string();
+            std::thread::spawn(move || delete(status_url, key));
+        }
 
         result
     }
 }
+
+/// Attempts to delete a transcript still being processed, and the pause between them.
+const DELETE_ATTEMPTS: u32 = 4;
+const DELETE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 impl AssemblyAiEngine {
     fn wait_and_fetch(

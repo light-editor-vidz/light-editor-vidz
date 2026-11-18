@@ -4,7 +4,7 @@ name: Release
 # publishes them with SHA256SUMS and bumps the Homebrew cask.
 on:
   push:
-    tags: ['v*.*.*']
+    tags: ["v*.*.*"]
 
 permissions:
   contents: read
@@ -13,8 +13,14 @@ env:
   TAG: ${{ github.ref_name }}
 
 jobs:
+  # Le tag ne publie rien si lint, tests, clippy ou audit échouent.
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   create-release:
     name: Create the release
+    needs: ci
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     permissions:
@@ -22,8 +28,8 @@ jobs:
     outputs:
       release_id: ${{ steps.release.outputs.release_id }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Tag matches the app version
@@ -38,7 +44,9 @@ jobs:
         run: |
           VERSION="${TAG#v}"
           node scripts/release-notes.mjs "$TAG" > notes.md
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "LightEditorVidz $TAG" --notes-file notes.md
+          # En brouillon : invisible (et jamais « latest ») tant que tous les binaires ne sont pas là ;
+          # la dernière étape (`publish`) le publie.
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --title "LightEditorVidz $TAG" --notes-file notes.md
           echo "release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .id)" >> "$GITHUB_OUTPUT"
 
   build:
@@ -54,22 +62,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu, kind: linux, args: '' }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, kind: linux, args: '' }
-          - { os: macos-latest, target: aarch64-apple-darwin, kind: macos, args: '--target aarch64-apple-darwin' }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu, kind: linux, args: "" }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, kind: linux, args: "" }
+          - { os: macos-latest, target: aarch64-apple-darwin, kind: macos, args: "--target aarch64-apple-darwin" }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: ${{ matrix.kind == 'macos' && 'aarch64-apple-darwin' || '' }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-          key: ${{ matrix.target }}
+      # Pas de cache (npm, cargo) dans ce job : il reçoit la clé de signature de l'updater, et un
+      # cache empoisonné y serait exécuté avec elle.
       - name: Install Linux dependencies
         if: matrix.kind == 'linux'
         run: |
@@ -78,11 +83,31 @@ jobs:
       - run: npm ci
       - name: Download the bundled ffmpeg
         run: node scripts/fetch-ffmpeg.mjs --target ${{ matrix.target }}
-      - uses: tauri-apps/tauri-action@v0
+      # macOS : signature Developer ID et notarisation, seulement si les secrets existent (sinon
+      # l'application reste non signée, comme avant).
+      - name: Apple signing and notarization (when configured)
+        if: matrix.kind == 'macos'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              echo "$name=${!name}" >> "$GITHUB_ENV"
+            done
+            echo "Apple signing enabled."
+          else
+            echo "Apple secrets not configured: the macOS build stays unsigned."
+          fi
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ github.token }}
           # whisper.cpp needs std::filesystem (macOS 10.15+); Apple Silicon starts at macOS 11.
-          MACOSX_DEPLOYMENT_TARGET: '11.0'
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
@@ -111,15 +136,36 @@ jobs:
           cat SHA256SUMS
           gh release upload "$TAG" -R "$GITHUB_REPOSITORY" SHA256SUMS --clobber
 
+  # Publie la release seulement quand chaque cible a livré ses binaires et que SHA256SUMS existe :
+  # un build en échec laisse un brouillon, pas une release partielle marquée « latest ».
+  publish:
+    name: Publish the release
+    needs: [checksums]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check that every target delivered, then publish
+        run: |
+          assets="$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          echo "$assets"
+          for pattern in '\.deb$' '\.rpm$' '_amd64\.AppImage$' 'aarch64\.AppImage$|arm64\.AppImage$' '\.app\.tar\.gz$' '^SHA256SUMS$' '^latest\.json$'; do
+            echo "$assets" | grep -Eq "$pattern" || { echo "Missing asset matching $pattern: the release stays a draft."; exit 1; }
+          done
+          gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --draft=false --latest
+
   update-tap:
     name: Update the Homebrew tap
-    needs: checksums
+    needs: publish
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ${{ github.repository_owner }}/homebrew-tap
           ssh-key: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}

@@ -1,3 +1,4 @@
+import { describeError } from "../../lib/errors";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMenuBridge, useRegisterMenuActions, useTabActive } from "../../lib/menuBridge";
@@ -30,12 +31,13 @@ import { useImageEditor } from "./hooks/useImageEditor";
 import { usePreview } from "./hooks/usePreview";
 import { isModalOpen, isTypingTarget } from "./lib/dom";
 import { translateError } from "./lib/errors";
+import { maskBounds } from "./lib/maskBounds";
 import { MOD } from "./lib/platform";
 import { closeTab as closeBackendTab } from "./lib/tauri";
 import type { ExifField, ResetTool } from "./lib/tauri";
 import { loadPrefs, savePrefs } from "./lib/prefs";
 import { addRecentFile, clearRecentFiles, getRecentFiles, removeRecentFile } from "./lib/recentFiles";
-import type { CropRect, MaskBox, PickedColor } from "./types";
+import type { CropRect, Tab, MaskBox, PickedColor } from "./types";
 import AddToProjects from "../AddToProjects";
 import { noDestination } from "../../lib/exportDestination";
 import { addOutputToProjects, stagedExportPath } from "../../lib/subs/commands";
@@ -68,15 +70,26 @@ function toBase64(bytes: Uint8Array): string {
 function maskToBox(canvas: HTMLCanvasElement): MaskBox | null {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return null;
-  const { width, height } = canvas;
-  const data = ctx.getImageData(0, 0, width, height).data;
+  // Seule la zone peinte est relue (la boîte est tenue à jour par le pinceau) ; sans boîte
+  // connue, tout le canevas.
+  const area = maskBounds(canvas) ?? { x0: 0, y0: 0, x1: canvas.width, y1: canvas.height };
+  const width = area.x1 - area.x0;
+  const height = area.y1 - area.y0;
+  if (width <= 0 || height <= 0) return null;
+  const data = ctx.getImageData(area.x0, area.y0, width, height).data;
   let x0 = width;
   let y0 = height;
   let x1 = -1;
   let y1 = -1;
+  // Un mot de 32 bits par pixel au lieu de quatre octets : l'alpha est l'octet de poids fort (petit
+  // boutien, le cas de toutes les plateformes visées).
+  const littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+  const words = littleEndian ? new Uint32Array(data.buffer, data.byteOffset, width * height) : null;
   for (let y = 0; y < height; y++) {
+    const row = y * width;
     for (let x = 0; x < width; x++) {
-      if (data[(y * width + x) * 4 + 3] > MASK_THRESHOLD) {
+      const alpha = words ? words[row + x] >>> 24 : data[(row + x) * 4 + 3];
+      if (alpha > MASK_THRESHOLD) {
         if (x < x0) x0 = x;
         if (x > x1) x1 = x;
         if (y < y0) y0 = y;
@@ -91,7 +104,7 @@ function maskToBox(canvas: HTMLCanvasElement): MaskBox | null {
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) alpha[y * w + x] = data[((y0 + y) * width + x0 + x) * 4 + 3];
   }
-  return { b64: toBase64(alpha), x: x0, y: y0, width: w, height: h };
+  return { b64: toBase64(alpha), x: area.x0 + x0, y: area.y0 + y0, width: w, height: h };
 }
 
 interface Props {
@@ -225,13 +238,14 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
     latest.current = { ...editor, prefs, t, tabs, mode, toggleSidePanel, tabActive };
   });
 
-  const isDirty = (tab: { historyIndex: number; savedIndex: number }) => tab.historyIndex !== tab.savedIndex;
+  const isDirty = (tab: Tab) => tab.history[tab.historyIndex] !== tab.savedEntry;
 
   const confirmDiscard = useCallback(async (message: string) => {
     try {
       return await ask(message, { title: latest.current.t("close.title"), kind: "warning" });
     } catch {
-      return true;
+      // La question n'a pas pu être posée : on ne perd pas de travail sans l'accord de l'utilisateur.
+      return false;
     }
   }, []);
 
@@ -714,7 +728,7 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
           {...resetFor("resize")}
           onResize={async (w, h) => {
             await handleResize(w, h);
-            setResizeOpen(false);
+            if (!latest.current.lastEditFailed?.()) setResizeOpen(false);
           }}
           onClose={() => setResizeOpen(false)}
         />
@@ -726,7 +740,7 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
           {...resetFor("canvas")}
           onResize={async (w, h, anchor, fill) => {
             await handleCanvasResize(w, h, anchor, fill);
-            setCanvasResizeOpen(false);
+            if (!latest.current.lastEditFailed?.()) setCanvasResizeOpen(false);
           }}
           onClose={() => setCanvasResizeOpen(false)}
         />
@@ -805,7 +819,7 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
             try {
               staged = await stagedExportPath(`${stem}.${format === "jpeg" ? "jpg" : format}`);
             } catch (e) {
-              setNotice({ message: String(e), type: "error" });
+              setNotice({ message: describeError(e), type: "error" });
               return;
             }
           }
@@ -827,7 +841,7 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
                   : { message: i18n.t("subs.addedToProjects", { count: report.added }), type: "success" },
               );
             } catch (e) {
-              setNotice({ message: String(e), type: "error" });
+              setNotice({ message: describeError(e), type: "error" });
             }
           }
         }}

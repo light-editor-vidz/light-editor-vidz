@@ -7,6 +7,8 @@
 
 use image::DynamicImage;
 use serde::Deserialize;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::State;
 
 use super::open::{encode_preview, ImageMeta};
@@ -91,6 +93,11 @@ pub enum Op {
         highlight_b: u8,
     },
     Sketch,
+    /// Croquis d'un aperçu réduit (produit par `scaled`, jamais reçu du front).
+    #[serde(skip)]
+    SketchScaled {
+        k: f32,
+    },
     Lomo {
         intensity: f32,
     },
@@ -182,6 +189,7 @@ impl Op {
                 [*highlight_r, *highlight_g, *highlight_b],
             ),
             Op::Sketch => fil::sketch(img),
+            Op::SketchScaled { k } => fil::sketch_scaled(img, *k),
             Op::Lomo { intensity } => fil::lomo(img, *intensity),
             Op::Vintage { intensity } => fil::vintage(img, *intensity),
             Op::Cool { intensity } => fil::cool(img, *intensity),
@@ -210,9 +218,22 @@ impl Op {
                 radius: px(radius, 0.1),
                 threshold,
             },
+            // Jamais sous 2 px : un « bloc » d'un pixel ne montrerait rien dans l'aperçu.
             Op::Pixelate { size } => Op::Pixelate {
-                size: ((size as f32 * k).round() as u32).max(1),
+                size: ((size as f32 * k).round() as u32).max(size.min(2)),
             },
+            // Le rayon du filtre est en pixels entiers (1 à 3) : sur une image réduite il lisserait
+            // bien plus que sur l'original, la force est donc ramenée à l'échelle.
+            Op::Denoise { strength } => Op::Denoise {
+                strength: strength * k.clamp(0.25, 1.0),
+            },
+            // Le grain est fin à l'échelle du pixel : réduire l'image le moyenne, donc l'atténue
+            // d'environ √k ; sans cela l'aperçu paraîtrait bien plus granuleux que le rendu.
+            Op::Grain { amount, monochrome } => Op::Grain {
+                amount: amount * k.clamp(0.0, 1.0).sqrt(),
+                monochrome,
+            },
+            Op::Sketch => Op::SketchScaled { k },
             Op::BlurGaussian { radius } => Op::BlurGaussian {
                 radius: px(radius, 0.1),
             },
@@ -240,6 +261,13 @@ pub fn apply_command(
     apply_step(&state, &tab_id, replace.unwrap_or(false), step)
 }
 
+type WorkingThumb = ((String, u64, usize, u32), (Arc<DynamicImage>, f32));
+
+fn working_thumbnails() -> &'static Mutex<VecDeque<WorkingThumb>> {
+    static CACHE: OnceLock<Mutex<VecDeque<WorkingThumb>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
 /// Aperçu d'un réglage : PNG (data URL) de l'image réduite à `max_side` pixels de côté,
 /// calculé sans modifier l'historique.
 #[tauri::command(async)]
@@ -249,15 +277,42 @@ pub fn preview_command(
     command: Op,
     max_side: u32,
 ) -> Result<String, String> {
-    let snap = snapshot(&state, &tab_id)?;
+    let (epoch, index) = {
+        let map = state.0.lock().map_err(|e| e.to_string())?;
+        let history = map.get(&tab_id).ok_or("Tab not found")?;
+        (history.epoch, history.index.unwrap_or(0))
+    };
     let max_side = max_side.clamp(16, 4096);
-    let img = &snap.image;
-    let (small, k) = if img.width().max(img.height()) > max_side {
-        let small = img.thumbnail(max_side, max_side);
-        let k = small.width() as f32 / img.width() as f32;
-        (small, k)
-    } else {
-        ((**img).clone(), 1.0)
+    let key = (tab_id.clone(), epoch, index, max_side);
+    // La vignette de travail d'une étape ne change pas : le curseur qui bouge ne la recalcule pas
+    // (c'était une réduction de l'image entière à chaque mouvement).
+    let cached = working_thumbnails()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, v)| v.clone());
+    let (small, k) = match cached {
+        Some(hit) => hit,
+        None => {
+            let snap = snapshot(&state, &tab_id)?;
+            let img = &snap.image;
+            let made = if img.width().max(img.height()) > max_side {
+                let small = img.thumbnail(max_side, max_side);
+                let k = small.width() as f32 / img.width() as f32;
+                (Arc::new(small), k)
+            } else {
+                (Arc::clone(img), 1.0)
+            };
+            let mut cache = working_thumbnails()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            cache.push_back((key, made.clone()));
+            while cache.len() > 4 {
+                cache.pop_front();
+            }
+            made
+        }
     };
     encode_preview(&command.scaled(k).apply(&small)?)
 }
@@ -323,6 +378,28 @@ mod tests {
 
     fn parse(json: &str) -> Op {
         serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn a_reduced_preview_scales_pixel_based_settings() {
+        let k = 0.25;
+        assert!(matches!(
+            Op::Pixelate { size: 20 }.scaled(k),
+            Op::Pixelate { size: 5 }
+        ));
+        // Jamais moins de 2 px pour une pixellisation demandée.
+        assert!(matches!(
+            Op::Pixelate { size: 4 }.scaled(0.05),
+            Op::Pixelate { size: 2 }
+        ));
+        assert!(matches!(
+            Op::Pixelate { size: 1 }.scaled(0.05),
+            Op::Pixelate { size: 1 }
+        ));
+        match (Op::Denoise { strength: 80.0 }).scaled(k) {
+            Op::Denoise { strength } => assert!((strength - 20.0).abs() < 1e-3),
+            _ => unreachable!(),
+        }
     }
 
     #[test]
@@ -434,6 +511,26 @@ mod tests {
             _ => panic!(),
         }
         assert!(matches!((Op::Invert).scaled(0.5), Op::Invert));
+    }
+
+    #[test]
+    fn grain_and_sketch_previews_are_scaled() {
+        match (Op::Grain {
+            amount: 0.8,
+            monochrome: true,
+        })
+        .scaled(0.25)
+        {
+            Op::Grain { amount, monochrome } => {
+                assert!((amount - 0.4).abs() < 1e-6);
+                assert!(monochrome);
+            }
+            _ => panic!(),
+        }
+        assert!(matches!(
+            (Op::Sketch).scaled(0.5),
+            Op::SketchScaled { k } if (k - 0.5).abs() < 1e-6
+        ));
     }
 
     #[test]

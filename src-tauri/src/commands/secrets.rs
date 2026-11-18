@@ -12,8 +12,8 @@ const SETTINGS_STORE: &str = "settings.json";
 const API_KEYS_KEY: &str = "apiKeys";
 pub const PROVIDERS: [&str; 3] = ["pexels", "pixabay", "freesound"];
 
-fn entry(provider: &str) -> Result<keyring::Entry, keyring::Error> {
-    keyring::Entry::new(SERVICE, provider)
+fn entry(provider: &str) -> Result<keyring4::Entry, keyring4::Error> {
+    keyring4::Entry::new(SERVICE, provider)
 }
 
 fn keyring_get(provider: &str) -> Option<String> {
@@ -95,7 +95,7 @@ pub async fn save_api_keys(app: tauri::AppHandle, keys: BTreeMap<String, String>
                 // Suppression : « pas d'entrée » n'est pas une erreur.
                 matches!(
                     entry(provider).map(|e| e.delete_credential()),
-                    Ok(Ok(())) | Ok(Err(keyring::Error::NoEntry))
+                    Ok(Ok(())) | Ok(Err(keyring4::Error::NoEntry))
                 )
             } else {
                 entry(provider).and_then(|e| e.set_password(key)).is_ok()

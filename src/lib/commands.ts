@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
+import i18n from "i18next";
 import type { Project } from "../bindings/Project";
 
 export interface NewProjectArgs {
@@ -20,6 +22,11 @@ export interface RecentProject {
 /** Crée un nouveau dossier de projet `.lvproj/`, retourne son chemin. */
 export function newProject(args: NewProjectArgs): Promise<string> {
   return invoke("new_project", { args });
+}
+
+/** Vrai (une seule fois) si le projet vient d'être rouvert depuis sa sauvegarde `project.json.bak`. */
+export function takeProjectRecovery(projectDir: string): Promise<boolean> {
+  return invoke("take_project_recovery", { projectDir });
 }
 
 export function loadProject(projectDir: string): Promise<Project> {
@@ -45,6 +52,11 @@ export interface AssetInfo {
   filename: string;
   relative_path: string;
   has_subtitles?: boolean;
+}
+
+/** Dialogue « Importer » : seul un fichier qu'il renvoie peut être importé (`importAsset`). */
+export function pickAssetSource(kind: AssetKind): Promise<string | null> {
+  return invoke("pick_asset_source", { kind });
 }
 
 /** Copie un fichier choisi par l'utilisateur dans `<project_dir>/assets/<kind>s/`. */
@@ -76,6 +88,21 @@ export interface ExportResult {
 
 /** Message d'erreur renvoyé par `export_project` quand l'utilisateur a annulé l'export. */
 export const EXPORT_CANCELLED = "export-cancelled";
+
+/** « Enregistrer sous » de l'export mp4 : seule la destination renvoyée peut être écrite. */
+export async function pickVideoExportOutput(defaultName: string): Promise<string | null> {
+  const choice = await invoke<{ path: string; confirm_overwrite: boolean } | null>("video_pick_output", {
+    defaultName,
+    format: "mp4",
+  });
+  if (!choice) return null;
+  if (choice.confirm_overwrite) {
+    // L'extension a été complétée après le dialogue natif : c'est à nous de demander.
+    const name = choice.path.split(/[\\/]/).pop() ?? choice.path;
+    if (!(await ask(i18n.t("audioTool.overwriteConfirm", { name }), { kind: "warning" }))) return null;
+  }
+  return choice.path;
+}
 
 /** Exporte le projet en mp4. Rejette avec `EXPORT_CANCELLED` si
  * l'export a été annulé. */

@@ -1,7 +1,9 @@
 use image::{imageops, DynamicImage, ImageBuffer, Rgba};
 use tauri::State;
 
-use super::imaging::{by_depth, check_dims, Sample};
+use super::imaging::{
+    by_depth, check_dims, premultiply, resize_lanczos_linear, unpremultiply, Sample,
+};
 use super::open::ImageMeta;
 use super::ops::apply_step;
 use super::steps::Step;
@@ -69,7 +71,47 @@ pub fn canvas_resize_dynamic(
 
 pub fn resize_dynamic(img: &DynamicImage, width: u32, height: u32) -> Result<DynamicImage, String> {
     check_dims(width, height)?;
-    Ok(img.resize_exact(width, height, imageops::FilterType::Lanczos3))
+    // Lanczos3 en lumière linéaire (un damier noir et blanc réduit donne le gris perçu à mi-chemin,
+    // pas un gris trop sombre) et alpha prémultiplié (sinon les pixels transparents, noirs, tracent
+    // un halo sombre le long des bords), réparti sur tous les cœurs.
+    if let Some(out) = by_depth!(resize_linear, img, width, height) {
+        return Ok(out);
+    }
+    // Intermédiaire flottant trop gros : chemin économe en mémoire, en espace d'encodage.
+    if !img.color().has_alpha() {
+        return Ok(img.resize_exact(width, height, imageops::FilterType::Lanczos3));
+    }
+    Ok(by_depth!(resize_premultiplied, img, width, height))
+}
+
+fn resize_linear<S>(img: &DynamicImage, width: u32, height: u32) -> Option<DynamicImage>
+where
+    S: Sample,
+    Rgba<S>: image::Pixel<Subpixel = S>,
+{
+    let out = S::into_image(resize_lanczos_linear(&S::buffer_of(img), width, height)?);
+    // Le type de couleur d'origine est conservé (RVB, niveaux de gris).
+    Some(match img {
+        DynamicImage::ImageLuma8(_) => DynamicImage::ImageLuma8(out.into_luma8()),
+        DynamicImage::ImageLumaA8(_) => DynamicImage::ImageLumaA8(out.into_luma_alpha8()),
+        DynamicImage::ImageRgb8(_) => DynamicImage::ImageRgb8(out.into_rgb8()),
+        DynamicImage::ImageLuma16(_) => DynamicImage::ImageLuma16(out.into_luma16()),
+        DynamicImage::ImageLumaA16(_) => DynamicImage::ImageLumaA16(out.into_luma_alpha16()),
+        DynamicImage::ImageRgb16(_) => DynamicImage::ImageRgb16(out.into_rgb16()),
+        _ => out,
+    })
+}
+
+fn resize_premultiplied<S>(img: &DynamicImage, width: u32, height: u32) -> DynamicImage
+where
+    S: Sample,
+    Rgba<S>: image::Pixel<Subpixel = S>,
+{
+    let mut work = S::buffer_of(img);
+    premultiply(&mut work);
+    let mut out = imageops::resize(&work, width, height, imageops::FilterType::Lanczos3);
+    unpremultiply(&mut out);
+    S::into_image(out)
 }
 
 pub fn flip_dynamic(img: &DynamicImage, direction: &str) -> Result<DynamicImage, String> {
@@ -218,12 +260,11 @@ where
         ((new_w - w) / 2) as i64,
         ((new_h - h) / 2) as i64,
     );
-    S::into_image(rotate_about_center(
-        &canvas,
-        rad,
-        Interpolation::Bilinear,
-        zero,
-    ))
+    // Interpolé en alpha prémultiplié : les coins transparents (noirs) n'assombrissent pas les bords.
+    premultiply(&mut canvas);
+    let mut rotated = rotate_about_center(&canvas, rad, Interpolation::Bilinear, zero);
+    unpremultiply(&mut rotated);
+    S::into_image(rotated)
 }
 
 #[tauri::command(async)]
@@ -410,6 +451,21 @@ mod tests {
         assert_eq!((meta.width, meta.height), (20, 5));
         // Une image unie reste unie après ré-échantillonnage.
         assert_eq!(h.pixel(10, 2), [30, 60, 90, 255]);
+    }
+
+    #[test]
+    fn resize_keeps_the_colour_type_and_mixes_light() {
+        let rgb = DynamicImage::ImageRgb8(image::RgbImage::from_fn(8, 8, |x, y| {
+            let v = if (x + y) % 2 == 0 { 0 } else { 255 };
+            image::Rgb([v, v, v])
+        }));
+        let out = resize_dynamic(&rgb, 1, 1).unwrap();
+        assert!(matches!(out, DynamicImage::ImageRgb8(_)));
+        assert!((180..=196).contains(&out.to_rgb8().get_pixel(0, 0)[0]));
+        let luma = DynamicImage::ImageLuma8(image::GrayImage::from_pixel(4, 4, image::Luma([77])));
+        let out = resize_dynamic(&luma, 2, 2).unwrap();
+        assert!(matches!(out, DynamicImage::ImageLuma8(_)));
+        assert_eq!(out.to_luma8().get_pixel(1, 1)[0], 77);
     }
 
     #[test]
@@ -633,5 +689,40 @@ mod tests {
         let out = out.to_rgba16();
         assert_eq!(out.get_pixel(0, 0).0, [65_535, 0, 0, 65_535]);
         assert_eq!(out.get_pixel(1, 1).0, [1000, 2000, 3000, 65_535]);
+    }
+
+    #[test]
+    fn resizing_a_translucent_image_leaves_no_dark_halo() {
+        // Moitié gauche opaque rouge, moitié droite transparente (noire dans les données).
+        let mut src = image::RgbaImage::new(8, 4);
+        for (x, _, p) in src.enumerate_pixels_mut() {
+            *p = if x < 4 {
+                Rgba([255, 0, 0, 255])
+            } else {
+                Rgba([0, 0, 0, 0])
+            };
+        }
+        let out = resize_dynamic(&DynamicImage::ImageRgba8(src), 16, 8)
+            .unwrap()
+            .to_rgba8();
+        for p in out.pixels().filter(|p| p[3] > 0) {
+            assert!(
+                p[0] as u32 * 255 >= 250 * p[3] as u32,
+                "teinte assombrie : {p:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rotating_freely_keeps_the_colour_of_the_edge_pixels() {
+        let src =
+            DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(20, 20, Rgba([255, 0, 0, 255])));
+        let out = rotate_dynamic(&src, 30.0).unwrap().to_rgba8();
+        for p in out.pixels().filter(|p| p[3] > 0) {
+            assert!(
+                p[0] as u32 * 255 >= 240 * p[3] as u32,
+                "teinte assombrie : {p:?}"
+            );
+        }
     }
 }

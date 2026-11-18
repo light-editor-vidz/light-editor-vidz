@@ -56,6 +56,17 @@ struct Cached {
 pub struct DecodeCache(Arc<Mutex<Option<Cached>>>);
 
 impl DecodeCache {
+    /// Frees the decoded audio of `path` (its tool was closed): a multi-hour file holds gigabytes.
+    pub fn release(&self, path: &str) {
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if guard
+            .as_ref()
+            .is_some_and(|c| c.path.as_path() == Path::new(path))
+        {
+            *guard = None;
+        }
+    }
+
     pub fn get_or_decode(&self, path: &str) -> Result<Arc<AudioBuffer>> {
         let meta = std::fs::metadata(path).ok();
         let stamp = meta.as_ref().map(|m| (m.modified().ok(), m.len()));
@@ -143,6 +154,12 @@ fn check_format(opts: &ProcessOptions) -> Result<()> {
 pub fn run_pipeline(opts: &ProcessOptions, buf: &mut AudioBuffer, job: &Job) -> Result<()> {
     job.check()?;
     trim::remove(buf, &opts.cuts)?;
+    run_edits(opts, buf, job)
+}
+
+/// The pipeline once the cuts are applied (see [`process_blocking`], which applies them while
+/// copying).
+fn run_edits(opts: &ProcessOptions, buf: &mut AudioBuffer, job: &Job) -> Result<()> {
     if opts.trim_start.is_some() || opts.trim_end.is_some() {
         let start = opts.trim_start.unwrap_or(0.0);
         let end = opts.trim_end.unwrap_or_else(|| buf.duration_secs());
@@ -183,10 +200,27 @@ pub fn run_pipeline(opts: &ProcessOptions, buf: &mut AudioBuffer, job: &Job) -> 
 /// part) the next three, and writing the file the rest.
 pub fn process_blocking(cache: &DecodeCache, opts: &ProcessOptions, job: &Job) -> Result<()> {
     check_format(opts)?;
-    // The cached decode is shared, so the pipeline works on its own copy.
-    let mut buf = (*cache.get_or_decode(&opts.input)?).clone();
+    // The cached decode is shared, so the pipeline works on its own copy, made from the kept
+    // ranges only (the cut parts are never copied).
+    let src = cache.get_or_decode(&opts.input)?;
+    let changes_speed = opts.speed.is_some_and(|f| (f - 1.0).abs() > 1e-6);
+    if changes_speed {
+        // The resampling is the memory peak: the cached decode must not stay alive next to the
+        // working copy and the output (a later export of this file decodes again).
+        cache.release(&opts.input);
+    }
+    let mut buf = if opts.cuts.is_empty() {
+        // Sole owner (cache released): take the decode as is, without copying it.
+        Arc::try_unwrap(src).unwrap_or_else(|shared| (*shared).clone())
+    } else {
+        let kept = trim::without_cuts(&src, &opts.cuts)?;
+        drop(src);
+        kept
+    };
     job.progress(0.1);
-    run_pipeline(opts, &mut buf, &job.slice(0.1, 0.4))?;
+    let edits = job.slice(0.1, 0.4);
+    edits.check()?;
+    run_edits(opts, &mut buf, &edits)?;
 
     let write = job.slice(0.4, 1.0);
     match opts.format.as_str() {
@@ -228,6 +262,19 @@ mod tests {
 
     fn process(opts: &ProcessOptions) -> Result<()> {
         process_blocking(&DecodeCache::default(), opts, &Job::detached())
+    }
+
+    #[test]
+    fn a_speed_change_does_not_keep_the_decoded_input_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = write_wav(&dir, "in.wav", 4410, 2);
+        let cache = DecodeCache::default();
+        let mut opts = base_opts(input, dir.path().join("o.wav").to_str().unwrap().into());
+        process_blocking(&cache, &opts, &Job::detached()).unwrap();
+        assert!(cache.0.lock().unwrap().is_some());
+        opts.speed = Some(2.0);
+        process_blocking(&cache, &opts, &Job::detached()).unwrap();
+        assert!(cache.0.lock().unwrap().is_none());
     }
 
     fn write_wav(dir: &tempfile::TempDir, name: &str, frames: usize, channels: usize) -> String {
@@ -726,5 +773,36 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert!(seen.windows(2).all(|w| w[0] <= w[1]), "{seen:?}");
         assert_eq!(*seen.last().unwrap(), 1.0);
+    }
+
+    #[test]
+    fn releasing_a_file_frees_its_decode_and_only_its_own() {
+        let dir = std::env::temp_dir().join(format!("lev_release_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a.wav");
+        let buf = AudioBuffer {
+            samples: vec![vec![0.1f32; 4410]],
+            sample_rate: 44_100,
+        };
+        audio::encode_wav(
+            &buf,
+            path.to_str().unwrap(),
+            audio::WavDepth::default(),
+            &Job::detached(),
+        )
+        .unwrap();
+        let cache = DecodeCache::default();
+        let first = cache.get_or_decode(path.to_str().unwrap()).unwrap();
+
+        cache.release("/somewhere/else.wav");
+        assert!(Arc::ptr_eq(
+            &first,
+            &cache.get_or_decode(path.to_str().unwrap()).unwrap()
+        ));
+
+        cache.release(path.to_str().unwrap());
+        let again = cache.get_or_decode(path.to_str().unwrap()).unwrap();
+        assert!(!Arc::ptr_eq(&first, &again), "decoded anew once released");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

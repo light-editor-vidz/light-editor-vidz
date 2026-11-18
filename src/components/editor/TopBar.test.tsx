@@ -1,17 +1,18 @@
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { listen } from "@tauri-apps/api/event";
-import { save } from "@tauri-apps/plugin-dialog";
-import { cancelExport, exportProject, exportProjectAudio } from "../../lib/commands";
+import { audioPickOutput } from "../../lib/audiotool/commands";
+import { cancelExport, exportProject, exportProjectAudio, pickVideoExportOutput } from "../../lib/commands";
 import TopBar from "./TopBar";
 import { busyWork } from "../../lib/busyWork";
 import { inertBridge } from "../../lib/menuBridge";
 import type { Project } from "../../bindings/Project";
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
+vi.mock("../../lib/audiotool/commands", () => ({ audioPickOutput: vi.fn() }));
 vi.mock("../../lib/commands", () => ({
   exportProject: vi.fn(),
+  pickVideoExportOutput: vi.fn(),
   exportProjectAudio: vi.fn(),
   cancelExport: vi.fn(),
   EXPORT_CANCELLED: "export-cancelled",
@@ -28,7 +29,8 @@ vi.mock("../../lib/commands", () => ({
 vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir: vi.fn(() => Promise.resolve()) }));
 
 const mockListen = vi.mocked(listen);
-const mockSave = vi.mocked(save);
+const mockSave = vi.mocked(pickVideoExportOutput);
+const mockPickAudio = vi.mocked(audioPickOutput);
 const mockExport = vi.mocked(exportProject);
 const mockExportAudio = vi.mocked(exportProjectAudio);
 
@@ -69,6 +71,7 @@ beforeEach(() => {
     return Promise.resolve(() => {});
   }) as typeof listen);
   mockSave.mockResolvedValue(null);
+  mockPickAudio.mockResolvedValue(null);
   mockExport.mockResolvedValue({ missing_media: [] });
   mockExportAudio.mockResolvedValue({ missing_media: [] });
 });
@@ -162,7 +165,7 @@ describe("TopBar — exporting", () => {
       fireEvent.click(confirm());
     });
 
-    expect(mockSave).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: "My clip.mp4" }));
+    expect(mockSave).toHaveBeenCalledWith("My clip.mp4");
   });
 
   it("exports nothing when the save dialog is dismissed", async () => {
@@ -275,26 +278,21 @@ describe("TopBar — exporting", () => {
   }
 
   it("exports the audio mix in the chosen format, under an extension-matching name", async () => {
-    mockSave.mockResolvedValue("/out.flac");
+    mockPickAudio.mockResolvedValue("/out.flac");
     const { confirm, onNotice } = await chooseAudioFormat("FLAC");
 
     await act(async () => {
       fireEvent.click(confirm());
     });
 
-    expect(mockSave).toHaveBeenCalledWith(
-      expect.objectContaining({
-        defaultPath: "My clip.flac",
-        filters: [{ name: "FLAC audio file", extensions: ["flac"] }],
-      }),
-    );
+    expect(mockPickAudio).toHaveBeenCalledWith("My clip.flac", "flac");
     expect(mockExportAudio).toHaveBeenCalledWith("/p", expect.anything(), "/out.flac", "flac");
     expect(mockExport).not.toHaveBeenCalled();
     expect(onNotice).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "info", message: "Export finished." }));
   });
 
   it("exports no audio when the save dialog is dismissed", async () => {
-    mockSave.mockResolvedValue(null);
+    mockPickAudio.mockResolvedValue(null);
     const { confirm } = await chooseAudioFormat("MP3");
 
     await act(async () => {
@@ -305,7 +303,7 @@ describe("TopBar — exporting", () => {
   });
 
   it("reports a failed audio export through a notice, with the reason", async () => {
-    mockSave.mockResolvedValue("/out.wav");
+    mockPickAudio.mockResolvedValue("/out.wav");
     mockExportAudio.mockRejectedValue(new Error("The project has no audio to export."));
     const { confirm, onNotice } = await chooseAudioFormat("WAV 16-bit");
 
@@ -320,7 +318,7 @@ describe("TopBar — exporting", () => {
   });
 
   it("falls back to a generic file name for an unnamed project", async () => {
-    mockSave.mockResolvedValue(null);
+    mockPickAudio.mockResolvedValue(null);
     const view = render(
       <TopBar
         project={{ ...(project as object), name: "  " } as unknown as Project}
@@ -342,7 +340,7 @@ describe("TopBar — exporting", () => {
       fireEvent.click(within(modal).getByRole("button", { name: /^Export$/ }));
     });
 
-    expect(mockSave).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: "video.mp4" }));
+    expect(mockSave).toHaveBeenCalledWith("video.mp4");
   });
 });
 

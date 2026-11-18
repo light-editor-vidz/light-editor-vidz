@@ -66,6 +66,72 @@ pub fn source_extension(source_path: Option<&std::path::Path>) -> String {
         .unwrap_or_default()
 }
 
+/// Un EXIF minimal (TIFF little-endian, une seule entrée `Orientation`).
+fn orientation_only_exif(orientation: u16) -> Vec<u8> {
+    let [lo, hi] = orientation.to_le_bytes();
+    vec![
+        b'I', b'I', 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, // en-tête, IFD à l'offset 8
+        0x01, 0x00, // une entrée
+        0x12, 0x01, // tag 0x0112 = Orientation
+        0x03, 0x00, // type SHORT
+        0x01, 0x00, 0x00, 0x00, // count = 1
+        lo, hi, 0x00, 0x00, // valeur
+        0x00, 0x00, 0x00, 0x00, // pas d'IFD suivant
+    ]
+}
+
+/// L'orientation EXIF d'un JPEG (1 si absente ou illisible).
+fn jpeg_orientation(jpeg: &img_parts::jpeg::Jpeg) -> u16 {
+    jpeg.exif()
+        .and_then(|tiff| exif::Reader::new().read_raw(tiff.to_vec()).ok())
+        .and_then(|data| {
+            data.get_field(exif::Tag::Orientation, In::PRIMARY)
+                .and_then(|f| f.value.get_uint(0))
+        })
+        .map_or(1, |v| v as u16)
+}
+
+/// Coupe tout ce qui suit le premier marqueur EOI : `img-parts` recopie tel quel ce qui suit le
+/// premier SOS, donc les images secondaires (MPF : gain maps, souvent géolocalisées) et les
+/// données ajoutées après la fin de l'image survivraient au nettoyage.
+fn truncate_after_eoi(bytes: &mut Vec<u8>) {
+    let mut at = 2; // après SOI
+    while at + 4 <= bytes.len() && bytes[at] == 0xFF {
+        let marker = bytes[at + 1];
+        let length = usize::from(u16::from_be_bytes([bytes[at + 2], bytes[at + 3]]));
+        at += 2 + length;
+        if marker == 0xDA {
+            // Données entropiques : le premier FF D9 est la fin de l'image (FF 00 est du bourrage).
+            if let Some(eoi) = bytes[at..].windows(2).position(|w| w == [0xFF, 0xD9]) {
+                bytes.truncate(at + eoi + 2);
+            }
+            return;
+        }
+    }
+}
+
+/// Réécrit un JPEG sans métadonnées, sans toucher aux pixels. Reste : JFIF (APP0), profil ICC,
+/// Adobe (APP14) et les segments d'image. Disparaissent : EXIF, XMP (aussi étendu), IPTC, MPF,
+/// commentaires et tout autre APPn. L'orientation est conservée dans un EXIF minimal : les pixels
+/// de la source sont couchés, la balise seule les redresse (sinon une photo portrait ressort
+/// tournée de 90°).
+pub fn strip_jpeg(data: Vec<u8>) -> Result<Vec<u8>, String> {
+    let mut jpeg = img_parts::jpeg::Jpeg::from_bytes(data.into()).map_err(|e| e.to_string())?;
+    let orientation = jpeg_orientation(&jpeg);
+    jpeg.segments_mut().retain(|s| match s.marker() {
+        0xE0 | 0xEE => true,
+        0xE2 => s.contents().starts_with(b"ICC_PROFILE\0"),
+        0xE1..=0xEF | 0xFE => false,
+        _ => true,
+    });
+    if orientation != 1 {
+        jpeg.set_exif(Some(orientation_only_exif(orientation).into()));
+    }
+    let mut bytes = jpeg.encoder().bytes().to_vec();
+    truncate_after_eoi(&mut bytes);
+    Ok(bytes)
+}
+
 /// Écrit `img` (ou la source JPEG d'origine) dans `output`, sans métadonnées.
 ///
 /// `pristine` indique que l'image en mémoire est encore celle du fichier d'origine. Seul ce
@@ -82,28 +148,20 @@ pub fn write_stripped(
     pristine: bool,
     icc: Option<&[u8]>,
 ) -> Result<(), String> {
-    let ext = source_extension(source_path);
-
-    if (ext == "jpg" || ext == "jpeg") && pristine {
+    if pristine {
         if let Some(src) = source_path {
             let data = std::fs::read(src).map_err(|e| e.to_string())?;
-            let mut jpeg =
-                img_parts::jpeg::Jpeg::from_bytes(data.into()).map_err(|e| e.to_string())?;
-            jpeg.set_exif(None);
-            // XMP (APP1 « http://ns.adobe.com/xap/ ») et IPTC (APP13) peuvent aussi porter
-            // la position GPS, l'auteur ou le logiciel.
-            jpeg.segments_mut().retain(|s| {
-                !(s.marker() == 0xED
-                    || (s.marker() == 0xE1
-                        && s.contents().starts_with(b"http://ns.adobe.com/xap/")))
-            });
-            return std::fs::write(output, jpeg.encoder().bytes()).map_err(|e| e.to_string());
+            // Le contenu décide, pas l'extension : un JPEG nommé `.png` se nettoie sans perte, un
+            // fichier nommé `.jpg` qui n'en est pas un est ré-encodé.
+            if data.starts_with(&[0xFF, 0xD8]) {
+                return super::export::write_atomic(output, &strip_jpeg(data)?);
+            }
         }
     }
 
     let format = image::ImageFormat::from_path(output).map_err(|e| e.to_string())?;
     let quality = (format == image::ImageFormat::Jpeg).then_some(95);
-    super::export::write_image_with_icc(img, output, format, quality, icc)
+    super::export::write_image_with_icc(img, output, format, quality, icc, None)
 }
 
 #[tauri::command]
@@ -164,6 +222,7 @@ mod tests {
     use crate::imgz::test_support::{solid, Harness, TAB};
     use crate::imgz::AppHistory;
     use image::GenericImageView;
+    use img_parts::ImageICC;
     use std::path::PathBuf;
 
     fn block_on<F: std::future::Future>(f: F) -> F::Output {
@@ -338,7 +397,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("imgz-exif-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let source = dir.join("broken.jpg");
-        std::fs::write(&source, b"pas un jpeg").unwrap();
+        // La signature d'un JPEG, puis n'importe quoi.
+        std::fs::write(&source, [0xFF, 0xD8, 0x00, 0x01, 0x02]).unwrap();
 
         let err = write_stripped(
             Some(&source),
@@ -350,6 +410,39 @@ mod tests {
         .unwrap_err();
 
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn the_lossless_path_follows_the_content_not_the_extension() {
+        let dir = std::env::temp_dir().join(format!("imgz-exif-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Un vrai JPEG nommé .png : nettoyé sans perte (octets JPEG), pas ré-encodé.
+        let mut jpeg = Vec::new();
+        solid(4, 4, [10, 20, 30])
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpeg),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        let disguised = dir.join("photo.png");
+        std::fs::write(&disguised, &jpeg).unwrap();
+        let out = dir.join("clean.png");
+        write_stripped(
+            Some(&disguised),
+            &solid(4, 4, [10, 20, 30]),
+            &out,
+            true,
+            None,
+        )
+        .unwrap();
+        assert!(std::fs::read(&out).unwrap().starts_with(&[0xFF, 0xD8]));
+
+        // Un fichier .jpg qui n'en est pas un : l'image en mémoire est ré-encodée.
+        let fake = dir.join("fake.jpg");
+        std::fs::write(&fake, b"pas un jpeg").unwrap();
+        let out2 = dir.join("clean2.jpg");
+        write_stripped(Some(&fake), &solid(4, 4, [10, 20, 30]), &out2, true, None).unwrap();
+        assert_eq!(image::open(&out2).unwrap().width(), 4);
     }
 
     #[test]
@@ -426,5 +519,109 @@ mod tests {
         assert!(cleaned.segments().iter().all(
             |s| !(s.marker() == 0xE1 && s.contents().starts_with(b"http://ns.adobe.com/xap/"))
         ));
+    }
+
+    /// Un JPEG de test : `solid` encodé, avec les segments donnés insérés avant les données.
+    fn jpeg_with(extra: Vec<img_parts::jpeg::JpegSegment>, trailer: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        solid(4, 4, [10, 20, 30])
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        let mut jpeg = img_parts::jpeg::Jpeg::from_bytes(bytes.into()).unwrap();
+        for (i, segment) in extra.into_iter().enumerate() {
+            jpeg.segments_mut().insert(1 + i, segment);
+        }
+        let mut out = jpeg.encoder().bytes().to_vec();
+        out.extend_from_slice(trailer);
+        out
+    }
+
+    #[test]
+    fn a_portrait_photo_keeps_its_orientation_when_its_exif_is_stripped() {
+        let exif = [b"Exif\0\0".as_slice(), &orientation_only_exif(6)].concat();
+        let source = jpeg_with(
+            vec![img_parts::jpeg::JpegSegment::new_with_contents(
+                0xE1,
+                exif.into(),
+            )],
+            &[],
+        );
+
+        let cleaned =
+            img_parts::jpeg::Jpeg::from_bytes(strip_jpeg(source).unwrap().into()).unwrap();
+
+        assert_eq!(jpeg_orientation(&cleaned), 6);
+        assert!(
+            cleaned
+                .segments()
+                .iter()
+                .filter(|s| s.marker() == 0xE1)
+                .count()
+                == 1
+        );
+    }
+
+    #[test]
+    fn no_orientation_is_written_when_the_photo_is_upright() {
+        let source = jpeg_with(vec![], &[]);
+        let cleaned =
+            img_parts::jpeg::Jpeg::from_bytes(strip_jpeg(source).unwrap().into()).unwrap();
+        assert!(cleaned.exif().is_none());
+    }
+
+    #[test]
+    fn comments_extra_app_segments_mpf_and_trailing_images_are_removed() {
+        let mpf =
+            img_parts::jpeg::JpegSegment::new_with_contents(0xE2, b"MPF\0xxxx".to_vec().into());
+        let comment = img_parts::jpeg::JpegSegment::new_with_contents(
+            0xFE,
+            b"gps 48.85,2.35".to_vec().into(),
+        );
+        let ext_xmp = img_parts::jpeg::JpegSegment::new_with_contents(
+            0xE1,
+            [
+                b"http://ns.adobe.com/xmp/extension/\0".as_slice(),
+                b"secret",
+            ]
+            .concat()
+            .into(),
+        );
+        // Une seconde image complète (gain map) après la fin de la première.
+        let trailer = jpeg_with(vec![], &[]);
+        let source = jpeg_with(vec![mpf, comment, ext_xmp], &trailer);
+
+        let out = strip_jpeg(source).unwrap();
+
+        assert!(out.ends_with(&[0xFF, 0xD9]));
+        assert_eq!(
+            out.windows(2).filter(|w| *w == [0xFF, 0xD8]).count(),
+            1,
+            "one SOI only"
+        );
+        let cleaned = img_parts::jpeg::Jpeg::from_bytes(out.clone().into()).unwrap();
+        assert!(cleaned
+            .segments()
+            .iter()
+            .all(|s| !matches!(s.marker(), 0xE1 | 0xE2 | 0xFE)));
+        assert!(!out.windows(6).any(|w| w == b"secret"));
+        assert_eq!(image::load_from_memory(&out).unwrap().width(), 4);
+    }
+
+    #[test]
+    fn the_icc_profile_survives_the_strip() {
+        let icc = [b"ICC_PROFILE\0".as_slice(), &[1, 1], b"profile"].concat();
+        let source = jpeg_with(
+            vec![img_parts::jpeg::JpegSegment::new_with_contents(
+                0xE2,
+                icc.into(),
+            )],
+            &[],
+        );
+        let cleaned =
+            img_parts::jpeg::Jpeg::from_bytes(strip_jpeg(source).unwrap().into()).unwrap();
+        assert!(cleaned.icc_profile().is_some());
     }
 }

@@ -33,8 +33,8 @@ describe("Canvas", () => {
   it("shows empty state when no image is loaded", () => {
     renderCanvas();
     // The name is written in two colours: white, then the app's primary colour.
-    expect(document.querySelector(".home-name")?.textContent).toBe("LightCutImgz");
-    expect(document.querySelector(".home-name-accent")?.textContent).toBe("Imgz");
+    expect(document.querySelector(".home-name")?.textContent).toBe("LightEditorVidz");
+    expect(document.querySelector(".home-name-accent")?.textContent).toBe("Vidz");
     expect(screen.getByText("Drop an image here")).toBeInTheDocument();
     expect(screen.queryByTestId("canvas-image")).not.toBeInTheDocument();
   });
@@ -138,5 +138,11 @@ describe("Canvas", () => {
       />,
     );
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("hides the original image under a live preview, so a translucent image does not show through", () => {
+    renderCanvas({ image: mockImage, previewSrc: "p.png" });
+    expect(screen.getByTestId("canvas-image")).toHaveStyle({ visibility: "hidden" });
+    expect(screen.getByTestId("canvas-preview")).toBeInTheDocument();
   });
 });

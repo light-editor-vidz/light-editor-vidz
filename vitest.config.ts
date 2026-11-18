@@ -5,6 +5,8 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
+    // Sous charge (couverture, compilation en parallèle) quelques tests dépassaient les 5 s par défaut.
+    testTimeout: 15000,
     // jsdom, so component tests can live next to the pure-logic ones. The suite
     // used to be node-only, which silently made any .tsx test unrunnable.
     environment: "jsdom",

@@ -88,7 +88,8 @@ pub fn speed_filter(speed: f64) -> Option<String> {
     if speed == 1.0 {
         None
     } else {
-        Some(format!("setpts={:.4}*PTS", 1.0 / speed))
+        // Division exacte : une vitesse arrondie (1/3 → 0,3333) dérivait de `atempo`, de 120 ms par heure.
+        Some(format!("setpts=PTS/{speed}"))
     }
 }
 
@@ -162,11 +163,9 @@ pub fn build_video_filters(p: &VideoFilterParams) -> Vec<String> {
         (!p.color_filter.is_empty()).then(|| p.color_filter.clone()),
         speed_filter(p.speed.unwrap_or(1.0)),
         reframe_filter(p.reframe.as_ref()),
-        if p.reframe.is_some() {
-            short_side_filter(p.max_height)
-        } else {
-            resolution_filter(p.max_height)
-        },
+        // « 1080p » désigne toujours le petit côté : une vidéo portrait 1080×1920 reste 1080×1920
+        // (la hauteur seule donnait 608×1080).
+        short_side_filter(p.max_height),
         Some(EVEN_DIMENSIONS.to_string()),
     ]
     .into_iter()
@@ -229,8 +228,22 @@ mod tests {
     #[test]
     fn speed_is_a_pts_factor() {
         assert_eq!(speed_filter(1.0), None);
-        assert_eq!(speed_filter(2.0).as_deref(), Some("setpts=0.5000*PTS"));
-        assert_eq!(speed_filter(0.5).as_deref(), Some("setpts=2.0000*PTS"));
+        assert_eq!(speed_filter(2.0).as_deref(), Some("setpts=PTS/2"));
+        assert_eq!(speed_filter(0.5).as_deref(), Some("setpts=PTS/0.5"));
+    }
+
+    #[test]
+    fn a_portrait_video_keeps_its_short_side_at_the_chosen_resolution() {
+        let chain = build_video_filters(&VideoFilterParams {
+            max_height: Some(1080),
+            ..Default::default()
+        });
+        // Pas de `-2:'min(1080,ih)'` : une vidéo 1080×1920 serait réduite à 608×1080.
+        assert!(
+            chain.iter().all(|f| !f.starts_with("scale=-2:")),
+            "{chain:?}"
+        );
+        assert!(chain.iter().any(|f| f.contains("if(gt(iw,ih)")));
     }
 
     #[test]
@@ -293,8 +306,11 @@ mod tests {
         assert_eq!(chain[0], "crop=200:100:0:0");
         assert_eq!(chain[1], "transpose=1");
         assert_eq!(chain[2], "hue=s=0");
-        assert_eq!(chain[3], "setpts=0.5000*PTS");
-        assert_eq!(chain[4], "scale=-2:'min(720,ih)'");
+        assert_eq!(chain[3], "setpts=PTS/2");
+        assert_eq!(
+            chain[4],
+            "scale=w='if(gt(iw,ih),-2,min(720,iw))':h='if(gt(iw,ih),min(720,ih),-2)'"
+        );
         assert_eq!(chain.last().unwrap(), EVEN_DIMENSIONS);
     }
 

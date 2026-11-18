@@ -95,6 +95,10 @@ export function useCommitSession({ tabId, historyIndex, onApply, onPreview }: Op
 
   /** Termine la session : appelé par les actions ponctuelles (préréglage, bouton). */
   const endSession = useCallback(() => {
+    // Le réglage en cours est figé par l'action ponctuelle : ses curseurs repartent de zéro (sinon
+    // le préréglage s'ajoutait à un effet que les curseurs affichaient encore).
+    const old = session.current?.key;
+    if (old) setResets((r) => ({ ...r, [old]: (r[old] ?? 0) + 1 }));
     session.current = null;
   }, []);
 

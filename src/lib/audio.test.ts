@@ -68,6 +68,12 @@ describe("updateAudioTrackInProject", () => {
     expect(findAudioTrack(next, trackA.id)?.volume).toBe(0.4);
     expect(findAudioTrack(next, trackB.id)?.volume).toBe(1);
   });
+
+  it("returns the same project when the patch changes nothing", () => {
+    const track = createAudioTrack("a.mp3", "a");
+    const p = addAudioTrackToProject(project(), track);
+    expect(updateAudioTrackInProject(p, track.id, { volume: track.volume })).toBe(p);
+  });
 });
 
 describe("duplicateAudioTrackInProject", () => {
