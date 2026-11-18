@@ -259,6 +259,15 @@ fn all_twenty_colour_filters_run() {
 #[test]
 fn stabilisation_runs_both_passes() {
     let Some(r) = runner() else { return };
+    // Les ffmpeg sans libvidstab (macOS Homebrew, runner CI) n'ont pas le filtre : rien à tester.
+    let filters = std::process::Command::new(&r.ffmpeg)
+        .args(["-hide_banner", "-filters"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    if !filters.contains("vidstabdetect") {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let src = make_clip(&r, dir.path());
     let out = dir.path().join("out.mp4").to_string_lossy().into_owned();
