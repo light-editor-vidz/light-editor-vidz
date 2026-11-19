@@ -7,7 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.2.1] - 2026-11-18
+## [1.2.2] - 2026-11-19
 
 Fixes from a full code audit.
 
@@ -31,6 +31,7 @@ Fixes from a full code audit.
 - Audio: the memory used when changing the speed is halved; stabilisation is measured per segment.
 - The video sources are no longer loaded in memory when a project opens.
 - Release builds use thin LTO; the CI also runs clippy, rustfmt, prettier and the audits, and the GitHub actions are pinned.
+- Dependencies updated (imageproc 0.27 and the latest compatible versions of the other npm packages and Rust crates); Dependabot is no longer used.
 
 ## [1.2.0] - 2026-11-16
 

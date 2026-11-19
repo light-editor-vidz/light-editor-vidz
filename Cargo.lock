@@ -3118,7 +3118,7 @@ dependencies = [
 
 [[package]]
 name = "light-editor-vidz"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "anyhow",
  "audio-dsp",
