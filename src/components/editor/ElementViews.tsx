@@ -5,6 +5,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties 
 import { useTranslation } from "react-i18next";
 import type { Element } from "../../bindings/Element";
 import { assetUrl } from "../../lib/assetUrl";
+import { reportMediaDuration } from "../../lib/mediaDurations";
 import { useMediaSource } from "../../lib/useMediaSource";
 
 /**
@@ -342,6 +343,7 @@ export const VideoElementView = memo(function VideoElementView({
           }
           setError({ code: mediaError?.code ?? 0, message: mediaError?.message ?? "" });
         }}
+        onLoadedMetadata={(e) => reportMediaDuration(projectDir, element.src, e.currentTarget.duration)}
         onLoadedData={() => setError(null)}
       />
       {element.color_filter === "vignette" && (

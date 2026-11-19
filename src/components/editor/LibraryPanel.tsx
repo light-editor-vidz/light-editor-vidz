@@ -19,6 +19,7 @@ import {
   Loader2,
   Play,
   Pause,
+  Pencil,
   Plus,
   X,
 } from "lucide-react";
@@ -38,6 +39,7 @@ import {
 } from "../../lib/commands";
 import { assetUrl } from "../../lib/assetUrl";
 import type { LeftTab } from "./types";
+import { useEditMenu } from "./EditMenu";
 
 interface Props {
   active: LeftTab;
@@ -53,6 +55,8 @@ interface Props {
   onAddVideo: (relativeSrc: string, name: string, subtitlesOn?: boolean) => void;
   onAddAudio: (relativeSrc: string, name: string, subtitlesOn?: boolean) => void;
   onAddShape: (shapeType: ShapeType) => void;
+  /** Ouvre un média de la médiathèque dans son onglet d'édition. */
+  onEditMedia?: (kind: AssetKind, relativeSrc: string) => void;
   /** Ouvre les réglages (clés API des moteurs d'assets libres). */
   onOpenSettings: () => void;
 }
@@ -392,6 +396,24 @@ function isAssetInUse(project: Project, relativePath: string): boolean {
   );
 }
 
+function EditAssetButton({ onClick }: { onClick: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      className="library-asset-edit"
+      title={t("library.editAsset")}
+      aria-label={t("library.editAsset")}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+    >
+      <Pencil size={11} />
+    </button>
+  );
+}
+
 function DeleteAssetButton({ onClick }: { onClick: () => void }) {
   const { t } = useTranslation();
   return (
@@ -416,6 +438,7 @@ function MediaLibrary({
   project,
   historyProjects = [],
   onAdd,
+  onEdit,
   search,
   onOpenSettings,
 }: {
@@ -424,10 +447,12 @@ function MediaLibrary({
   project: Project;
   historyProjects?: Project[];
   onAdd: (relativeSrc: string, name: string, subtitlesOn?: boolean) => void;
+  onEdit?: (kind: AssetKind, relativeSrc: string) => void;
   search: string;
   onOpenSettings: () => void;
 }) {
   const { t } = useTranslation();
+  const editMenu = useEditMenu();
   const [allAssets, setAllAssets] = useState<AssetInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -514,12 +539,19 @@ function MediaLibrary({
   if (kind === "audio") {
     return (
       <>
+        {editMenu.menu}
         {error && <p className="library-error">{error}</p>}
         <div className="library-audio-list">
           {assets.map((a) => (
-            <div key={a.relative_path} className="library-audio-item" onClick={() => add(a)}>
+            <div
+              key={a.relative_path}
+              className="library-audio-item"
+              onClick={() => add(a)}
+              onContextMenu={onEdit && ((e) => editMenu.open(e, () => onEdit(kind, a.relative_path)))}
+            >
               <Mic size={15} color="var(--color-audio)" />
               <span className="mono">{a.filename}</span>
+              {onEdit && <EditAssetButton onClick={() => onEdit(kind, a.relative_path)} />}
               {ccButton(a)}
               <DeleteAssetButton onClick={() => void handleDelete(a)} />
             </div>
@@ -541,6 +573,7 @@ function MediaLibrary({
 
   return (
     <>
+      {editMenu.menu}
       {error && <p className="library-error">{error}</p>}
       <div className="library-grid-2">
         {assets.map((a) => (
@@ -549,8 +582,10 @@ function MediaLibrary({
             className="library-media-tile"
             style={{ aspectRatio: kind === "video" ? "16/10" : "1" }}
             onClick={() => add(a)}
+            onContextMenu={onEdit && ((e) => editMenu.open(e, () => onEdit(kind, a.relative_path)))}
             title={a.filename}
           >
+            {onEdit && <EditAssetButton onClick={() => onEdit(kind, a.relative_path)} />}
             {ccButton(a)}
             {kind === "image" ? (
               <img src={assetUrl(projectDir, a.relative_path)} alt={a.filename} loading="lazy" decoding="async" />
@@ -615,6 +650,7 @@ function LibraryPanel({
   onAddVideo,
   onAddAudio,
   onAddShape,
+  onEditMedia,
   onOpenSettings,
 }: Props) {
   const { t } = useTranslation();
@@ -652,6 +688,7 @@ function LibraryPanel({
             project={project}
             historyProjects={historyProjects}
             onAdd={onAddVideo}
+            onEdit={onEditMedia}
             search={search}
             onOpenSettings={onOpenSettings}
           />
@@ -663,6 +700,7 @@ function LibraryPanel({
             project={project}
             historyProjects={historyProjects}
             onAdd={onAddImage}
+            onEdit={onEditMedia}
             search={search}
             onOpenSettings={onOpenSettings}
           />
@@ -674,6 +712,7 @@ function LibraryPanel({
             project={project}
             historyProjects={historyProjects}
             onAdd={onAddAudio}
+            onEdit={onEditMedia}
             search={search}
             onOpenSettings={onOpenSettings}
           />

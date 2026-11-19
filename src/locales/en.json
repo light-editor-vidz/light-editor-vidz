@@ -110,8 +110,23 @@
     "audio": "Audio",
     "shape": "Shapes"
   },
+  "editMenu": {
+    "edit": "Edit"
+  },
+  "mediaVersion": {
+    "title": "New version of the media",
+    "intro_one": "The previous version is used by {{count}} clip. It stays in the library.",
+    "intro_other": "The previous version is used by {{count}} clips. It stays in the library.",
+    "keep": "Keep the old version",
+    "thisClip": "This clip only",
+    "all_one": "Use it in the clip",
+    "all_other": "Use it in all {{count}} clips",
+    "used": "New version added to the library.",
+    "applied": "New version applied."
+  },
   "library": {
     "clickToAdd": "CLICK TO ADD",
+    "editAsset": "Edit in its own tab",
     "searchPlaceholder": "Search…",
     "addTitle": "Add a title",
     "addSubtitle": "Default subtitle",
@@ -218,16 +233,8 @@
     "fadeCurveLinear": "Linear",
     "fadeCurveEqualPower": "Equal power",
     "audioSpeed": "Speed (×)",
-    "filter": "Filter",
-    "filterNone": "None",
-    "filterLowPass": "Low-pass",
-    "filterHighPass": "High-pass",
-    "filterBandPass": "Band-pass",
-    "filterFrequency": "Frequency (Hz)",
-    "filterSlope": "Slope",
-    "filterSlopeValue": "{{slope}} dB/octave",
-    "filterQ": "Q (width)",
     "advance": "Bring forward",
+    "editMedia": "Edit in a tab",
     "sendBack": "Send backward",
     "animFade": "Fade",
     "animSlideLeft": "Slide ←",
@@ -331,13 +338,6 @@
     "fitLargest": "Contain (whole image)",
     "fitWidth": "Fit width",
     "fitHeight": "Fit height",
-    "videoFilter": "Colour filter",
-    "videoCrop": "Crop (% of the image)",
-    "videoCropX": "X",
-    "videoCropY": "Y",
-    "videoCropW": "W",
-    "videoCropH": "H",
-    "videoCropReset": "Reset",
     "subtitles": "Subtitles",
     "subtitlesShow": "Show on the scene",
     "subtitlesPosition": "Subtitle position",
@@ -393,7 +393,8 @@
     "moveSceneRight": "Move scene later",
     "deleteScene": "Delete scene",
     "duplicateScene": "Duplicate scene",
-    "renameSceneHint": "Double-click to rename"
+    "renameSceneHint": "Double-click to rename",
+    "beyondMedia": "This clip is longer than its media"
   },
   "exportModal": {
     "title": "Export video",
@@ -1062,6 +1063,7 @@
   },
   "addToProjects": {
     "computer": "On my computer",
+    "origin": "Save as a new version in the project “{{project}}”",
     "none": "Choose where to export: on your computer, in a project, or both.",
     "label": "Add to a project",
     "browse": "Another project…"

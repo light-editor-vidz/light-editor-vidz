@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { AudioTrack } from "../../bindings/AudioTrack";
 import type { Project } from "../../bindings/Project";
+import { reportMediaDuration } from "../../lib/mediaDurations";
 import { useMediaSource } from "../../lib/useMediaSource";
 import { audioFadeGain, audioSourceTime, isAudioTrackActive, isTrackAudible } from "../../lib/audio";
 import { syncMedia } from "../../lib/mediaSync";
@@ -58,7 +59,15 @@ function SingleAudio({ track, projectDir, projectDuration, clock, playing, audib
     return clock.subscribe(sync);
   }, [active, playing, clock, track, mediaSrc]);
 
-  return <audio ref={ref} src={mediaSrc ?? undefined} preload="auto" onError={() => !usingBlob && fallBack()} />;
+  return (
+    <audio
+      ref={ref}
+      src={mediaSrc ?? undefined}
+      preload="auto"
+      onLoadedMetadata={(e) => reportMediaDuration(projectDir, track.src, e.currentTarget.duration)}
+      onError={() => !usingBlob && fallBack()}
+    />
+  );
 }
 
 /** Lecture des pistes audio globales du projet, synchronisée sur l'horloge de l'éditeur

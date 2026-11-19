@@ -7,6 +7,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-19
+
+### Added
+
+- Editing a media of a project now happens in its own tab: double-click a clip (timeline or canvas), right-click it, use the pencil in the library or the "Edit in a tab" button. The tab takes the clip's settings (trim, speed, crop, filter, fades…) and the export can be saved as a new version of the media in the project (the original stays in the library), applied to one clip or to all clips that use it, in a single undo step.
+- Clips that ask for more than their media contains are outlined on the timeline.
+
+### Changed
+
+- The properties panel keeps only the clip settings: the video filter and crop and the audio filter are now set in the media's tab.
+
 ## [1.2.2] - 2026-11-19
 
 Fixes from a full code audit.

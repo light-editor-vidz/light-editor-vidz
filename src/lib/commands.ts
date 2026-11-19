@@ -64,6 +64,11 @@ export function importAsset(projectDir: string, kind: AssetKind, sourcePath: str
   return invoke("import_asset", { projectDir, kind, sourcePath });
 }
 
+/** Autorise un média du projet à s'ouvrir dans un onglet d'édition ; renvoie son chemin absolu. */
+export function approveProjectAsset(projectDir: string, relativeSrc: string): Promise<string> {
+  return invoke("approve_project_asset", { projectDir, relativeSrc });
+}
+
 export function listAssets(projectDir: string, kind: AssetKind): Promise<AssetInfo[]> {
   return invoke("list_assets", { projectDir, kind });
 }

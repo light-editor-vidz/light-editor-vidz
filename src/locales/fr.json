@@ -110,8 +110,23 @@
     "audio": "Audio",
     "shape": "Formes"
   },
+  "editMenu": {
+    "edit": "Éditer"
+  },
+  "mediaVersion": {
+    "title": "Nouvelle version du média",
+    "intro_one": "L'ancienne version est utilisée par {{count}} clip. Elle reste dans la médiathèque.",
+    "intro_other": "L'ancienne version est utilisée par {{count}} clips. Elle reste dans la médiathèque.",
+    "keep": "Garder l'ancienne version",
+    "thisClip": "Ce clip seulement",
+    "all_one": "L'utiliser dans le clip",
+    "all_other": "L'utiliser dans les {{count}} clips",
+    "used": "Nouvelle version ajoutée à la médiathèque.",
+    "applied": "Nouvelle version appliquée."
+  },
   "library": {
     "clickToAdd": "CLIC POUR AJOUTER",
+    "editAsset": "Éditer dans son onglet",
     "searchPlaceholder": "Rechercher…",
     "addTitle": "Ajouter un titre",
     "addSubtitle": "Sous-titre par défaut",
@@ -218,16 +233,8 @@
     "fadeCurveLinear": "Linéaire",
     "fadeCurveEqualPower": "Puissance constante",
     "audioSpeed": "Vitesse (×)",
-    "filter": "Filtre",
-    "filterNone": "Aucun",
-    "filterLowPass": "Passe-bas",
-    "filterHighPass": "Passe-haut",
-    "filterBandPass": "Passe-bande",
-    "filterFrequency": "Fréquence (Hz)",
-    "filterSlope": "Pente",
-    "filterSlopeValue": "{{slope}} dB/octave",
-    "filterQ": "Q (largeur)",
     "advance": "Avancer",
+    "editMedia": "Éditer dans un onglet",
     "sendBack": "Reculer",
     "animFade": "Fondu",
     "animSlideLeft": "Glisser ←",
@@ -331,13 +338,6 @@
     "fitLargest": "Contenir (image entière)",
     "fitWidth": "Ajuster à la largeur",
     "fitHeight": "Ajuster à la hauteur",
-    "videoFilter": "Filtre de couleur",
-    "videoCrop": "Recadrage (% de l'image)",
-    "videoCropX": "X",
-    "videoCropY": "Y",
-    "videoCropW": "L",
-    "videoCropH": "H",
-    "videoCropReset": "Réinitialiser",
     "subtitles": "Sous-titres",
     "subtitlesShow": "Afficher sur la scène",
     "subtitlesPosition": "Position du sous-titre",
@@ -393,7 +393,8 @@
     "moveSceneRight": "Déplacer la scène plus tard",
     "deleteScene": "Supprimer la scène",
     "duplicateScene": "Dupliquer la scène",
-    "renameSceneHint": "Double-cliquer pour renommer"
+    "renameSceneHint": "Double-cliquer pour renommer",
+    "beyondMedia": "Ce clip est plus long que son média"
   },
   "exportModal": {
     "title": "Exporter la vidéo",
@@ -1062,6 +1063,7 @@
   },
   "addToProjects": {
     "computer": "Sur mon ordinateur",
+    "origin": "Enregistrer comme nouvelle version dans le projet « {{project}} »",
     "none": "Choisis où exporter : sur ton ordinateur, dans un projet, ou les deux.",
     "label": "Ajouter à un projet",
     "browse": "Un autre projet…"

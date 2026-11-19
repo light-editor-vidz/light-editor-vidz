@@ -1,4 +1,16 @@
+import type { ClipSettings } from "./clipSettings";
+
 // Les onglets de la fenêtre : l'accueil (toujours là), des projets, des fichiers audio.
+
+/** D'où vient un onglet de média : le projet et le média (`src`, relatif) qu'il édite. */
+export interface MediaOrigin {
+  projectDir: string;
+  src: string;
+  /** Le clip depuis lequel l'édition a été demandée ; absent depuis la médiathèque. */
+  elementId?: string;
+  /** Les réglages du clip, que l'onglet reprend à l'ouverture. */
+  clip?: ClipSettings;
+}
 
 export type Tab =
   | {
@@ -13,6 +25,8 @@ export type Tab =
       kind: "audio" | "image" | "video";
       /** Fichier ouvert ; `null` = vue vide (zone de dépôt et fichiers récents). */
       path: string | null;
+      /** Renseigné quand l'onglet édite un média d'un projet. */
+      origin?: MediaOrigin;
     };
 
 export const HOME = "home";
@@ -41,9 +55,9 @@ export const initialTabs: TabsState = { tabs: [], active: HOME, startNewProject:
 
 export type TabsAction =
   | { type: "openProject"; dir: string; notice?: string | null }
-  | { type: "openAudio"; path: string | null }
-  | { type: "openImage"; path: string | null }
-  | { type: "openVideo"; path: string | null }
+  | { type: "openAudio"; path: string | null; origin?: MediaOrigin }
+  | { type: "openImage"; path: string | null; origin?: MediaOrigin }
+  | { type: "openVideo"; path: string | null; origin?: MediaOrigin }
   | { type: "activate"; id: string }
   | { type: "close"; id: string; intent?: "new" }
   | { type: "setTabPath"; id: string; path: string }
@@ -64,14 +78,25 @@ function neighbour(tabs: Tab[], closing: string): string {
 /** Ouvre un fichier dans un onglet de ce type : un onglet qui l'a déjà est remis au premier plan,
  * un onglet vide affiché est rempli, sinon un nouvel onglet est créé. La vue vide n'existe
  * qu'une fois. */
-function openFileTab(state: TabsState, kind: "audio" | "image" | "video", path: string | null): TabsState {
+function openFileTab(
+  state: TabsState,
+  kind: "audio" | "image" | "video",
+  path: string | null,
+  origin?: MediaOrigin,
+): TabsState {
   const existing = state.tabs.find((t) => t.kind === kind && t.path === path);
-  if (existing) return { ...state, active: existing.id };
+  if (existing) {
+    // Le même fichier rouvert depuis un projet reprend son origine (le clip demandé).
+    const tabs = origin
+      ? state.tabs.map((t) => (t === existing && t.kind !== "project" ? { ...t, origin } : t))
+      : state.tabs;
+    return { ...state, tabs, active: existing.id };
+  }
   const shown = state.tabs.find((t) => t.id === state.active);
   if (path !== null && shown && shown.kind === kind && shown.path === null) {
     return { ...state, tabs: state.tabs.map((t) => (t === shown ? { ...shown, path } : t)) };
   }
-  const tab: Tab = { id: newId(kind), kind, path };
+  const tab: Tab = { id: newId(kind), kind, path, ...(origin ? { origin } : {}) };
   return { ...state, tabs: [...state.tabs, tab], active: tab.id };
 }
 
@@ -90,11 +115,11 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
       return { tabs: [...state.tabs, tab], active: tab.id, startNewProject: false };
     }
     case "openAudio":
-      return openFileTab(state, "audio", action.path);
+      return openFileTab(state, "audio", action.path, action.origin);
     case "openImage":
-      return openFileTab(state, "image", action.path);
+      return openFileTab(state, "image", action.path, action.origin);
     case "openVideo":
-      return openFileTab(state, "video", action.path);
+      return openFileTab(state, "video", action.path, action.origin);
     case "activate":
       return state.active === action.id || (action.id !== HOME && !state.tabs.some((t) => t.id === action.id))
         ? state
@@ -110,7 +135,11 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
     case "setTabPath":
       return {
         ...state,
-        tabs: state.tabs.map((t) => (t.id === action.id && t.kind !== "project" ? { ...t, path: action.path } : t)),
+        tabs: state.tabs.map((t) => {
+          if (t.id !== action.id || t.kind === "project") return t;
+          // Un autre fichier ouvert dans l'onglet n'est plus le média du projet.
+          return { id: t.id, kind: t.kind, path: action.path };
+        }),
       };
     case "newProject":
       return { ...state, active: HOME, startNewProject: true };

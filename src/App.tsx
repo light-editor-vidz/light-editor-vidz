@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { emit, listen } from "@tauri-apps/api/event";
-import { importAsset } from "./lib/commands";
+import { approveProjectAsset, importAsset } from "./lib/commands";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 import Home from "./components/Home";
@@ -12,7 +12,7 @@ import { installCloseGuard } from "./lib/closeGuard";
 import { describeError } from "./lib/errors";
 import { TabActiveProvider, useRegisterMenuActions } from "./lib/menuBridge";
 import { mediaKind, pickMediaFile, takePendingFiles, type PickedFile } from "./lib/openMedia";
-import { HOME, initialTabs, tabsReducer, type TabsAction } from "./lib/tabs";
+import { HOME, initialTabs, tabsReducer, type MediaOrigin, type TabsAction } from "./lib/tabs";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 // Les trois outils sont chargés à la demande : le premier écran (l'accueil, un projet) n'embarque
@@ -87,6 +87,17 @@ function App() {
     },
     [t],
   );
+
+  /** Ouvre un média d'un projet dans l'onglet d'édition de son type. */
+  const editMedia = useCallback(async (kind: "audio" | "image" | "video", origin: MediaOrigin) => {
+    setError(null);
+    try {
+      const path = await approveProjectAsset(origin.projectDir, origin.src);
+      dispatch({ type: kind === "audio" ? "openAudio" : kind === "image" ? "openImage" : "openVideo", path, origin });
+    } catch (e) {
+      setError(describeError(e));
+    }
+  }, []);
 
   // L'onglet affiché, lu par les gestionnaires qui ne se réabonnent pas à chaque rendu.
   const stateRef = useRef(state);
@@ -217,10 +228,12 @@ function App() {
                 onBack={(intent) => dispatch({ type: "close", id: tab.id, intent })}
                 onOpenProject={(dir, notice) => dispatch({ type: "openProject", dir, notice })}
                 onNewProject={() => dispatch({ type: "newProject" })}
+                onEditMedia={(kind, origin) => void editMedia(kind, origin)}
               />
             ) : tab.kind === "video" ? (
               <VideoTool
                 path={tab.path}
+                origin={tab.origin}
                 onOpenFile={() => void openFile()}
                 onOpenPath={(path) => dispatch({ type: "setTabPath", id: tab.id, path })}
                 onOpenAudio={(path) => dispatch({ type: "openAudio", path })}
@@ -233,6 +246,7 @@ function App() {
             ) : tab.kind === "image" ? (
               <ImageTool
                 path={tab.path}
+                origin={tab.origin}
                 onOpenFile={() => void openFile()}
                 onOpenPath={(path) => dispatch({ type: "setTabPath", id: tab.id, path })}
                 onClose={() => dispatch({ type: "close", id: tab.id })}
@@ -244,6 +258,7 @@ function App() {
             ) : (
               <AudioTool
                 path={tab.path}
+                origin={tab.origin}
                 onOpen={(path) => dispatch({ type: "setTabPath", id: tab.id, path })}
                 onClose={() => dispatch({ type: "close", id: tab.id })}
                 registerCloseGuard={(guard) => {

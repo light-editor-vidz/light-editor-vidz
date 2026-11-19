@@ -26,6 +26,22 @@ pub async fn read_media_file(
         .map(tauri::ipc::Response::new)
 }
 
+/// Autorise un média du projet à être ouvert dans un onglet d'édition (audio, image, vidéo) et
+/// renvoie son chemin absolu. Le chemin doit rester dans le dossier du projet.
+#[tauri::command]
+pub async fn approve_project_asset(
+    projects: State<'_, OpenProjects>,
+    approved: State<'_, Approved>,
+    project_dir: String,
+    relative_src: String,
+) -> CmdResult<String> {
+    let dir = projects.require(&project_dir)?;
+    let path = blocking(move || scene_core::paths::resolve_media_path(&dir, &relative_src)).await?;
+    let path = path.to_string_lossy().into_owned();
+    approved.allow_input(&path);
+    Ok(path)
+}
+
 /// Taille maximale d'un média lu en mémoire par `read_media_file` (repli blob uniquement).
 const MAX_READ_MEDIA_BYTES: u64 = 256 * 1024 * 1024;
 

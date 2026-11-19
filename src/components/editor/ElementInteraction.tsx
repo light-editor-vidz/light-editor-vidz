@@ -33,6 +33,9 @@ interface Props {
    * rotation (qui crée un contexte d'empilement) l'isolerait et le mélange se ferait avec du
    * transparent au lieu de la scène. */
   blendMode?: string;
+  /** Double-clic ou clic droit : ouvre l'édition du média (absent pour un texte ou une forme). */
+  onDoubleClick?: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
   children: ReactNode;
 }
 
@@ -69,6 +72,8 @@ export default function ElementInteraction({
   onSelect,
   onGuides,
   blendMode,
+  onDoubleClick,
+  onContextMenu,
   children,
 }: Props) {
   const dragState = useRef<{
@@ -200,6 +205,8 @@ export default function ElementInteraction({
         pointerEvents: "auto",
       }}
       onPointerDown={(e) => startDrag("move", undefined, e)}
+      onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
     >
       {children}
       {selected && (

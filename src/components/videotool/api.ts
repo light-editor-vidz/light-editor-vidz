@@ -3,6 +3,7 @@ import {
   removeMediaSub,
   saveMediaSub,
   type AddReport,
+  type MediaOrigin,
   type MediaSubEntry,
 } from "../../lib/subs/commands";
 // Le pont entre la vue Vidéo et le moteur Rust (`commands/video_tool.rs`). Il a la forme de l'API
@@ -86,7 +87,12 @@ export interface VideoApi {
   saveSub: (path: string, entry: MediaSubEntry) => Promise<void>;
   removeSub: (path: string, id: string) => Promise<void>;
   /** À appeler avant l'export : le fichier écrit rejoindra ces projets. */
-  addAfterExport: (outputPath: string, projects: string[], srt: string | null) => Promise<void>;
+  addAfterExport: (
+    outputPath: string,
+    projects: string[],
+    srt: string | null,
+    origin?: MediaOrigin | null,
+  ) => Promise<void>;
   onAddedToProjects: (callback: (report: AddReport) => void) => () => void;
   openVideo: () => Promise<string | null>;
   saveVideo: (defaultName?: string, format?: string) => Promise<string | null>;
@@ -178,7 +184,8 @@ const makeTauriApi = (owner: string): VideoApi => {
     listSubs: listMediaSubs,
     saveSub: saveMediaSub,
     removeSub: removeMediaSub,
-    addAfterExport: (outputPath, projects, srt) => invoke("video_add_after_export", { outputPath, projects, srt }),
+    addAfterExport: (outputPath, projects, srt, origin = null) =>
+      invoke("video_add_after_export", { outputPath, projects, srt, origin }),
     onAddedToProjects: (callback) => subscribe<AddReport>("video-export-added", callback),
     openVideo: () => invoke<string | null>("video_pick_file"),
     saveVideo: async (defaultName, format) => {

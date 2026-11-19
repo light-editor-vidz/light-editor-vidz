@@ -18,6 +18,7 @@ import {
   resolveImagePan,
   transformToCss,
 } from "../../lib/animate";
+import { useEditMenu } from "./EditMenu";
 import ElementInteraction, { type GeometryPatch, type SnapGuides } from "./ElementInteraction";
 import ShapeView from "./ShapeView";
 import { ImageElementView, TextElementView, VideoElementView } from "./ElementViews";
@@ -42,6 +43,8 @@ interface Props {
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  /** Ouvre le média d'un clip (image, vidéo) dans son onglet d'édition. */
+  onEditElement?: (id: string) => void;
 }
 
 interface MarqueeRect {
@@ -104,8 +107,10 @@ function CanvasStage({
   onRedo,
   canUndo,
   canRedo,
+  onEditElement,
 }: Props) {
   const { t } = useTranslation();
+  const editMenu = useEditMenu();
   const stageRef = useRef<HTMLDivElement>(null);
   const stageWrapRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -311,6 +316,8 @@ function CanvasStage({
                 onSelectElement={onSelectElement}
                 onUpdateElement={onUpdateElement}
                 onGuides={setGuides}
+                onEditElement={onEditElement}
+                openEditMenu={editMenu.open}
               />
             ))}
             {guides?.vertical.map((x) => (
@@ -348,6 +355,7 @@ function CanvasStage({
           {formatTimecode(time, project.fps)} / {formatTimecode(project.duration, project.fps)}
         </span>
       </div>
+      {editMenu.menu}
     </section>
   );
 }
@@ -365,6 +373,8 @@ interface SceneLayerProps {
   onSelectElement: (id: string | null, additive: boolean) => void;
   onUpdateElement: (elementId: string, patch: Partial<GeometryPatch>) => void;
   onGuides: (guides: SnapGuides | null) => void;
+  onEditElement?: (id: string) => void;
+  openEditMenu: (e: React.MouseEvent, run: () => void) => void;
 }
 
 /** Une scène : ses éléments actifs, avec les transitions d'entrée/sortie de la scène appliquées
@@ -383,6 +393,8 @@ function SceneLayer({
   onSelectElement,
   onUpdateElement,
   onGuides,
+  onEditElement,
+  openEditMenu,
 }: SceneLayerProps) {
   const compIn = resolveCompositionTransition(scene.transition_in, "in", localTime, scene.duration);
   const compOut = resolveCompositionTransition(scene.transition_out, "out", localTime, scene.duration);
@@ -475,6 +487,7 @@ function SceneLayer({
             </div>
           );
         }
+        const editable = !!onEditElement && (el.type === "image" || el.type === "video");
         return (
           <ElementInteraction
             key={el.id}
@@ -487,6 +500,8 @@ function SceneLayer({
             onSelect={(additive) => onSelectElement(el.id, additive)}
             onChange={(patch) => onUpdateElement(el.id, patch)}
             onGuides={onGuides}
+            onDoubleClick={editable ? () => onEditElement?.(el.id) : undefined}
+            onContextMenu={editable ? (e) => openEditMenu(e, () => onEditElement?.(el.id)) : undefined}
           >
             {content}
           </ElementInteraction>

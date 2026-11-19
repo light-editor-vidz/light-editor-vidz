@@ -1,5 +1,7 @@
 // Les commandes de génération de sous-titres (`commands/subs_tool.rs` et le moteur `subz`).
 
+import type { MediaOrigin } from "../tabs";
+export type { MediaOrigin };
 import { invoke } from "@tauri-apps/api/core";
 import type { Project } from "../../bindings/Project";
 
@@ -128,8 +130,12 @@ export interface AddReport {
 }
 
 /** Après un export : le fichier écrit rejoint la médiathèque de ces projets. */
-export const addOutputToProjects = (outputPath: string, projects: string[], srt: string | null): Promise<AddReport> =>
-  invoke("add_output_to_projects", { outputPath, projects, srt });
+export const addOutputToProjects = (
+  outputPath: string,
+  projects: string[],
+  srt: string | null,
+  origin: MediaOrigin | null = null,
+): Promise<AddReport> => invoke("add_output_to_projects", { outputPath, projects, srt, origin });
 
 /** Export vers les seuls projets : un fichier temporaire, copié dans les projets puis supprimé. */
 export const stagedExportPath = (filename: string): Promise<string> => invoke("staged_export_path", { filename });

@@ -112,6 +112,7 @@ pub fn run() {
             commands::assets::list_assets,
             commands::assets::delete_asset,
             commands::assets::read_media_file,
+            commands::assets::approve_project_asset,
             commands::stock::search_stock_assets,
             commands::stock::import_stock_asset,
             commands::stock::restrict_settings_permissions,

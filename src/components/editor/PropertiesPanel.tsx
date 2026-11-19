@@ -34,6 +34,8 @@ interface Props {
   /** Generates subtitles from the selected video element or audio track. */
   onGenerateSubtitles?: () => void;
   onEditLinkedCues?: (src: string, cues: LinkedCue[]) => void;
+  /** Ouvre le média sélectionné dans son onglet d'édition (image, vidéo, audio). */
+  onEditMedia?: (id: string) => void;
 }
 
 function PropertiesPanel({
@@ -54,8 +56,17 @@ function PropertiesPanel({
   onUngroup,
   onGenerateSubtitles,
   onEditLinkedCues,
+  onEditMedia,
 }: Props) {
   const { t } = useTranslation();
+  const editButton = (id: string) =>
+    onEditMedia ? (
+      <div className="properties-section">
+        <button type="button" className="btn-secondary" onClick={() => onEditMedia(id)}>
+          {t("properties.editMedia")}
+        </button>
+      </div>
+    ) : null;
   const generateButton = onGenerateSubtitles ? (
     <div className="properties-section">
       <button type="button" className="btn-secondary" onClick={onGenerateSubtitles}>
@@ -78,6 +89,7 @@ function PropertiesPanel({
       <aside className="editor-properties">
         <div className="properties-content">
           <AudioProperties track={audioTrack} onUpdate={onUpdateAudio} />
+          {editButton(audioTrack.id)}
           {audioTrack.subtitles && (
             <LinkedSubtitlesFields
               key={audioTrack.id}
@@ -138,6 +150,7 @@ function PropertiesPanel({
               activeDuration={element.duration ?? activeCompositionDuration - element.start_time}
             />
           )}
+          {(element.type === "image" || element.type === "video") && editButton(element.id)}
           {element.type === "video" && element.subtitles && (
             <LinkedSubtitlesFields
               key={element.id}

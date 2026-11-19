@@ -1,7 +1,5 @@
 import type { Project } from "../bindings/Project";
 import type { AudioTrack } from "../bindings/AudioTrack";
-import type { AudioFilter } from "../bindings/AudioFilter";
-import type { AudioFilterKind } from "../bindings/AudioFilterKind";
 import type { FadeCurve } from "../bindings/FadeCurve";
 import i18n from "i18next";
 
@@ -34,12 +32,6 @@ export function createAudioTrack(relativeSrc: string, name: string, startTime = 
 /** Plage de vitesse acceptée pour une piste. */
 export const AUDIO_SPEED_MIN = 0.25;
 export const AUDIO_SPEED_MAX = 4;
-
-/** Filtre proposé quand on en active un : réglages neutres et audibles (12 dB/oct, Q de Butterworth). */
-export function defaultAudioFilter(kind: AudioFilterKind): AudioFilter {
-  const frequency = kind === "low-pass" ? 4000 : kind === "high-pass" ? 200 : 1000;
-  return { kind, frequency, slope: 12, q: 0.707 };
-}
 
 /** Position (secondes) dans le fichier source à l'instant global `globalTime` : la vitesse
  * accélère la consommation de la source, `audio_offset` est le point d'entrée. */

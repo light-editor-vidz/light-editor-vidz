@@ -129,7 +129,7 @@ describe("isTrackAudible", () => {
   });
 });
 
-import { audioFadeGain, audioSourceTime, defaultAudioFilter, fadeGain } from "./audio";
+import { audioFadeGain, audioSourceTime, fadeGain } from "./audio";
 
 describe("audioFadeGain", () => {
   const track = (over: Partial<AudioTrack> = {}) => ({ ...createAudioTrack("a.mp3", "a", 3), ...over });
@@ -194,11 +194,5 @@ describe("audio speed and filter helpers", () => {
     const t = { ...createAudioTrack("a.mp3", "a", 4), audio_offset: 1.5, speed: 2 };
     expect(audioSourceTime(t, 4)).toBe(1.5);
     expect(audioSourceTime(t, 7)).toBe(7.5);
-  });
-
-  it("defaultAudioFilter picks a sensible frequency per kind", () => {
-    expect(defaultAudioFilter("low-pass")).toEqual({ kind: "low-pass", frequency: 4000, slope: 12, q: 0.707 });
-    expect(defaultAudioFilter("high-pass").frequency).toBe(200);
-    expect(defaultAudioFilter("band-pass").frequency).toBe(1000);
   });
 });

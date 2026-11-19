@@ -7,6 +7,17 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-19
+
+### Ajouté
+
+- L'édition d'un média du projet se fait dans son propre onglet : double-clic sur un clip (timeline ou canvas), clic droit, crayon de la médiathèque ou bouton « Éditer dans un onglet ». L'onglet reprend les réglages du clip (rognage, vitesse, recadrage, filtre, fondus…) et l'export peut être enregistré comme nouvelle version du média dans le projet (l'original reste dans la médiathèque), appliquée à un clip ou à tous ceux qui l'utilisent, en un seul pas d'annulation.
+- Les clips qui réclament plus que ce que leur média contient sont entourés sur la timeline.
+
+### Modifié
+
+- Le panneau de propriétés ne garde que les réglages du clip : le filtre et le recadrage vidéo et le filtre audio se règlent maintenant dans l'onglet du média.
+
 ## [1.2.2] - 2026-11-19
 
 Corrections issues d'un audit complet du code.

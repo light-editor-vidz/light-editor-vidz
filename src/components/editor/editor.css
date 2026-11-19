@@ -1611,3 +1611,61 @@
   width: 100%;
   margin-top: 8px;
 }
+
+/* Menu contextuel « Éditer » (médias) */
+.edit-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 120px;
+  padding: 4px;
+  background: var(--bg-elevated, var(--bg-panel, #1f1f23));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.edit-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.edit-menu button:hover,
+.edit-menu button:focus-visible {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+}
+.library-asset-edit {
+  position: absolute;
+  top: 4px;
+  right: 24px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.6);
+  border: 0;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+}
+.library-audio-item .library-asset-edit {
+  position: static;
+  margin-left: auto;
+}
+
+/* Clip qui réclame plus de source que son média n'en contient */
+.timeline-clip.beyond-media {
+  outline: 2px dashed var(--color-danger, #ff5c5c);
+  outline-offset: -2px;
+}
+.timeline-clip.beyond-media .timeline-clip-name::before {
+  content: "⚠ ";
+}

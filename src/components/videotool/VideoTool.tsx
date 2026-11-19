@@ -1,3 +1,5 @@
+import type { MediaOrigin } from "../../lib/subs/commands";
+import { videoEditableFromClip } from "../../lib/clipSettings";
 import { useState, useRef, useCallback, useEffect, useMemo, lazy, Suspense } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { useMenuBridge, useRegisterMenuActions, useTabActive } from "../../lib/menuBridge";
@@ -57,6 +59,8 @@ const isMac = navigator.platform.includes("Mac");
 interface Props {
   /** Vidéo à ouvrir ; `null` = vue vide (zone de dépôt et fichiers récents). */
   path: string | null;
+  /** Le média de projet que cet onglet édite, le cas échéant. */
+  origin?: MediaOrigin;
   /** « Ouvrir une vidéo » : le choix du fichier se fait au niveau de la fenêtre. */
   onOpenFile: () => void;
   /** Ouvre ce chemin (un fichier récent) : dans cet onglet s'il est vide. */
@@ -78,7 +82,7 @@ export default function VideoTool(props: Props) {
   );
 }
 
-function VideoToolView({ path, onOpenFile, onOpenPath, onOpenAudio, onClose, registerCloseGuard }: Props) {
+function VideoToolView({ path, origin, onOpenFile, onOpenPath, onOpenAudio, onClose, registerCloseGuard }: Props) {
   const owner = useVideoOwner();
   const { t } = useT();
   const tabActive = useTabActive();
@@ -377,6 +381,17 @@ function VideoToolView({ path, onOpenFile, onOpenPath, onOpenAudio, onClose, reg
     openedPath.current = path;
     void loadVideo(path);
   }, [path, loadVideo]);
+
+  // Ouvert depuis un clip du projet : l'onglet reprend ses réglages (rognage, vitesse, recadrage,
+  // filtre), une fois la durée et les dimensions de la vidéo connues. Ce n'est pas une modification.
+  const clipApplied = useRef<string | null>(null);
+  useEffect(() => {
+    const clip = origin?.clip;
+    if (clip?.kind !== "video" || !path || duration <= 0 || !videoSize || clipApplied.current === path) return;
+    clipApplied.current = path;
+    reset({ ...editable, ...videoEditableFromClip(clip, duration, videoSize) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [origin, path, duration, videoSize, reset]);
 
   // Kept segments = inverse of cuts.
   const keptSegments = useMemo(() => getKeptSegments(editable.cutSegments, duration), [editable.cutSegments, duration]);
@@ -947,6 +962,7 @@ function VideoToolView({ path, onOpenFile, onOpenPath, onOpenAudio, onClose, reg
               onClose={closeExport}
               onQueued={onExportQueued}
               onProjectsExport={onProjectsExport}
+              origin={origin}
             />
           </Suspense>
         )}

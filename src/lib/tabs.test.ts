@@ -183,4 +183,15 @@ describe("tabsReducer", () => {
     expect(samePath("C:\\p\\a.lvproj", "C:/p/a.lvproj")).toBe(true);
     expect(samePath("/p/a.lvproj", "/p/b.lvproj")).toBe(false);
   });
+
+  it("keeps where a media tab comes from, and updates it when the file is reopened from a clip", () => {
+    const origin = { projectDir: "/p.lvproj", src: "assets/videos/a.mp4" };
+    let s = tabsReducer(initialTabs, { type: "openVideo", path: "/p.lvproj/assets/videos/a.mp4", origin });
+    expect(s.tabs).toHaveLength(1);
+    expect(s.tabs[0]).toMatchObject({ kind: "video", origin });
+    const fromClip = { ...origin, elementId: "el-1" };
+    s = tabsReducer(s, { type: "openVideo", path: "/p.lvproj/assets/videos/a.mp4", origin: fromClip });
+    expect(s.tabs).toHaveLength(1);
+    expect(s.tabs[0]).toMatchObject({ origin: fromClip });
+  });
 });

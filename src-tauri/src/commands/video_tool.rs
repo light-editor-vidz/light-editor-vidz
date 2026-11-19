@@ -2,6 +2,7 @@
 //! et la file d'exports. Le moteur est dans le crate `video-export` ; ici, la colle Tauri
 //! (dialogues, événements, autorisations de chemins).
 
+use crate::commands::media_subs::MediaOrigin;
 use audio_dsp::approval::Approved;
 use audio_dsp::error::CmdError;
 use audio_dsp::recent::{self, RecentFile};
@@ -40,7 +41,10 @@ pub struct VideoState {
 }
 
 /// Ce qu'il reste à faire d'un fichier une fois son export terminé, par chemin de sortie.
-type AfterExport = Arc<Mutex<HashMap<String, (Vec<String>, Option<String>)>>>;
+type AfterExport = Arc<Mutex<HashMap<String, AfterExportJob>>>;
+
+/// Les projets, le sous-titre et le média d'origine d'un export à terminer.
+type AfterExportJob = (Vec<String>, Option<String>, Option<MediaOrigin>);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Capabilities {
@@ -61,9 +65,13 @@ impl VideoState {
                     .unwrap_or_else(|e| e.into_inner())
                     .remove(&options.output_path);
                 match (&result, next) {
-                    (Ok(()), Some((projects, srt))) => {
-                        finish_export(&finisher, &options.output_path, &projects, srt.as_deref())
-                    }
+                    (Ok(()), Some((projects, srt, origin))) => finish_export(
+                        &finisher,
+                        &options.output_path,
+                        &projects,
+                        srt.as_deref(),
+                        origin.as_ref(),
+                    ),
                     // Un export temporaire échoué ou annulé ne sert plus à rien.
                     (Err(_), _) => crate::commands::media_subs::discard_staged(
                         &finisher,
@@ -135,11 +143,18 @@ fn finish_export<R: Runtime>(
     output: &str,
     projects: &[String],
     srt: Option<&str>,
+    origin: Option<&crate::commands::media_subs::MediaOrigin>,
 ) {
     let handle = app.clone();
     let _ = handle.emit(
         "video-export-added",
-        crate::commands::media_subs::add_everywhere(&handle, Path::new(output), projects, srt),
+        crate::commands::media_subs::add_everywhere(
+            &handle,
+            Path::new(output),
+            projects,
+            srt,
+            origin,
+        ),
     );
 }
 
@@ -957,6 +972,7 @@ pub fn video_add_after_export(
     output_path: String,
     projects: Vec<String>,
     srt: Option<String>,
+    origin: Option<MediaOrigin>,
 ) -> Result<(), CmdError> {
     approved
         .check_output(&output_path)
@@ -964,10 +980,10 @@ pub fn video_add_after_export(
     let mut pending = state.after_export.lock().unwrap_or_else(|e| e.into_inner());
     // Sans projet : l'entrée est retirée (l'export a été refusé ou a échoué, elle ne doit pas
     // rester pour un export ultérieur vers le même fichier).
-    if projects.is_empty() {
+    if projects.is_empty() && origin.is_none() {
         pending.remove(&output_path);
     } else {
-        pending.insert(output_path, (projects, srt));
+        pending.insert(output_path, (projects, srt, origin));
     }
     Ok(())
 }

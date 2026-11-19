@@ -231,6 +231,28 @@ pub struct AddReport {
     pub errors: Vec<String>,
 }
 
+/// Le média d'un projet que l'onglet d'édition modifie : l'export en devient une nouvelle version.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaOrigin {
+    pub project_dir: String,
+    pub src: String,
+    /// Le clip depuis lequel l'édition a été demandée.
+    #[serde(default)]
+    pub element_id: Option<String>,
+}
+
+/// Annoncé (`project-media-saved`) quand une nouvelle version d'un média existe : l'éditeur du
+/// projet y reporte les clips concernés.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaSaved {
+    pub project_dir: String,
+    pub old_src: String,
+    pub new_src: String,
+    pub element_id: Option<String>,
+}
+
 /// Ajoute `output` à chaque projet et prévient les médiathèques ouvertes. Un export destiné aux
 /// seuls projets est ensuite supprimé : les projets en ont leur copie.
 pub fn add_everywhere<R: tauri::Runtime>(
@@ -238,8 +260,31 @@ pub fn add_everywhere<R: tauri::Runtime>(
     output: &Path,
     projects: &[String],
     srt: Option<&str>,
+    origin: Option<&MediaOrigin>,
 ) -> AddReport {
     let mut report = AddReport::default();
+    if let Some(origin) = origin {
+        let saved = app
+            .try_state::<OpenProjects>()
+            .ok_or_else(|| "Project registry unavailable".to_string())
+            .and_then(|open| open.require(&origin.project_dir))
+            .and_then(|dir| save_version(&dir, &origin.src, output));
+        match saved {
+            Ok(new_src) => {
+                report.added += 1;
+                let _ = app.emit(
+                    "project-media-saved",
+                    MediaSaved {
+                        project_dir: origin.project_dir.clone(),
+                        old_src: origin.src.clone(),
+                        new_src,
+                        element_id: origin.element_id.clone(),
+                    },
+                );
+            }
+            Err(e) => report.errors.push(e),
+        }
+    }
     for project in projects {
         match add_to_project(Path::new(project), output, srt) {
             Ok(()) => report.added += 1,
@@ -305,6 +350,51 @@ pub fn staged_export_path(
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Écrit `output` comme nouvelle version du média `relative_src` d'un projet, à côté de l'original
+/// (qui reste intact), sous un nom libre (`<nom>-edit.<ext>`), avec son sous-titre. Renvoie le
+/// chemin, relatif au projet, de la nouvelle version.
+fn save_version(project: &Path, relative_src: &str, output: &Path) -> Result<String, String> {
+    let current = scene_core::paths::resolve_media_path(project, relative_src)?;
+    let name = output
+        .file_name()
+        .and_then(|f| f.to_str())
+        .ok_or_else(|| "Invalid file name".to_string())?;
+    let kind = output_kind(name).ok_or_else(|| format!("{name} cannot be added to a project"))?;
+    let subdir = crate::commands::assets::kind_subdir(kind)?;
+    let dir = current
+        .parent()
+        .ok_or_else(|| "Invalid media path".to_string())?;
+    if dir.file_name().and_then(|f| f.to_str()) != Some(subdir) {
+        return Err(format!(
+            "{name} is not the same kind of media as {relative_src}"
+        ));
+    }
+    let stem = current
+        .file_stem()
+        .and_then(|f| f.to_str())
+        .ok_or_else(|| "Invalid media path".to_string())?;
+    let ext = output
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let wanted = if ext.is_empty() {
+        format!("{stem}-edit")
+    } else {
+        format!("{stem}-edit.{ext}")
+    };
+    let dest = unique_destination(dir, &wanted);
+    fs::copy(output, &dest).map_err(|e| format!("Failed to copy file: {e}"))?;
+    if sidecar(&current).is_file() {
+        let _ = fs::copy(sidecar(&current), sidecar(&dest));
+    }
+    let file = dest
+        .file_name()
+        .and_then(|f| f.to_str())
+        .ok_or_else(|| "Invalid media path".to_string())?;
+    Ok(format!("assets/{subdir}/{file}"))
+}
+
 /// Après un export audio ou image : le fichier, déjà écrit, rejoint les projets cochés.
 #[tauri::command]
 pub async fn add_output_to_projects(
@@ -313,12 +403,19 @@ pub async fn add_output_to_projects(
     output_path: String,
     projects: Vec<String>,
     srt: Option<String>,
+    origin: Option<MediaOrigin>,
 ) -> Result<AddReport, CmdError> {
     approved
         .check_output(&output_path)
         .map_err(CmdError::from)?;
     tauri::async_runtime::spawn_blocking(move || {
-        add_everywhere(&app, Path::new(&output_path), &projects, srt.as_deref())
+        add_everywhere(
+            &app,
+            Path::new(&output_path),
+            &projects,
+            srt.as_deref(),
+            origin.as_ref(),
+        )
     })
     .await
     .map_err(|e| refuse(e.to_string()))
@@ -407,6 +504,43 @@ mod tests {
         fs::write(&gif, b"gif").unwrap();
         add_to_project(p.path(), &gif, None).unwrap();
         assert!(p.path().join("assets/images/b.gif").is_file());
+    }
+
+    #[test]
+    fn a_new_version_sits_next_to_the_media_and_keeps_its_subtitle() {
+        let (p, media) = (project(), tempfile::tempdir().unwrap());
+        let file = media_in(media.path());
+        add_to_project(p.path(), &file, Some("srt")).unwrap();
+        let edited = media.path().join("b.mp4");
+        fs::write(&edited, b"edited").unwrap();
+        let src = save_version(p.path(), "assets/videos/a.mp4", &edited).unwrap();
+        assert_eq!(src, "assets/videos/a-edit.mp4");
+        assert_eq!(fs::read(p.path().join(&src)).unwrap(), b"edited");
+        assert_eq!(
+            fs::read(p.path().join("assets/videos/a.mp4")).unwrap(),
+            b"video"
+        );
+        assert_eq!(
+            fs::read_to_string(sidecar(&p.path().join(&src))).unwrap(),
+            "srt"
+        );
+        let again = save_version(p.path(), "assets/videos/a.mp4", &edited).unwrap();
+        assert_eq!(again, "assets/videos/a-edit-2.mp4");
+    }
+
+    #[test]
+    fn a_version_keeps_its_own_extension_and_must_be_the_same_kind() {
+        let (p, media) = (project(), tempfile::tempdir().unwrap());
+        let file = media_in(media.path());
+        add_to_project(p.path(), &file, None).unwrap();
+        let webm = media.path().join("c.webm");
+        fs::write(&webm, b"webm").unwrap();
+        let src = save_version(p.path(), "assets/videos/a.mp4", &webm).unwrap();
+        assert_eq!(src, "assets/videos/a-edit.webm");
+        let png = media.path().join("d.png");
+        fs::write(&png, b"png").unwrap();
+        assert!(save_version(p.path(), "assets/videos/a.mp4", &png).is_err());
+        assert!(save_version(p.path(), "../outside.mp4", &webm).is_err());
     }
 
     #[test]

@@ -69,6 +69,12 @@ import TopBar from "./editor/TopBar";
 import { useMenuBridge, useRegisterMenuActions, useTabActive } from "../lib/menuBridge";
 import SettingsModal from "./editor/SettingsModal";
 import CategoryRail from "./editor/CategoryRail";
+import type { MediaOrigin } from "../lib/tabs";
+import { samePath } from "../lib/tabs";
+import { listen } from "@tauri-apps/api/event";
+import { audioClipSettings, videoClipSettings } from "../lib/clipSettings";
+import { clipsUsing, swapMediaSrc, type SwapScope } from "../lib/mediaSwap";
+import MediaVersionDialog from "./editor/MediaVersionDialog";
 import LibraryPanel from "./editor/LibraryPanel";
 import CanvasStage from "./editor/CanvasStage";
 import PropertiesPanel from "./editor/PropertiesPanel";
@@ -95,6 +101,8 @@ interface Props {
   initialNotice?: string | null;
   /** Ce que l'onglet demande avant de se fermer : enregistrer, et confirmer si un export tourne. */
   registerCloseGuard?: (guard: () => Promise<boolean>) => () => void;
+  /** Ouvre un média du projet dans l'onglet d'édition de son type. */
+  onEditMedia?: (kind: "audio" | "image" | "video", origin: MediaOrigin) => void;
 }
 
 /** Les réglages à choix (gras, alignement, mode de fusion…) sont des actions ponctuelles : deux
@@ -124,6 +132,7 @@ export default function Editor({
   onNewProject,
   initialNotice = null,
   registerCloseGuard,
+  onEditMedia,
 }: Props) {
   const { t } = useTranslation();
   const [history, dispatch] = useReducer(historyReducer, initialHistory);
@@ -319,6 +328,44 @@ export default function Editor({
   );
   useEffect(() => flushMutations, [flushMutations]);
 
+  // Une nouvelle version d'un média du projet vient d'être enregistrée depuis son onglet : les clips
+  // qui utilisaient l'ancienne peuvent la reprendre (un seul pas d'annulation).
+  const [newVersion, setNewVersion] = useState<{
+    oldSrc: string;
+    newSrc: string;
+    elementId?: string;
+    count: number;
+  } | null>(null);
+  useEffect(() => {
+    const un = listen<{ projectDir: string; oldSrc: string; newSrc: string; elementId: string | null }>(
+      "project-media-saved",
+      ({ payload }) => {
+        const current = projectRef.current;
+        if (!current || !samePath(payload.projectDir, projectDir)) return;
+        const users = clipsUsing(current, payload.oldSrc);
+        const elementId = payload.elementId ?? undefined;
+        if (users.length === 0) {
+          setNotice({ kind: "info", message: t("mediaVersion.used") });
+        } else if (elementId && users.length === 1 && users[0] === elementId) {
+          mutate((p) => swapMediaSrc(p, payload.oldSrc, payload.newSrc, "clip", elementId));
+          setNotice({ kind: "info", message: t("mediaVersion.applied") });
+        } else {
+          setNewVersion({ oldSrc: payload.oldSrc, newSrc: payload.newSrc, elementId, count: users.length });
+        }
+      },
+    ).catch(() => undefined);
+    return () => {
+      void un.then((off) => off?.());
+    };
+  }, [projectDir, mutate, t]);
+  const applyNewVersion = (scope: SwapScope) => {
+    if (!newVersion) return;
+    const { oldSrc, newSrc, elementId } = newVersion;
+    mutate((p) => swapMediaSrc(p, oldSrc, newSrc, scope, elementId));
+    setNewVersion(null);
+    setNotice({ kind: "info", message: t("mediaVersion.applied") });
+  };
+
   const historyProjects = useMemo(() => [...past, ...future], [past, future]);
   const canUndo = past.length > 0;
   const canRedo = future.length > 0;
@@ -442,6 +489,27 @@ export default function Editor({
     project ? (resolveActiveComposition(project, time)?.composition.id ?? null) : null,
   );
   const activeComposition = project?.compositions.find((c) => c.id === activeId) ?? null;
+  /** Ouvre le média d'un clip (ou, sans clip, d'un fichier de la médiathèque) dans son onglet. */
+  const editClipMedia = onEditMedia
+    ? (id: string) => {
+        if (!project) return;
+        const track = findAudioTrack(project, id);
+        if (track) {
+          return onEditMedia("audio", { projectDir, src: track.src, elementId: id, clip: audioClipSettings(track) });
+        }
+        const el = findElement(project, id);
+        if (el && (el.type === "image" || el.type === "video")) {
+          const comp = project.compositions.find((c) => c.elements.some((e) => e.id === id));
+          const duration = el.duration ?? (comp ? comp.duration - el.start_time : 1);
+          const clip = el.type === "video" ? videoClipSettings(el, duration) : undefined;
+          onEditMedia(el.type, { projectDir, src: el.src, elementId: id, clip });
+        }
+      }
+    : undefined;
+  const editLibraryMedia = onEditMedia
+    ? (kind: "audio" | "image" | "video", src: string) => onEditMedia(kind, { projectDir, src })
+    : undefined;
+
   const isAudioSelected = !!project && findAudioTrack(project, selectedId) !== null;
   const selectedAudioIds = project ? selectedIds.filter((id) => findAudioTrack(project, id) !== null) : [];
   const selectedElementIds = selectedIds.filter((id) => !selectedAudioIds.includes(id));
@@ -870,6 +938,17 @@ export default function Editor({
         />
       )}
       {banner && <StatusBanner notice={banner} onDismiss={saveError ? undefined : () => setNotice(null)} />}
+      {newVersion && (
+        <MediaVersionDialog
+          count={newVersion.count}
+          canChooseClip={!!newVersion.elementId}
+          onChoose={applyNewVersion}
+          onClose={() => {
+            setNewVersion(null);
+            setNotice({ kind: "info", message: t("mediaVersion.used") });
+          }}
+        />
+      )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {subs && (
         <GenerateSubtitlesDialog
@@ -894,6 +973,7 @@ export default function Editor({
           onAddVideo={sAddVideo}
           onAddAudio={sAddAudio}
           onAddShape={sAddShape}
+          onEditMedia={editLibraryMedia}
           onOpenSettings={sOpenSettings}
         />
         <CanvasStage
@@ -915,6 +995,7 @@ export default function Editor({
           onRedo={handleRedo}
           canUndo={canUndo}
           canRedo={canRedo}
+          onEditElement={editClipMedia}
         />
         <PropertiesPanel
           element={findElement(project, selectedId)}
@@ -934,6 +1015,7 @@ export default function Editor({
           onUngroup={sUngroup}
           onGenerateSubtitles={sSubsForSelection}
           onEditLinkedCues={sEditLinkedCues}
+          onEditMedia={editClipMedia}
         />
       </div>
       <Timeline
@@ -959,6 +1041,8 @@ export default function Editor({
         onDuplicate={sDuplicate}
         searchQuery={timelineSearch}
         onSearchChange={setTimelineSearch}
+        onEditElement={editClipMedia}
+        projectDir={projectDir}
       />
     </div>
   );

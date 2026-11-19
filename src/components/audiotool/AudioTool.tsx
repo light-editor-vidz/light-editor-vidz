@@ -53,7 +53,14 @@ import HistoryPanel from "../HistoryPanel";
 import { markBusy } from "../../lib/busyWork";
 import { audioStepLabel, stepLabels, type Translate } from "../../lib/historyLabels";
 import { noDestination } from "../../lib/exportDestination";
-import { addOutputToProjects, listMediaSubs, saveMediaSub, stagedExportPath } from "../../lib/subs/commands";
+import { audioSettingsFromClip } from "../../lib/clipSettings";
+import {
+  addOutputToProjects,
+  listMediaSubs,
+  saveMediaSub,
+  stagedExportPath,
+  type MediaOrigin,
+} from "../../lib/subs/commands";
 import { cuesToSrt, remapCues } from "../../lib/subs/linked";
 import { parseSrt } from "../videotool/utils/srt";
 import Spectrum from "./Spectrum";
@@ -69,6 +76,8 @@ const WAVEFORM_POINTS = 3000;
 interface Props {
   /** Fichier à ouvrir ; `null` = onglet vide (zone de dépôt et fichiers récents). */
   path: string | null;
+  /** Le média de projet que cet onglet édite, le cas échéant. */
+  origin?: MediaOrigin;
   /** Un fichier est choisi dans cet onglet. */
   onOpen: (path: string) => void;
   onClose: () => void;
@@ -111,13 +120,17 @@ const isTyping = (el: EventTarget | null): boolean => {
 
 /** La vue Audio (ex-LightCutSoundz) : couper, fondre, normaliser, changer la vitesse, filtrer, puis
  * exporter un fichier audio — aux couleurs de l'éditeur. */
-export default function AudioTool({ path, onOpen, onClose, registerCloseGuard }: Props) {
+export default function AudioTool({ path, origin, onOpen, onClose, registerCloseGuard }: Props) {
   const { t, i18n } = useTranslation();
   const tabActive = useTabActive();
   const { setFlags } = useMenuBridge();
   const [engine] = useState(() => new PreviewEngine());
   const [clock] = useState(() => createPlaybackClock(0));
 
+  const originRef = useRef(origin);
+  useEffect(() => {
+    originRef.current = origin;
+  }, [origin]);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [hasPreview, setHasPreview] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -133,7 +146,8 @@ export default function AudioTool({ path, onOpen, onClose, registerCloseGuard }:
   const [exportOpen, setExportOpen] = useState(false);
   const [subsOpen, setSubsOpen] = useState(false);
   const [projects, setProjects] = useState<string[]>([]);
-  const [toComputer, setToComputer] = useState(true);
+  const [toComputer, setToComputer] = useState(!origin);
+  const [toOrigin, setToOrigin] = useState(!!origin);
   const [format, setFormat] = useState<ExportFormat>("wav");
   const [wavDepth, setWavDepth] = useState<WavDepth>("float32");
   const [processing, setProcessing] = useState(false);
@@ -173,10 +187,14 @@ export default function AudioTool({ path, onOpen, onClose, registerCloseGuard }:
         // Un échec — ou un chargement plus récent — laisse l'éditeur tel qu'il était.
         engine.pause();
         engine.load(null, result.duration, result.waveform);
-        engine.setParams(toParams(DEFAULT_SETTINGS));
-        settingsRef.current = DEFAULT_SETTINGS;
-        setSettings(DEFAULT_SETTINGS);
-        setHistory(newHistory());
+        // Ouvert depuis une piste du projet : ses réglages (rognage, fondus, vitesse, filtre) sont repris.
+        const clip = originRef.current?.clip;
+        const initial =
+          clip?.kind === "audio" ? audioSettingsFromClip(clip, result.duration, DEFAULT_SETTINGS) : DEFAULT_SETTINGS;
+        engine.setParams(toParams(initial));
+        settingsRef.current = initial;
+        setSettings(initial);
+        setHistory(newHistory(initial));
         setSelectedCut(null);
         pendingCutStart.current = null;
         clock.set(0);
@@ -401,7 +419,7 @@ export default function AudioTool({ path, onOpen, onClose, registerCloseGuard }:
   }, [processing, owner]);
 
   async function runExport() {
-    if (!loaded || processing || problem || noDestination(toComputer, projects)) return;
+    if (!loaded || processing || problem || noDestination(toComputer, projects, toOrigin)) return;
     let output: string | null;
     try {
       // Le moteur ajoute l'extension du format choisi si elle a été omise : le conteneur est décidé
@@ -442,7 +460,7 @@ export default function AudioTool({ path, onOpen, onClose, registerCloseGuard }:
       );
       setExportOpen(false);
       if (toComputer) say(t("audioTool.export.done", { name: baseName(output) }), "success");
-      if (projects.length > 0) await addToProjects(output);
+      if (projects.length > 0 || (toOrigin && origin)) await addToProjects(output);
     } catch (e) {
       if ((e as EngineError | null)?.code === "cancelled") say(t("audioTool.export.cancelled"), "warning");
       else say(t("audioTool.msg.error", { error: describe(e) }), "error");
@@ -459,7 +477,12 @@ export default function AudioTool({ path, onOpen, onClose, registerCloseGuard }:
     const cues = last
       ? remapCues(parseSrt(last.srt), keptSegments(settings.cuts, loaded.info.duration), speedOf(settings))
       : [];
-    const report = await addOutputToProjects(output, projects, cues.length > 0 ? cuesToSrt(cues) : null);
+    const report = await addOutputToProjects(
+      output,
+      projects,
+      cues.length > 0 ? cuesToSrt(cues) : null,
+      toOrigin && origin ? origin : null,
+    );
     if (report.errors.length > 0) say(t("subs.addToProjectFailed", { error: report.errors[0] }), "error");
     else say(t("subs.addedToProjects", { count: report.added }), "success");
   }
@@ -672,13 +695,16 @@ export default function AudioTool({ path, onOpen, onClose, registerCloseGuard }:
           progress={progress}
           onExport={() => void runExport()}
           onCancel={() => void audioCancel(owner)}
-          noDestination={noDestination(toComputer, projects)}
+          noDestination={noDestination(toComputer, projects, toOrigin)}
           addToProjects={
             <AddToProjects
               selected={projects}
               onChange={setProjects}
               toComputer={toComputer}
               onToComputer={setToComputer}
+              origin={origin}
+              toOrigin={toOrigin}
+              onToOrigin={setToOrigin}
             />
           }
           onClose={() => setExportOpen(false)}

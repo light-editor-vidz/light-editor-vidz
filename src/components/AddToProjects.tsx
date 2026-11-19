@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listRecentProjects } from "../lib/commands";
+import type { MediaOrigin } from "../lib/tabs";
 import { noDestination } from "../lib/exportDestination";
 import "./subtitles/subtitles.css";
 
@@ -20,11 +21,18 @@ export default function AddToProjects({
   onChange,
   toComputer,
   onToComputer,
+  origin,
+  toOrigin = false,
+  onToOrigin,
 }: {
   selected: string[];
   onChange: (projects: string[]) => void;
   toComputer: boolean;
   onToComputer: (on: boolean) => void;
+  /** Le média de projet que cet onglet édite : l'export peut en devenir une nouvelle version. */
+  origin?: MediaOrigin;
+  toOrigin?: boolean;
+  onToOrigin?: (on: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [enabled, setEnabled] = useState(false);
@@ -56,6 +64,12 @@ export default function AddToProjects({
         <input type="checkbox" checked={toComputer} onChange={(e) => onToComputer(e.target.checked)} />
         {t("addToProjects.computer")}
       </label>
+      {origin && onToOrigin && (
+        <label className="subs-check" title={origin.projectDir}>
+          <input type="checkbox" checked={toOrigin} onChange={(e) => onToOrigin(e.target.checked)} />
+          {t("addToProjects.origin", { project: nameOf(origin.projectDir).replace(/\.lvproj$/, "") })}
+        </label>
+      )}
       <label className="subs-check">
         <input type="checkbox" checked={enabled} onChange={(e) => toggleEnabled(e.target.checked)} />
         {t("addToProjects.label")}
@@ -79,7 +93,7 @@ export default function AddToProjects({
           </button>
         </>
       )}
-      {noDestination(toComputer, selected) && (
+      {noDestination(toComputer, selected, toOrigin) && (
         <span className="add-to-projects-hint" role="status">
           {t("addToProjects.none")}
         </span>

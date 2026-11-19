@@ -1,3 +1,4 @@
+import type { MediaOrigin } from "../../../lib/subs/commands";
 import "./setup";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, screen, waitFor, act, cleanup } from "@testing-library/react";
@@ -33,10 +34,10 @@ const baseState: EditorState = {
   stabilize: "off",
 };
 
-function r(state: Partial<EditorState> = {}, onClose = vi.fn()) {
+function r(state: Partial<EditorState> = {}, onClose = vi.fn(), origin?: MediaOrigin) {
   return render(
     <LangProvider>
-      <ExportModal state={{ ...baseState, ...state }} onClose={onClose} />
+      <ExportModal state={{ ...baseState, ...state }} onClose={onClose} origin={origin} />
     </LangProvider>,
   );
 }
@@ -226,7 +227,7 @@ describe("ExportModal", () => {
       await waitFor(() => expect(exportVideo).toHaveBeenCalled());
       expect(saveVideo).not.toHaveBeenCalled();
       expect(stagedExportPath).toHaveBeenCalledWith("clip_edit.mp4");
-      expect(addAfterExport).toHaveBeenCalledWith("/cache/export-staging/x/clip_edit.mp4", ["/p/a.lvproj"], null);
+      expect(addAfterExport).toHaveBeenCalledWith("/cache/export-staging/x/clip_edit.mp4", ["/p/a.lvproj"], null, null);
       expect(exportVideo.mock.calls[0][0]).toMatchObject({ outputPath: "/cache/export-staging/x/clip_edit.mp4" });
     });
 
@@ -241,8 +242,26 @@ describe("ExportModal", () => {
       fireEvent.click(screen.getByRole("button", { name: /^export(er)?$/i }));
       await waitFor(() => expect(exportVideo).toHaveBeenCalled());
       expect(stagedExportPath).not.toHaveBeenCalled();
-      expect(addAfterExport).toHaveBeenCalledWith("/tmp/out.mp4", ["/p/a.lvproj"], null);
+      expect(addAfterExport).toHaveBeenCalledWith("/tmp/out.mp4", ["/p/a.lvproj"], null, null);
     });
+  });
+
+  it("saves the export as a new version of the project media it was opened from", async () => {
+    const saveVideo = vi.fn().mockResolvedValue("/tmp/out.mp4");
+    const addAfterExport = vi.fn().mockResolvedValue(undefined);
+    const exportVideo = vi
+      .fn()
+      .mockResolvedValue({ success: true, outputPath: "/cache/export-staging/x/clip_edit.mp4" });
+    window.electronAPI = { ...window.electronAPI, saveVideo, addAfterExport, exportVideo };
+    vi.mocked(stagedExportPath).mockResolvedValue("/cache/export-staging/x/clip_edit.mp4");
+    const origin = { projectDir: "/p/a.lvproj", src: "assets/videos/a.mp4", elementId: "v1" };
+    r({}, vi.fn(), origin);
+    // Opened from a project: the project is the default destination, not the computer.
+    expect(screen.getByLabelText("On my computer")).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: /^export(er)?$/i }));
+    await waitFor(() => expect(exportVideo).toHaveBeenCalled());
+    expect(saveVideo).not.toHaveBeenCalled();
+    expect(addAfterExport).toHaveBeenCalledWith("/cache/export-staging/x/clip_edit.mp4", [], null, origin);
   });
 
   it("does not call exportVideo when the save dialog is cancelled", async () => {

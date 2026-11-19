@@ -1,3 +1,5 @@
+import { exceedsMedia, useMediaDuration } from "../../lib/mediaDurations";
+import { useEditMenu } from "./EditMenu";
 import { NumberField } from "./properties/NumberField";
 import { memo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useTranslation } from "react-i18next";
@@ -33,6 +35,10 @@ interface Props {
   onDuplicate: () => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  /** Ouvre le média d'un clip (image, vidéo, piste audio) dans son onglet d'édition. */
+  onEditElement?: (id: string) => void;
+  /** Dossier du projet : les durées des médias connues servent à signaler les clips trop longs. */
+  projectDir?: string;
 }
 
 const COLOR_BY_TYPE: Record<Element["type"], string> = {
@@ -93,8 +99,12 @@ function Timeline({
   onDuplicate,
   searchQuery,
   onSearchChange,
+  onEditElement,
+  projectDir = "",
 }: Props) {
   const { t } = useTranslation();
+  const editMenu = useEditMenu();
+  const mediaDuration = useMediaDuration(projectDir);
   const lanesRef = useRef<HTMLDivElement>(null);
   const [pxPerSec, setPxPerSec] = useState(40);
   const [renamingCompId, setRenamingCompId] = useState<string | null>(null);
@@ -190,6 +200,7 @@ function Timeline({
 
   return (
     <section className="editor-timeline">
+      {editMenu.menu}
       <div className="timeline-toolbar">
         <div className="timeline-toolbar-left">
           <button type="button" className="timeline-action" onClick={onSplit} disabled={!canSplit}>
@@ -388,12 +399,23 @@ function Timeline({
               const dur = el.duration ?? activeComp.duration - el.start_time;
               const left = (activeComp.start_time + el.start_time) * pxPerSec;
               const width = Math.max(10, dur * pxPerSec - 2);
+              const tooLong =
+                el.type === "video" &&
+                !el.loop_video &&
+                exceedsMedia(el.video_offset, dur, el.playback_speed, mediaDuration(el.src));
               return (
                 <div className="timeline-lane" key={el.id} onPointerDown={handleRulerPointerDown}>
                   <div
-                    className={`timeline-clip${selectedElementIds.includes(el.id) ? " selected" : ""}`}
+                    className={`timeline-clip${selectedElementIds.includes(el.id) ? " selected" : ""}${tooLong ? " beyond-media" : ""}`}
+                    title={tooLong ? t("timeline.beyondMedia") : undefined}
                     style={{ left, width, background: COLOR_BY_TYPE[el.type] }}
                     onPointerDown={(e) => startElementDrag(activeComp, el, "move", e)}
+                    {...(onEditElement && (el.type === "image" || el.type === "video")
+                      ? {
+                          onDoubleClick: () => onEditElement(el.id),
+                          onContextMenu: (e: React.MouseEvent) => editMenu.open(e, () => onEditElement(el.id)),
+                        }
+                      : {})}
                   >
                     <span className="timeline-clip-name">{el.name}</span>
                     <span
@@ -409,12 +431,21 @@ function Timeline({
             const dur = track.duration ?? Math.max(1, project.duration - track.start_time);
             const left = track.start_time * pxPerSec;
             const width = Math.max(10, dur * pxPerSec - 2);
+            const tooLong =
+              track.duration !== null && exceedsMedia(track.audio_offset, dur, track.speed, mediaDuration(track.src));
             return (
               <div className="timeline-lane" key={track.id} onPointerDown={handleRulerPointerDown}>
                 <div
-                  className={`timeline-clip${selectedElementIds.includes(track.id) ? " selected" : ""}`}
+                  className={`timeline-clip${selectedElementIds.includes(track.id) ? " selected" : ""}${tooLong ? " beyond-media" : ""}`}
+                  title={tooLong ? t("timeline.beyondMedia") : undefined}
                   style={{ left, width, background: "var(--color-audio)" }}
                   onPointerDown={(e) => startAudioDrag(track, "move", e)}
+                  {...(onEditElement
+                    ? {
+                        onDoubleClick: () => onEditElement(track.id),
+                        onContextMenu: (e: React.MouseEvent) => editMenu.open(e, () => onEditElement(track.id)),
+                      }
+                    : {})}
                 >
                   <span className="timeline-clip-name">{track.name}</span>
                   <span className="timeline-clip-resize" onPointerDown={(e) => startAudioDrag(track, "resize", e)} />

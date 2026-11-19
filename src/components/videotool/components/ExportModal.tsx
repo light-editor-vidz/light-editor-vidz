@@ -16,7 +16,7 @@ import {
 } from "../utils/presets";
 import AddToProjects from "../../AddToProjects";
 import { noDestination } from "../../../lib/exportDestination";
-import { stagedExportPath } from "../../../lib/subs/commands";
+import { stagedExportPath, type MediaOrigin } from "../../../lib/subs/commands";
 import "./ExportModal.css";
 
 interface Props {
@@ -28,6 +28,8 @@ interface Props {
   onProjectsExport?: () => void;
   /** Le sous-titre qui accompagnera la vidéo dans les projets choisis. */
   associatedSrt?: () => string | null;
+  /** Le média de projet que cet onglet édite : l'export peut en devenir une nouvelle version. */
+  origin?: MediaOrigin;
 }
 
 type Format = "mp4" | "mov" | "webm" | "avi" | "gif";
@@ -81,11 +83,13 @@ function loadPrefs(): Prefs {
   }
 }
 
-export default function ExportModal({ state, onClose, onQueued, onProjectsExport, associatedSrt }: Props) {
+export default function ExportModal({ state, onClose, onQueued, onProjectsExport, associatedSrt, origin }: Props) {
   const owner = useVideoOwner();
   const { t, lang } = useT();
   const [projects, setProjects] = useState<string[]>([]);
-  const [toComputer, setToComputer] = useState(true);
+  const [toComputer, setToComputer] = useState(!origin);
+  const [toOrigin, setToOrigin] = useState(!!origin);
+  const originSent = toOrigin && origin ? origin : null;
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
   const { format, quality, resolution, gifWidth, gifFps } = prefs;
   const update = (patch: Partial<Prefs>) =>
@@ -163,7 +167,7 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
   const keptDuration = keptSegments.reduce((acc, s) => acc + (s.end - s.start), 0) / state.speed;
   const exporting = progress !== null && !done;
   const nothingToExport = keptSegments.length === 0;
-  const destinationMissing = noDestination(toComputer, projects);
+  const destinationMissing = noDestination(toComputer, projects, toOrigin);
 
   useEffect(() => {
     if (queuedId === null) return;
@@ -220,7 +224,7 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
 
   /** L'export n'aura pas lieu : le fichier ne doit plus être ajouté aux projets annoncés. */
   const forgetAfterExport = async (savePath: string) => {
-    if (projects.length > 0)
+    if (projects.length > 0 || originSent)
       await getApi(owner)
         .addAfterExport(savePath, [], null)
         .catch(() => {});
@@ -253,10 +257,10 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
     }
     if (!savePath) return;
 
-    if (projects.length > 0) {
+    if (projects.length > 0 || originSent) {
       try {
         onProjectsExport?.();
-        await getApi().addAfterExport(savePath, projects, associatedSrt?.() ?? null);
+        await getApi().addAfterExport(savePath, projects, associatedSrt?.() ?? null, originSent);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : String(err));
         return;
@@ -567,6 +571,9 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
           onChange={setProjects}
           toComputer={toComputer}
           onToComputer={setToComputer}
+          origin={origin}
+          toOrigin={toOrigin}
+          onToOrigin={setToOrigin}
         />
 
         {nothingToExport && <div className="export-error">{t.export_nothing}</div>}

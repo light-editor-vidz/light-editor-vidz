@@ -40,7 +40,7 @@ import { addRecentFile, clearRecentFiles, getRecentFiles, removeRecentFile } fro
 import type { CropRect, Tab, MaskBox, PickedColor } from "./types";
 import AddToProjects from "../AddToProjects";
 import { noDestination } from "../../lib/exportDestination";
-import { addOutputToProjects, stagedExportPath } from "../../lib/subs/commands";
+import { addOutputToProjects, stagedExportPath, type MediaOrigin } from "../../lib/subs/commands";
 import i18n from "i18next";
 import "./imagetool.css";
 
@@ -110,6 +110,8 @@ function maskToBox(canvas: HTMLCanvasElement): MaskBox | null {
 interface Props {
   /** Image à ouvrir ; `null` = vue vide (zone de dépôt et fichiers récents). */
   path: string | null;
+  /** Le média de projet que cet onglet édite, le cas échéant. */
+  origin?: MediaOrigin;
   /** « Ouvrir une image » : le choix d'un fichier se fait au niveau de la fenêtre, qui ouvre
    * l'onglet qu'il faut. */
   onOpenFile: () => void;
@@ -122,7 +124,7 @@ interface Props {
   registerCloseGuard: (guard: () => Promise<boolean>) => () => void;
 }
 
-export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, registerCloseGuard }: Props) {
+export default function ImageTool({ path, origin, onOpenFile, onOpenPath, onClose, registerCloseGuard }: Props) {
   const editor = useImageEditor();
   const {
     loadExif,
@@ -181,7 +183,8 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
   const [showFlipBar, setShowFlipBar] = useState(false);
   const [prefs, setPrefs] = useState(() => loadPrefs());
   const [projects, setProjects] = useState<string[]>([]);
-  const [toComputer, setToComputer] = useState(true);
+  const [toComputer, setToComputer] = useState(!origin);
+  const [toOrigin, setToOrigin] = useState(!!origin);
   const [recentFiles, setRecentFiles] = useState<string[]>(() => getRecentFiles());
   const [pickedColor, setPickedColor] = useState<PickedColor | null>(null);
   const [pickedColorResult, setPickedColorResult] = useState<PickedColor | null>(null);
@@ -800,17 +803,20 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
         isLoading={isLoading}
         defaultFormat={prefs.defaultExportFormat}
         defaultQuality={prefs.defaultJpegQuality}
-        noDestination={noDestination(toComputer, projects)}
+        noDestination={noDestination(toComputer, projects, toOrigin)}
         extra={
           <AddToProjects
             selected={projects}
             onChange={setProjects}
             toComputer={toComputer}
             onToComputer={setToComputer}
+            origin={origin}
+            toOrigin={toOrigin}
+            onToOrigin={setToOrigin}
           />
         }
         onExport={async (format, quality) => {
-          if (noDestination(toComputer, projects)) return;
+          if (noDestination(toComputer, projects, toOrigin)) return;
           let staged: string | undefined;
           if (!toComputer) {
             // Vers les seuls projets : un fichier temporaire au nom de l'image, sans boîte d'enregistrement.
@@ -832,9 +838,9 @@ export default function ImageTool({ path, onOpenFile, onOpenPath, onClose, regis
             done();
           }
           setExportOpen(false);
-          if (output && projects.length > 0) {
+          if (output && (projects.length > 0 || (toOrigin && origin))) {
             try {
-              const report = await addOutputToProjects(output, projects, null);
+              const report = await addOutputToProjects(output, projects, null, toOrigin && origin ? origin : null);
               setNotice(
                 report.errors.length > 0
                   ? { message: i18n.t("subs.addToProjectFailed", { error: report.errors[0] }), type: "error" }
