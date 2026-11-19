@@ -30,7 +30,7 @@ Corrections issues d'un audit complet du code.
 - Image : la balance des blancs, le flou et le redimensionnement travaillent en lumière linéaire, et les opérations lourdes sont parallélisées.
 - Audio : la mémoire utilisée lors d'un changement de vitesse est divisée par deux ; la stabilisation est mesurée par segment.
 - Les sources vidéo ne sont plus chargées en mémoire à l'ouverture d'un projet.
-- Les builds de release utilisent la LTO « thin » ; la CI lance aussi clippy, rustfmt, prettier et les audits, et les actions GitHub sont épinglées.
+- Les builds de release utilisent une seule unité de génération et des symboles retirés ; la CI lance aussi clippy, rustfmt, prettier et les audits, et les actions GitHub sont épinglées.
 - Dépendances mises à jour (imageproc 0.27 et les dernières versions compatibles des autres paquets npm et crates Rust) ; Dependabot n'est plus utilisé.
 
 ## [1.2.0] - 2026-11-16

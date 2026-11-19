@@ -30,7 +30,7 @@ Fixes from a full code audit.
 - Image: white balance, blur and resizing work in linear light, and heavy operations are parallelised.
 - Audio: the memory used when changing the speed is halved; stabilisation is measured per segment.
 - The video sources are no longer loaded in memory when a project opens.
-- Release builds use thin LTO; the CI also runs clippy, rustfmt, prettier and the audits, and the GitHub actions are pinned.
+- Release builds use a single codegen unit and stripped symbols; the CI also runs clippy, rustfmt, prettier and the audits, and the GitHub actions are pinned.
 - Dependencies updated (imageproc 0.27 and the latest compatible versions of the other npm packages and Rust crates); Dependabot is no longer used.
 
 ## [1.2.0] - 2026-11-16
