@@ -46,10 +46,14 @@ jobs:
           node scripts/release-notes.mjs "$TAG" > notes.md
           # En brouillon : invisible (et jamais « latest ») tant que tous les binaires ne sont pas là ;
           # la dernière étape (`publish`) le publie.
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --title "LightEditorVidz $TAG" --notes-file notes.md
-          # /releases/tags/{tag} répond 404 pour un brouillon : on passe par la liste, qui l'inclut.
+          # Un brouillon ne se retrouve pas par /releases/tags/{tag} (404), et la liste ne le montre
+          # qu'avec un délai : on cherche un brouillon existant (relance), sinon on le crée par l'API,
+          # qui renvoie directement son identifiant.
           id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq "[.[] | select(.tag_name == \"$TAG\")][0].id")
-          test -n "$id" && [ "$id" != "null" ] || { echo "Release $TAG not found"; exit 1; }
+          if [ -z "$id" ] || [ "$id" = "null" ]; then
+            id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="LightEditorVidz $TAG" -F body=@notes.md -F draft=true --jq .id)
+          fi
+          test -n "$id" || { echo "Release $TAG could not be created"; exit 1; }
           echo "release_id=$id" >> "$GITHUB_OUTPUT"
 
   build:
