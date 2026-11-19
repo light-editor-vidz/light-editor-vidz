@@ -48,6 +48,8 @@ interface Props {
   project: Project;
   /** États d'annulation/rétablissement : Ctrl+Z restaurerait un élément dont le média a disparu. */
   historyProjects?: Project[];
+  /** Oublie les états d'annulation qui utilisent ce média (il va être supprimé). */
+  onForgetAsset?: (relativeSrc: string) => void;
   onAddTitle: () => void;
   onAddSubtitle: () => void;
   onAddStyledText: (preset: TextStylePreset) => void;
@@ -111,12 +113,12 @@ function TextLibrary({
   return (
     <>
       {matches(t("library.addTitle")) && (
-        <div className="library-tile library-tile-title" onClick={onAddTitle}>
+        <div className="library-tile library-tile-title" onDoubleClick={onAddTitle}>
           {t("library.addTitle")}
         </div>
       )}
       {matches(t("library.addSubtitle")) && (
-        <div className="library-tile library-tile-subtitle" onClick={onAddSubtitle}>
+        <div className="library-tile library-tile-subtitle" onDoubleClick={onAddSubtitle}>
           {t("library.addSubtitle")}
         </div>
       )}
@@ -125,7 +127,7 @@ function TextLibrary({
         {styles.map(({ preset, labelKey }) => {
           const p = STYLE_PRESETS[preset];
           return (
-            <div className="library-style-tile" key={preset} onClick={() => onAddStyledText(preset)}>
+            <div className="library-style-tile" key={preset} onDoubleClick={() => onAddStyledText(preset)}>
               <span
                 style={{
                   color: p.color,
@@ -309,9 +311,10 @@ function OnlineSearch({
               key={`${r.provider}-${r.download_url}`}
               className={`library-media-tile${importing === r.download_url ? " importing" : ""}`}
               style={{ aspectRatio: kind === "video" ? "16/10" : "1" }}
-              // Vidéo : le clic ouvre l'aperçu (lecture avant import) ; image : import direct,
-              // la vignette fait déjà office d'aperçu.
-              onClick={() => (kind === "video" ? setVideoPreview(r) : handlePick(r))}
+              // Vidéo : le clic ouvre l'aperçu (lecture avant import) ; image : import et ajout au
+              // double-clic, la vignette fait déjà office d'aperçu.
+              onClick={kind === "video" ? () => setVideoPreview(r) : undefined}
+              onDoubleClick={kind === "video" ? undefined : () => handlePick(r)}
               title={resultTitle(r)}
             >
               {r.thumbnail_url ? (
@@ -437,6 +440,7 @@ function MediaLibrary({
   projectDir,
   project,
   historyProjects = [],
+  onForgetAsset,
   onAdd,
   onEdit,
   search,
@@ -446,6 +450,7 @@ function MediaLibrary({
   projectDir: string;
   project: Project;
   historyProjects?: Project[];
+  onForgetAsset?: (relativeSrc: string) => void;
   onAdd: (relativeSrc: string, name: string, subtitlesOn?: boolean) => void;
   onEdit?: (kind: AssetKind, relativeSrc: string) => void;
   search: string;
@@ -517,11 +522,14 @@ function MediaLibrary({
   /** Supprime un média de la bibliothèque, sauf s'il est encore utilisé par le projet. */
   async function handleDelete(asset: AssetInfo) {
     setError(null);
-    if ([project, ...historyProjects].some((p) => isAssetInUse(p, asset.relative_path))) {
+    if (isAssetInUse(project, asset.relative_path)) {
       setError(t("library.assetInUse", { name: asset.filename }));
       return;
     }
     try {
+      // Seul l'historique d'annulation s'en sert encore : ses états qui l'utilisent sont oubliés
+      // (Ctrl+Z ne doit pas ramener un élément dont le média n'existe plus).
+      if (historyProjects.some((p) => isAssetInUse(p, asset.relative_path))) onForgetAsset?.(asset.relative_path);
       await deleteAsset(projectDir, kind, asset.filename);
       refresh();
     } catch (e) {
@@ -546,7 +554,7 @@ function MediaLibrary({
             <div
               key={a.relative_path}
               className="library-audio-item"
-              onClick={() => add(a)}
+              onDoubleClick={() => add(a)}
               onContextMenu={onEdit && ((e) => editMenu.open(e, () => onEdit(kind, a.relative_path)))}
             >
               <Mic size={15} color="var(--color-audio)" />
@@ -581,7 +589,7 @@ function MediaLibrary({
             key={a.relative_path}
             className="library-media-tile"
             style={{ aspectRatio: kind === "video" ? "16/10" : "1" }}
-            onClick={() => add(a)}
+            onDoubleClick={() => add(a)}
             onContextMenu={onEdit && ((e) => editMenu.open(e, () => onEdit(kind, a.relative_path)))}
             title={a.filename}
           >
@@ -630,7 +638,7 @@ function ShapeLibrary({ onAddShape, search }: { onAddShape: (shapeType: ShapeTyp
   return (
     <div className="library-grid-3">
       {shapes.map(({ type, icon: Icon, labelKey }) => (
-        <div className="library-shape-tile" key={type} onClick={() => onAddShape(type)} title={t(labelKey)}>
+        <div className="library-shape-tile" key={type} onDoubleClick={() => onAddShape(type)} title={t(labelKey)}>
           <Icon size={22} color="var(--color-shape)" />
         </div>
       ))}
@@ -643,6 +651,7 @@ function LibraryPanel({
   projectDir,
   project,
   historyProjects,
+  onForgetAsset,
   onAddTitle,
   onAddSubtitle,
   onAddStyledText,
@@ -660,7 +669,7 @@ function LibraryPanel({
     <aside className="editor-library">
       <div className="library-header">
         <h3>{t(TITLE_KEYS[active])}</h3>
-        <span className="mono library-hint">{t("library.clickToAdd")}</span>
+        <span className="mono library-hint">{t("library.doubleClickToAdd")}</span>
       </div>
 
       <div className="library-search">
@@ -687,6 +696,7 @@ function LibraryPanel({
             projectDir={projectDir}
             project={project}
             historyProjects={historyProjects}
+            onForgetAsset={onForgetAsset}
             onAdd={onAddVideo}
             onEdit={onEditMedia}
             search={search}
@@ -699,6 +709,7 @@ function LibraryPanel({
             projectDir={projectDir}
             project={project}
             historyProjects={historyProjects}
+            onForgetAsset={onForgetAsset}
             onAdd={onAddImage}
             onEdit={onEditMedia}
             search={search}
@@ -711,6 +722,7 @@ function LibraryPanel({
             projectDir={projectDir}
             project={project}
             historyProjects={historyProjects}
+            onForgetAsset={onForgetAsset}
             onAdd={onAddAudio}
             onEdit={onEditMedia}
             search={search}

@@ -1155,7 +1155,7 @@ describe("Editor — ajout depuis la bibliothèque", () => {
   it("ajoute un titre et le sélectionne", async () => {
     await renderEditor();
 
-    fireEvent.click(screen.getByText("Add a title"));
+    fireEvent.doubleClick(screen.getByText("Add a title"));
 
     const els = elementsOf(await savedProject());
     expect(els).toHaveLength(3);
@@ -1165,7 +1165,7 @@ describe("Editor — ajout depuis la bibliothèque", () => {
   it("ajoute un sous-titre", async () => {
     await renderEditor();
 
-    fireEvent.click(screen.getByText("Default subtitle"));
+    fireEvent.doubleClick(screen.getByText("Default subtitle"));
 
     const els = elementsOf(await savedProject());
     expect(els).toHaveLength(3);
@@ -1176,7 +1176,7 @@ describe("Editor — ajout depuis la bibliothèque", () => {
   it("ajoute un texte stylisé", async () => {
     await renderEditor();
 
-    fireEvent.click(screen.getByText("Neon"));
+    fireEvent.doubleClick(screen.getByText("Neon"));
 
     expect(elementsOf(await savedProject())).toHaveLength(3);
   });
@@ -1185,7 +1185,7 @@ describe("Editor — ajout depuis la bibliothèque", () => {
     await renderEditor();
     openTab("Shapes");
 
-    fireEvent.click(screen.getByTitle("Ellipse"));
+    fireEvent.doubleClick(screen.getByTitle("Ellipse"));
 
     const els = elementsOf(await savedProject());
     expect(els[2]).toMatchObject({ type: "shape", shape_type: "ellipse" });
@@ -1197,7 +1197,7 @@ describe("Editor — ajout depuis la bibliothèque", () => {
     openTab("Images");
     await act(async () => {});
 
-    fireEvent.click(screen.getByText("photo.png"));
+    fireEvent.doubleClick(screen.getByText("photo.png"));
 
     const els = elementsOf(await savedProject());
     expect(els[2]).toMatchObject({ type: "image", src: "assets/images/photo.png", name: "photo.png" });
@@ -1209,7 +1209,7 @@ describe("Editor — ajout depuis la bibliothèque", () => {
     openTab("Videos");
     await act(async () => {});
 
-    fireEvent.click(screen.getByText("clip.mp4"));
+    fireEvent.doubleClick(screen.getByText("clip.mp4"));
 
     const els = elementsOf(await savedProject());
     expect(els[2]).toMatchObject({ type: "video", src: "assets/videos/clip.mp4" });
@@ -1221,7 +1221,7 @@ describe("Editor — ajout depuis la bibliothèque", () => {
     openTab("Audio");
     await act(async () => {});
 
-    fireEvent.click(screen.getByText("theme.mp3"));
+    fireEvent.doubleClick(screen.getByText("theme.mp3"));
 
     const p = await savedProject();
     // Une piste audio n'appartient à aucune scène.

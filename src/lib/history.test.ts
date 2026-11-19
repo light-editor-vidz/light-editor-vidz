@@ -58,6 +58,17 @@ describe("historyReducer", () => {
     expect(state.future).toEqual([]);
   });
 
+  it("oublie les états que le filtre refuse, sans toucher au projet courant", () => {
+    let state = loaded("A");
+    state = historyReducer(state, { type: "mutate", fn: rename("B"), now: 0 });
+    state = historyReducer(state, { type: "mutate", fn: rename("C"), now: 1000 });
+    state = historyReducer(state, { type: "undo" });
+    const kept = historyReducer(state, { type: "forget", keep: (p) => p.name !== "A" });
+    expect(kept.past).toEqual([]);
+    expect(kept.present?.name).toBe("B");
+    expect(kept.future.map((p) => p.name)).toEqual(["C"]);
+  });
+
   it("recharger un autre projet oublie l'historique du précédent", () => {
     let state = loaded("A");
     state = historyReducer(state, { type: "mutate", fn: rename("A2"), now: 0 });

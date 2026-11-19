@@ -7,6 +7,17 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-19
+
+### Modifié
+
+- Tout ce que propose la médiathèque s'ajoute maintenant à la scène au double-clic (textes, formes, vidéos, images, sons, images libres en ligne) au lieu d'un simple clic.
+
+### Corrigé
+
+- Une vidéo placée dans une séquence ne scintille plus au démarrage de la lecture, et une pause pendant ce démarrage ne la laisse plus jouer.
+- Un média peut être supprimé de la médiathèque quand seul l'historique d'annulation l'utilisait ; ces pas d'annulation sont oubliés (le message demandait à tort de le retirer de la timeline).
+
 ## [1.3.0] - 2026-11-19
 
 ### Ajouté

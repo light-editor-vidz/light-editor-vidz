@@ -120,8 +120,8 @@ describe("LibraryPanel — text", () => {
   it("adds a title and a subtitle", async () => {
     const { onAddTitle, onAddSubtitle } = await setup({ active: "text" });
 
-    fireEvent.click(screen.getByText("Add a title"));
-    fireEvent.click(screen.getByText("Default subtitle"));
+    fireEvent.doubleClick(screen.getByText("Add a title"));
+    fireEvent.doubleClick(screen.getByText("Default subtitle"));
 
     expect(onAddTitle).toHaveBeenCalled();
     expect(onAddSubtitle).toHaveBeenCalled();
@@ -135,7 +135,7 @@ describe("LibraryPanel — text", () => {
   it("adds the style that was clicked", async () => {
     const { onAddStyledText } = await setup({ active: "text" });
 
-    fireEvent.click(qa(".library-style-tile")[0]);
+    fireEvent.doubleClick(qa(".library-style-tile")[0]);
 
     expect(onAddStyledText).toHaveBeenCalledWith("neon");
   });
@@ -150,7 +150,7 @@ describe("LibraryPanel — shapes", () => {
   it("adds the shape that was clicked", async () => {
     const { onAddShape } = await setup({ active: "shape" });
 
-    fireEvent.click(screen.getByTitle("Star"));
+    fireEvent.doubleClick(screen.getByTitle("Star"));
 
     expect(onAddShape).toHaveBeenCalledWith("star");
   });
@@ -175,11 +175,11 @@ describe("LibraryPanel — local media", () => {
     expect(qa(".library-media-tile")).toHaveLength(2);
   });
 
-  it("adds an asset to the scene when its tile is clicked", async () => {
+  it("adds an asset to the scene when its tile is double-clicked", async () => {
     mockList.mockResolvedValue([asset()]);
     const { onAddVideo } = await setup({ active: "video" });
 
-    fireEvent.click(qa(".library-media-tile")[0]);
+    fireEvent.doubleClick(qa(".library-media-tile")[0]);
 
     expect(onAddVideo).toHaveBeenCalledWith("assets/video/clip.mp4", "clip.mp4");
   });
@@ -216,10 +216,10 @@ describe("LibraryPanel — local media", () => {
     mockList.mockResolvedValue([asset({ has_subtitles: true })]);
     const { onAddVideo } = await setup({ active: "video" });
     const tile = qa(".library-media-tile")[0];
-    fireEvent.click(tile);
+    fireEvent.doubleClick(tile);
     expect(onAddVideo).toHaveBeenLastCalledWith("assets/video/clip.mp4", "clip.mp4", true);
     fireEvent.click(screen.getByRole("button", { name: "Subtitles on when added" }));
-    fireEvent.click(tile);
+    fireEvent.doubleClick(tile);
     expect(onAddVideo).toHaveBeenLastCalledWith("assets/video/clip.mp4", "clip.mp4", false);
   });
 
@@ -287,7 +287,7 @@ describe("LibraryPanel — local audio", () => {
     mockList.mockResolvedValue([asset({ filename: "song.mp3", relative_path: "assets/audio/song.mp3" })]);
     const { onAddAudio } = await setup({ active: "audio" });
 
-    fireEvent.click(qa(".library-audio-item")[0]);
+    fireEvent.doubleClick(qa(".library-audio-item")[0]);
 
     expect(onAddAudio).toHaveBeenCalledWith("assets/audio/song.mp3", "song.mp3");
   });
@@ -440,7 +440,7 @@ describe("LibraryPanel — importing from online", () => {
     await searchOnline();
 
     await act(async () => {
-      fireEvent.click(qa(".library-media-tile")[0]);
+      fireEvent.doubleClick(qa(".library-media-tile")[0]);
     });
 
     expect(mockImportStock).toHaveBeenCalledWith("/p", "image", "https://x/a.jpg", "a.jpg");
@@ -635,20 +635,22 @@ describe("LibraryPanel — recherche de styles, suppression et pagination", () =
     expect(q(".library-error").textContent).toContain("a.png");
   });
 
-  it("refuse aussi de supprimer un média qu'Annuler ou Rétablir ferait réapparaître", async () => {
+  it("supprime un média que seul l'historique d'annulation utilise, en oubliant ces états", async () => {
     mockList.mockResolvedValue([{ filename: "a.png", relative_path: "assets/images/a.png" }]);
+    mockDelete.mockResolvedValue(undefined);
     const previous = {
       ...emptyProject,
       compositions: [{ id: "c", elements: [{ type: "image", src: "assets/images/a.png" }] }],
     } as unknown as Project;
-    await setup({ active: "image", historyProjects: [previous] });
+    const onForgetAsset = vi.fn();
+    await setup({ active: "image", historyProjects: [previous], onForgetAsset });
 
     await act(async () => {
       fireEvent.click(q(".library-asset-delete"));
     });
 
-    expect(mockDelete).not.toHaveBeenCalled();
-    expect(q(".library-error").textContent).toContain("a.png");
+    expect(onForgetAsset).toHaveBeenCalledWith("assets/images/a.png");
+    expect(mockDelete).toHaveBeenCalledWith("/p", "image", "a.png");
   });
 
   it("supprime un média inutilisé puis rafraîchit la liste", async () => {

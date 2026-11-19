@@ -7,6 +7,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-19
+
+### Changed
+
+- Everything in the library is now added to the scene with a double-click (text, shapes, videos, images, sounds, free stock images) instead of a single click.
+
+### Fixed
+
+- A video placed in a sequence no longer flickers when playback starts, and pausing while it was starting no longer leaves it playing.
+- A media can be deleted from the library when only the undo history still used it; those undo steps are dropped (the message wrongly asked to remove it from the timeline).
+
 ## [1.3.0] - 2026-11-19
 
 ### Added

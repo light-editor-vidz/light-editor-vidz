@@ -1,5 +1,5 @@
 import { render, act, waitFor, fireEvent } from "@testing-library/react";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import AudioPlayer from "./AudioPlayer";
 import { acquireMediaObjectUrl } from "../../lib/mediaCache";
 import type { AudioTrack } from "../../bindings/AudioTrack";
@@ -59,6 +59,14 @@ beforeEach(() => {
   mockAcquire.mockImplementation(() => ({ promise: Promise.resolve("blob:a"), release }));
   HTMLMediaElement.prototype.play = play as unknown as HTMLMediaElement["play"];
   HTMLMediaElement.prototype.pause = pause;
+  // jsdom ne lit rien : les éléments se comportent comme s'ils jouaient déjà et avaient leurs données.
+  Object.defineProperty(HTMLMediaElement.prototype, "paused", { configurable: true, get: () => false });
+  Object.defineProperty(HTMLMediaElement.prototype, "readyState", { configurable: true, get: () => 4 });
+});
+
+afterEach(() => {
+  Reflect.deleteProperty(HTMLMediaElement.prototype, "paused");
+  Reflect.deleteProperty(HTMLMediaElement.prototype, "readyState");
 });
 
 describe("AudioPlayer", () => {

@@ -966,6 +966,7 @@ export default function Editor({
           projectDir={projectDir}
           project={project}
           historyProjects={historyProjects}
+          onForgetAsset={(src) => dispatch({ type: "forget", keep: (p) => clipsUsing(p, src).length === 0 })}
           onAddTitle={sAddTitle}
           onAddSubtitle={sAddSubtitle}
           onAddStyledText={sAddStyledText}

@@ -277,7 +277,10 @@ export const VideoElementView = memo(function VideoElementView({
     const video = ref.current;
     if (!video) return;
     if (playing && !video.ended) {
-      video.play().catch(() => {
+      video.play().catch((e: unknown) => {
+        // Une pause qui interrompt un démarrage n'est pas un refus : relancer la lecture ici la
+        // ferait continuer alors que l'éditeur est en pause.
+        if ((e as DOMException | null)?.name === "AbortError") return;
         // Politique d'autoplay : si la lecture avec son est refusée, rejouer en muet plutôt
         // que de figer la vidéo.
         video.muted = true;

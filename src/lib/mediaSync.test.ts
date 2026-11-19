@@ -40,4 +40,24 @@ describe("syncMedia", () => {
     syncMedia(m, 10.205, false, 1);
     expect(m.currentTime).toBe(10.2);
   });
+
+  it("does not chase a media that has not really started yet, whatever the drift", () => {
+    for (const state of [{ paused: true }, { seeking: true }, { readyState: 2 }]) {
+      const m = { currentTime: 9, playbackRate: 1, ...state };
+      syncMedia(m, 10, true, 1);
+      expect(m).toMatchObject({ currentTime: 9, playbackRate: 1 });
+    }
+  });
+
+  it("corrects a media that is playing and ready", () => {
+    const m = { currentTime: 9, playbackRate: 1, paused: false, seeking: false, readyState: 4 };
+    syncMedia(m, 10, true, 1);
+    expect(m.currentTime).toBe(10);
+  });
+
+  it("still puts a paused media on the displayed image", () => {
+    const m = { currentTime: 9, playbackRate: 1, paused: true };
+    syncMedia(m, 10, false, 1);
+    expect(m.currentTime).toBe(10);
+  });
 });

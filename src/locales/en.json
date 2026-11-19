@@ -125,7 +125,7 @@
     "applied": "New version applied."
   },
   "library": {
-    "clickToAdd": "CLICK TO ADD",
+    "doubleClickToAdd": "DOUBLE-CLICK TO ADD",
     "editAsset": "Edit in its own tab",
     "searchPlaceholder": "Search…",
     "addTitle": "Add a title",

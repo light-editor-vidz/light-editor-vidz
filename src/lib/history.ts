@@ -53,6 +53,8 @@ export type HistoryAction =
   | { type: "redo" }
   /** Revient (ou avance) directement à l'étape `index` de `[...past, present, ...future]`. */
   | { type: "goto"; index: number }
+  /** Oublie les états d'annulation et de rétablissement que `keep` refuse (un média supprimé…). */
+  | { type: "forget"; keep: (project: Project) => boolean }
   | { type: "saved"; project: Project };
 
 const NO_MUTATION: LastMutation = { key: null, time: 0 };
@@ -107,6 +109,8 @@ export function historyReducer(state: HistoryState, action: HistoryAction): Hist
         last: NO_MUTATION,
       };
     }
+    case "forget":
+      return { ...state, past: state.past.filter(action.keep), future: state.future.filter(action.keep) };
     case "saved":
       return { ...state, saved: action.project };
   }
