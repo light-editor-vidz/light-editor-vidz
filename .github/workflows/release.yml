@@ -47,7 +47,10 @@ jobs:
           # En brouillon : invisible (et jamais « latest ») tant que tous les binaires ne sont pas là ;
           # la dernière étape (`publish`) le publie.
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --title "LightEditorVidz $TAG" --notes-file notes.md
-          echo "release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .id)" >> "$GITHUB_OUTPUT"
+          # /releases/tags/{tag} répond 404 pour un brouillon : on passe par la liste, qui l'inclut.
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq "[.[] | select(.tag_name == \"$TAG\")][0].id")
+          test -n "$id" && [ "$id" != "null" ] || { echo "Release $TAG not found"; exit 1; }
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build (${{ matrix.target }})
