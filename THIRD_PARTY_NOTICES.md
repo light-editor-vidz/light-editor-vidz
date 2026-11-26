@@ -10,7 +10,7 @@ as two sidecar executables (`ffmpeg` and `ffprobe`) next to the application.
 
 | Platform                  | Build                                                                                                                  | Pinned in `scripts/ffmpeg-sources.json` |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| Linux x86_64, Linux arm64 | [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) `autobuild-2026-11-09-12-42`, FFmpeg n8.1.3, `gpl` variant | SHA256 of each archive                  |
+| Linux x86_64, Linux arm64 | [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) `autobuild-2026-10-31-12-59`, FFmpeg n8.1.3, `gpl` variant | SHA256 of each archive                  |
 | macOS arm64               | [Martin Riedl's static builds](https://ffmpeg.martin-riedl.de), build `N-128220-gbea9d176f7`                           | SHA256 of each binary archive           |
 
 These builds are configured with `--enable-gpl --enable-version3` and include, among
