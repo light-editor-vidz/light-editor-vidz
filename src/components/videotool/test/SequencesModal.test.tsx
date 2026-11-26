@@ -36,6 +36,12 @@ function setup(detect: () => Promise<{ start: number; end: number }[]> = async (
   return { detectScenes, onCancel, onApply };
 }
 
+/** Attend la liste et les effets qui la suivent (ils replacent le lecteur au début) avant d'agir. */
+async function shown(name: string) {
+  await screen.findByText(name);
+  await act(async () => {});
+}
+
 const names = () => screen.getAllByText(/^Sequence \d+$/).map((n) => n.textContent);
 
 beforeEach(() => vi.clearAllMocks());
@@ -107,7 +113,7 @@ describe("SequencesModal", () => {
 
   it("clicking a card plays that sequence from its start", async () => {
     setup();
-    await screen.findByText("Sequence 2");
+    await shown("Sequence 2");
     const video = document.querySelector("video")!;
     const play = vi.fn(async () => {});
     video.play = play;
@@ -121,7 +127,7 @@ describe("SequencesModal", () => {
   describe("loop", () => {
     async function looped(name: string) {
       setup();
-      await screen.findByText(name);
+      await shown(name);
       const video = document.querySelector("video")!;
       video.play = vi.fn(async () => {});
       video.pause = vi.fn();
