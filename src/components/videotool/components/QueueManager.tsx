@@ -3,6 +3,8 @@ import { getApi } from "../api";
 import { useT } from "../i18n";
 import { engineErrorText } from "../engineError";
 import type { QueueJob } from "../api";
+import DeliveryCheck from "../../DeliveryCheck";
+import { queuedDestinations } from "../../../lib/deliveryCheck";
 import "./QueueManager.css";
 
 export const SHOW_QUEUE_EVENT = "lcv:show-queue";
@@ -126,6 +128,12 @@ export default function QueueManager() {
                   )}
                   {job.status === "error" && job.error && (
                     <div className="queue-error">{engineErrorText(job.error, t)}</div>
+                  )}
+                  {job.status === "done" && job.notice === "loudness-skipped" && (
+                    <div className="queue-error">{t.export_loudness_skipped}</div>
+                  )}
+                  {job.status === "done" && queuedDestinations.has(job.outputPath) && (
+                    <DeliveryCheck platform={queuedDestinations.get(job.outputPath)!} path={job.outputPath} />
                   )}
                   <div className="queue-actions">
                     {isActive(job) && (

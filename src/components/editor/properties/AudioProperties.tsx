@@ -3,6 +3,7 @@ import { Music } from "lucide-react";
 import type { AudioTrack } from "../../../bindings/AudioTrack";
 import type { FadeCurve } from "../../../bindings/FadeCurve";
 import { AUDIO_SPEED_MAX, AUDIO_SPEED_MIN } from "../../../lib/audio";
+import { DUCK_AMOUNTS } from "../../../lib/ducking";
 import { Header } from "./Header";
 import { NumberField } from "./NumberField";
 
@@ -63,6 +64,23 @@ export function AudioProperties({
           value={track.volume}
           onChange={(e) => onUpdate({ volume: Number(e.target.value) })}
         />
+      </div>
+
+      <div className="properties-section">
+        <span className="properties-label">{t("properties.duck")}</span>
+        <select
+          className="properties-input"
+          aria-label={t("properties.duck")}
+          title={t("properties.duckHint")}
+          value={track.duck_db}
+          onChange={(e) => onUpdate({ duck_db: Number(e.target.value) })}
+        >
+          {DUCK_AMOUNTS.map((db) => (
+            <option key={db} value={db}>
+              {db === 0 ? t("properties.duckOff") : `−${db} dB`}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="properties-section">

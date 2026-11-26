@@ -8,6 +8,7 @@
 
 use scene_core::audio_fx::{fade_curve_name, filter_stages};
 use scene_core::ffmpeg_path::{ffmpeg_binary, ffprobe_binary};
+use scene_core::loudness;
 use scene_core::model::{AudioFilter, FadeCurve};
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
@@ -43,6 +44,8 @@ pub struct AudioMixInput {
     pub fade_curve: FadeCurve,
     /// Filtre passe-bas / passe-haut / passe-bande, appliqué après le changement de vitesse.
     pub filter: Option<AudioFilter>,
+    /// Baisse (dB) de cette piste sous les autres sons ; 0 = elle ne baisse pas.
+    pub duck_db: f64,
 }
 
 /// Paramètres de l'encodage final.
@@ -56,11 +59,19 @@ pub struct EncoderSpec<'a> {
     /// silence ou coupé.
     pub duration: f64,
     pub audio: &'a [AudioMixInput],
+    /// Correction du volume ressenti (`measure_mix`), appliquée au mix.
+    pub normalize: Option<&'a str>,
     pub output_path: &'a Path,
 }
 
 /// Fréquence d'échantillonnage commune du mix (les boucles audio se calculent en échantillons).
 const MIX_SAMPLE_RATE: u32 = 48_000;
+
+/// Plafond du mix : −1 dBFS (comme la normalisation de la vue Audio). La somme des pistes
+/// (`amix normalize=0`, volumes jusqu'à 200 %) peut dépasser la pleine échelle, que l'encodage
+/// écrêterait. `level=false` : sans lui, `alimiter` remonte tout le signal ; `latency=true`
+/// compense son temps d'anticipation, pour ne pas décaler le son.
+const MIX_LIMITER: &str = "alimiter=limit=0.891251:level=false:latency=true";
 
 /// Chaîne de filtres `atempo` équivalente à `speed`, en décomposant en facteurs dans
 /// l'intervalle `[0.5, 2.0]` supporté par une seule instance du filtre ffmpeg `atempo`.
@@ -186,37 +197,102 @@ fn filter_graph(spec: &EncoderSpec) -> (String, bool) {
         return (graph, false);
     }
     graph.push(';');
-    graph.push_str(&audio_mix_graph(spec.audio, 1, spec.duration, ""));
+    let end = MixEnd {
+        normalize: spec.normalize,
+        limit: true,
+        tail: "",
+    };
+    graph.push_str(&audio_mix_graph(spec.audio, 1, spec.duration, end));
     (graph, true)
 }
 
+/// La fin de chaîne du mix.
+#[derive(Default)]
+struct MixEnd<'a> {
+    /// Correction du volume ressenti, avant le plafond.
+    normalize: Option<&'a str>,
+    /// Plafonner à −1 dBFS (sauf pour mesurer le mix tel qu'il est).
+    limit: bool,
+    /// Filtres ajoutés tout au bout (ex. dither).
+    tail: &'a str,
+}
+
+/// La somme des pistes étiquetées, à volume inchangé.
+fn sum(labels: &[String]) -> String {
+    let joined = labels.concat();
+    if labels.len() == 1 {
+        format!("{joined}anull")
+    } else {
+        format!(
+            "{joined}amix=inputs={}:duration=longest:normalize=0",
+            labels.len()
+        )
+    }
+}
+
 /// Mix de toutes les pistes `audio` (entrées ffmpeg `first_input`, `first_input + 1`…), jusqu'à
-/// l'étiquette `[aout]`. `tail` s'ajoute juste avant (filtres de fin de chaîne, ex. dither).
+/// l'étiquette `[aout]`, terminée selon `end`.
 fn audio_mix_graph(
     audio: &[AudioMixInput],
     first_input: usize,
     duration: f64,
-    tail: &str,
+    end: MixEnd,
 ) -> String {
     let mut graph = String::new();
-    let mut labels = String::new();
+    // Baisser une piste n'a de sens que s'il reste un autre son pour le déclencher.
+    let ducked = |input: &AudioMixInput| scene_core::ducking::amount(input.duck_db) > 0.0;
+    let ducking = audio.iter().any(ducked) && !audio.iter().all(ducked);
+    let mut voices = Vec::new();
+    let mut music = Vec::new();
     for (i, input) in audio.iter().enumerate() {
-        let label = format!("a{i}");
+        let mut label = format!("a{i}");
         graph.push_str(&audio_chain(input, first_input + i, &label));
         graph.push(';');
-        labels.push_str(&format!("[{label}]"));
+        if ducking {
+            // La porte exige le même format sur ses deux entrées.
+            graph.push_str(&format!(
+                "[{label}]aformat=sample_rates={MIX_SAMPLE_RATE}:channel_layouts=stereo[f{i}];"
+            ));
+            label = format!("f{i}");
+        }
+        if ducking && ducked(input) {
+            music.push((label, input.duck_db));
+        } else {
+            voices.push(format!("[{label}]"));
+        }
+    }
+    let mut labels = voices;
+    if ducking {
+        // Les autres sons, une fois pour le mix et une fois par piste à baisser.
+        let keys: String = (0..music.len()).map(|n| format!("[key{n}]")).collect();
+        graph.push_str(&format!(
+            "{},asplit={}[voices]{keys};",
+            sum(&labels),
+            music.len() + 1
+        ));
+        labels = vec!["[voices]".to_string()];
+        for (n, (label, db)) in music.iter().enumerate() {
+            let output = format!("duck{n}");
+            graph.push_str(&scene_core::ducking::graph(
+                label,
+                &format!("key{n}"),
+                &output,
+                *db,
+            ));
+            graph.push(';');
+            labels.push(format!("[{output}]"));
+        }
     }
     // Le mix dure aussi longtemps que la piste la plus longue ; `apad` le complète par du silence
     // jusqu'à la durée du projet (`-t` coupe l'excédent).
-    let mix = if audio.len() == 1 {
-        format!("{labels}anull")
-    } else {
-        format!(
-            "{labels}amix=inputs={}:duration=longest:normalize=0",
-            audio.len()
-        )
-    };
-    graph.push_str(&format!("{mix},apad=whole_dur={duration}{tail}[aout]"));
+    let mix = sum(&labels);
+    let mut chain = vec![mix];
+    chain.extend(end.normalize.map(str::to_string));
+    if end.limit {
+        chain.push(MIX_LIMITER.to_string());
+    }
+    chain.push(format!("apad=whole_dur={duration}{}", end.tail));
+    graph.push_str(&format!("{}[aout]", chain.join(",")));
     graph
 }
 
@@ -304,6 +380,8 @@ pub struct AudioExportSpec<'a> {
     /// Durée (secondes) du fichier : le mix est complété par du silence ou coupé.
     pub duration: f64,
     pub format: AudioFormat,
+    /// Correction du volume ressenti (`measure_mix`), appliquée au mix.
+    pub normalize: Option<&'a str>,
     /// Titre inscrit dans les métadonnées du fichier.
     pub title: &'a str,
     pub output_path: &'a Path,
@@ -327,7 +405,16 @@ fn audio_export_args(spec: &AudioExportSpec) -> Vec<String> {
     push_audio_inputs(&mut args, spec.audio);
     args.extend([
         "-filter_complex".to_string(),
-        audio_mix_graph(spec.audio, 0, spec.duration, spec.format.graph_tail()),
+        audio_mix_graph(
+            spec.audio,
+            0,
+            spec.duration,
+            MixEnd {
+                normalize: spec.normalize,
+                limit: true,
+                tail: spec.format.graph_tail(),
+            },
+        ),
         "-map".to_string(),
         "[aout]".to_string(),
         "-ar".to_string(),
@@ -355,10 +442,119 @@ fn audio_export_args(spec: &AudioExportSpec) -> Vec<String> {
 pub fn run_audio_export(
     spec: &AudioExportSpec,
     cancelled: impl Fn() -> bool,
+    on_progress: impl FnMut(f32),
+) -> Result<(), String> {
+    run_reporting(
+        audio_export_args(spec),
+        spec.duration,
+        cancelled,
+        on_progress,
+    )
+}
+
+/// Première passe de la normalisation : mesure le volume du mix, sans rien écrire d'autre que les
+/// mesures. Renvoie le filtre de correction, ou `None` si le son est trop faible pour être monté.
+pub fn measure_mix(
+    audio: &[AudioMixInput],
+    duration: f64,
+    target: f64,
+    cancelled: impl Fn() -> bool,
+) -> Result<Option<String>, String> {
+    let stats = tempfile::Builder::new()
+        .prefix("lev_loudness_")
+        .suffix(".json")
+        .tempfile()
+        .map_err(|e| format!("Cannot measure the loudness: {e}"))?;
+    let measure = loudness::measure_filter(target, &stats.path().to_string_lossy());
+    let mut args: Vec<String> = ["-y", "-nostdin", "-nostats", "-loglevel", "error"]
+        .map(String::from)
+        .to_vec();
+    args.extend(["-progress".to_string(), "pipe:1".to_string()]);
+    push_audio_inputs(&mut args, audio);
+    let end = MixEnd {
+        tail: &format!(",{measure}"),
+        ..MixEnd::default()
+    };
+    args.extend([
+        "-filter_complex".to_string(),
+        audio_mix_graph(audio, 0, duration, end),
+    ]);
+    args.extend(["-map", "[aout]", "-t"].map(String::from));
+    args.push(format!("{duration:.6}"));
+    args.extend(["-f", "null", "-"].map(String::from));
+    run_reporting(args, duration, cancelled, |_| {})?;
+    let json = std::fs::read_to_string(stats.path())
+        .map_err(|e| format!("Cannot read the loudness measure: {e}"))?;
+    Ok(loudness::apply_filter(
+        target,
+        &loudness::parse_measure(&json)?,
+        loudness::OUTPUT_RATE,
+    ))
+}
+
+/// Les passages (secondes) où le mix de `audio` dépasse le seuil de la baisse automatique :
+/// c'est pendant ceux-là que l'aperçu baisse la musique, comme l'export.
+pub fn voice_ranges(audio: &[AudioMixInput], duration: f64) -> Result<Vec<(f64, f64)>, String> {
+    if audio.is_empty() {
+        return Ok(Vec::new());
+    }
+    let log = tempfile::Builder::new()
+        .prefix("lev_voice_")
+        .suffix(".log")
+        .tempfile()
+        .map_err(|e| format!("Cannot analyse the voice: {e}"))?;
+    // Un silence plus court que le retour de la musique ne la laisse pas remonter.
+    let detect = format!(
+        ",silencedetect=noise={}dB:d={},ametadata=mode=print:file={}",
+        scene_core::ducking::THRESHOLD_DB,
+        scene_core::ducking::RELEASE_MS / 1000.0,
+        scene_core::ffmpeg_path::escape_for_ffmpeg_filter(&log.path().to_string_lossy())
+    );
+    let mut args: Vec<String> = ["-y", "-nostdin", "-nostats", "-loglevel", "error"]
+        .map(String::from)
+        .to_vec();
+    args.extend(["-progress".to_string(), "pipe:1".to_string()]);
+    push_audio_inputs(&mut args, audio);
+    let end = MixEnd {
+        tail: &detect,
+        ..MixEnd::default()
+    };
+    args.extend([
+        "-filter_complex".to_string(),
+        audio_mix_graph(audio, 0, duration, end),
+    ]);
+    args.extend(["-map", "[aout]", "-t"].map(String::from));
+    args.push(format!("{duration:.6}"));
+    args.extend(["-f", "null", "-"].map(String::from));
+    run_reporting(args, duration, || false, |_| {})?;
+    let text = std::fs::read_to_string(log.path())
+        .map_err(|e| format!("Cannot read the voice analysis: {e}"))?;
+    let silences = video_export::silence::parse_silences(&text, duration);
+    // Les passages voisés sont ce qui reste entre les silences.
+    let mut ranges = Vec::new();
+    let mut from = 0.0;
+    for silence in silences {
+        if silence.start - from > 0.01 {
+            ranges.push((from, silence.start));
+        }
+        from = silence.end;
+    }
+    if duration - from > 0.01 {
+        ranges.push((from, duration));
+    }
+    Ok(ranges)
+}
+
+/// Lance ffmpeg (avec `-progress pipe:1`) et attend sa fin, en suivant sa progression sur
+/// `duration` secondes.
+fn run_reporting(
+    args: Vec<String>,
+    duration: f64,
+    cancelled: impl Fn() -> bool,
     mut on_progress: impl FnMut(f32),
 ) -> Result<(), String> {
     let mut child = Command::new(ffmpeg_binary())
-        .args(audio_export_args(spec))
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -392,7 +588,7 @@ pub fn run_audio_export(
         }
         if let Some(micros) = line.strip_prefix("out_time_us=") {
             if let Ok(micros) = micros.trim().parse::<f64>() {
-                on_progress((micros / 1e6 / spec.duration).clamp(0.0, 1.0) as f32);
+                on_progress((micros / 1e6 / duration).clamp(0.0, 1.0) as f32);
             }
         }
     }
@@ -611,6 +807,7 @@ mod tests {
             source_duration: None,
             fade_curve: FadeCurve::Linear,
             filter: None,
+            duck_db: 0.0,
         }
     }
 
@@ -622,6 +819,7 @@ mod tests {
             crf: None,
             duration: 6.0,
             audio,
+            normalize: None,
             output_path: output,
         }
     }
@@ -795,6 +993,7 @@ mod tests {
             audio: &tracks,
             duration: 6.0,
             format: AudioFormat::Wav16,
+            normalize: None,
             title: "Mon projet",
             output_path: Path::new("/tmp/o"),
         };
@@ -1074,6 +1273,7 @@ mod tests {
                 audio: &[track],
                 duration: 4.0,
                 format: AudioFormat::Wav32f,
+                normalize: None,
                 title: "",
                 output_path: &out,
             };
@@ -1112,6 +1312,7 @@ mod tests {
                 audio: &[track],
                 duration: 5.0,
                 format,
+                normalize: None,
                 title: "Titre",
                 output_path: &out,
             };
@@ -1139,6 +1340,248 @@ mod tests {
     }
 
     #[test]
+    fn a_mix_that_adds_up_past_full_scale_is_limited_instead_of_clipped() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("limiter");
+        // Deux sons forts (≈ −1 dBFS chacun) : leur somme dépasse la pleine échelle de ≈ 5 dB.
+        let loud = |name: &str, hz: u32| {
+            let path = dir.join(name);
+            let status = Command::new(ffmpeg_binary())
+                .args(["-y", "-v", "error", "-f", "lavfi", "-i"])
+                .arg(format!("sine=frequency={hz}:duration=3,volume=7"))
+                .arg(&path)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            path
+        };
+        let mut a = input(3.0);
+        a.path = loud("a.wav", 440);
+        let mut b = input(3.0);
+        b.path = loud("b.wav", 660);
+        let out = dir.join("mix.wav");
+        let spec = AudioExportSpec {
+            audio: &[a, b],
+            duration: 3.0,
+            // En flottant, un dépassement reste visible au lieu d'être écrêté à 0 dB.
+            format: AudioFormat::Wav32f,
+            normalize: None,
+            title: "",
+            output_path: &out,
+        };
+        run_audio_export(&spec, || false, |_| {}).unwrap();
+        let log = Command::new(ffmpeg_binary())
+            .args(["-hide_banner", "-nostats", "-i"])
+            .arg(&out)
+            .args(["-af", "astats=measure_perchannel=none", "-f", "null", "-"])
+            .output()
+            .unwrap();
+        let peak: f64 = String::from_utf8_lossy(&log.stderr)
+            .lines()
+            .find_map(|l| l.split("Peak level dB:").nth(1))
+            .and_then(|v| v.trim().parse().ok())
+            .expect("astats peak");
+        assert!(
+            (-1.6..=-0.9).contains(&peak),
+            "crête attendue autour de −1 dBFS : {peak}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_limiter_neither_raises_nor_delays_a_quiet_track() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("limiter-quiet");
+        let tone = make_tone(&dir, "tone.wav", 2);
+        let mut track = input(2.0);
+        track.path = tone;
+        track.start_time = 1.0;
+        let out = dir.join("mix.wav");
+        let spec = AudioExportSpec {
+            audio: &[track],
+            duration: 4.0,
+            format: AudioFormat::Wav32f,
+            normalize: None,
+            title: "",
+            output_path: &out,
+        };
+        run_audio_export(&spec, || false, |_| {}).unwrap();
+        // La sinusoïde de ffmpeg culmine à −18 dBFS : elle sort au même niveau, à sa place.
+        assert!((max_volume(&out, 1.5, 1.0) + 18.1).abs() < 0.5);
+        assert!(max_volume(&out, 0.0, 0.99) < -80.0);
+        assert!(max_volume(&out, 1.0, 0.01) > -30.0);
+        assert!(max_volume(&out, 3.01, 0.9) < -80.0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_mix_is_brought_to_the_loudness_target() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("loudness");
+        let tone = make_tone(&dir, "tone.wav", 8);
+        let tracks = || {
+            let mut track = input(8.0);
+            track.path = tone.clone();
+            [track]
+        };
+        let normalize = measure_mix(&tracks(), 8.0, -14.0, || false)
+            .unwrap()
+            .expect("le son est assez fort pour être corrigé");
+        let out = dir.join("mix.wav");
+        let spec = AudioExportSpec {
+            audio: &tracks(),
+            duration: 8.0,
+            format: AudioFormat::Wav24,
+            normalize: Some(&normalize),
+            title: "",
+            output_path: &out,
+        };
+        run_audio_export(&spec, || false, |_| {}).unwrap();
+
+        let log = Command::new(ffmpeg_binary())
+            .args(["-hide_banner", "-nostats", "-i"])
+            .arg(&out)
+            .args(["-af", "ebur128", "-f", "null", "-"])
+            .output()
+            .unwrap();
+        let log = String::from_utf8_lossy(&log.stderr).into_owned();
+        let loudness: f64 = log
+            .rsplit("I:")
+            .next()
+            .and_then(|v| v.split_whitespace().next()?.parse().ok())
+            .expect("mesure ebur128");
+        assert!((loudness + 14.0).abs() < 0.7, "{loudness} LUFS");
+        let rate = ffprobe(
+            &[
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=sample_rate",
+                "-of",
+                "csv=p=0",
+            ],
+            &out,
+        )
+        .unwrap();
+        assert_eq!(rate.trim(), "48000");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_nearly_silent_mix_is_not_amplified() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("loudness-quiet");
+        let mut track = input(4.0);
+        track.path = make_tone(&dir, "tone.wav", 4);
+        track.volume = 0.01;
+        assert_eq!(measure_mix(&[track], 4.0, -14.0, || false), Ok(None));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Niveau RMS (dB) de `path` entre `from` et `from + 1` s, autour de 3 kHz (la « musique »).
+    fn music_level(path: &Path, from: u32) -> f64 {
+        let log = Command::new(ffmpeg_binary())
+            .args([
+                "-hide_banner",
+                "-nostats",
+                "-ss",
+                &from.to_string(),
+                "-t",
+                "1",
+                "-i",
+            ])
+            .arg(path)
+            .args([
+                "-af",
+                "highpass=f=2000:p=2,highpass=f=2000:p=2,astats",
+                "-f",
+                "null",
+                "-",
+            ])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&log.stderr)
+            .rsplit("RMS level dB:")
+            .next()
+            .and_then(|v| v.split_whitespace().next()?.parse().ok())
+            .expect("mesure astats")
+    }
+
+    fn tone_at(dir: &Path, name: &str, frequency: u32, seconds: u32) -> PathBuf {
+        let path = dir.join(name);
+        let ok = Command::new(ffmpeg_binary())
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i"])
+            .arg(format!(
+                "sine=frequency={frequency}:duration={seconds}:sample_rate=44100"
+            ))
+            .args(["-af", "volume=3"])
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        path
+    }
+
+    #[test]
+    fn the_music_drops_by_the_chosen_amount_only_while_the_voice_speaks() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("ducking");
+        // La « musique » dure 9 s ; la « voix » parle de 3 à 5 s.
+        let mut music = input(9.0);
+        music.path = tone_at(&dir, "music.wav", 6000, 9);
+        music.volume = 0.5;
+        music.duck_db = 12.0;
+        let mut voice = input(2.0);
+        voice.path = tone_at(&dir, "voice.wav", 200, 2);
+        voice.start_time = 3.0;
+        let tracks = [music, voice];
+        let out = dir.join("mix.wav");
+        let spec = AudioExportSpec {
+            audio: &tracks,
+            duration: 9.0,
+            format: AudioFormat::Wav24,
+            normalize: None,
+            title: "",
+            output_path: &out,
+        };
+        run_audio_export(&spec, || false, |_| {}).unwrap();
+
+        let before = music_level(&out, 1);
+        let during = music_level(&out, 3);
+        let after = music_level(&out, 7);
+        assert!((before - during - 12.0).abs() < 1.5, "{before} → {during}");
+        assert!((before - after).abs() < 1.0, "{before} → {after}");
+        assert!((media_duration(&out).unwrap() - 9.0).abs() < 0.1);
+
+        let ranges = voice_ranges(&tracks[1..], 9.0).unwrap();
+        assert_eq!(ranges.len(), 1, "{ranges:?}");
+        assert!(
+            (ranges[0].0 - 3.0).abs() < 0.1 && (ranges[0].1 - 5.0).abs() < 0.1,
+            "{ranges:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_ducked_track_alone_is_left_as_it_is() {
+        let mut only = input(4.0);
+        only.duck_db = 12.0;
+        let graph = audio_mix_graph(&[only], 0, 4.0, MixEnd::default());
+        assert!(!graph.contains("sidechaingate"), "{graph}");
+    }
+
+    #[test]
     fn a_cancelled_audio_export_kills_ffmpeg_and_reports_the_cancellation() {
         if !ffmpeg_available() {
             return;
@@ -1152,6 +1595,7 @@ mod tests {
             audio: &[track],
             duration: 60.0,
             format: AudioFormat::Wav16,
+            normalize: None,
             title: "",
             output_path: &out,
         };

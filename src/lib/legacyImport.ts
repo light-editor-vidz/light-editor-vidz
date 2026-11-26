@@ -276,6 +276,7 @@ function convertElement(
       playback_speed: 1,
       loop_video: false,
       color_filter: null,
+      chroma_key: null,
       crop: null,
       subtitles: null,
     };
@@ -341,6 +342,7 @@ function convertAudioTrack(raw: unknown): AudioTrack | null {
     speed: 1,
     fade_curve: "linear",
     filter: null,
+    duck_db: 0,
     subtitles: null,
   };
 }

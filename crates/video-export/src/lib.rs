@@ -11,6 +11,7 @@ pub mod plan;
 pub mod preview;
 pub mod queue;
 pub mod sequences;
+pub mod silence;
 pub mod subtitles;
 pub mod text;
 pub mod video_filters;

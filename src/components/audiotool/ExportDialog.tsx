@@ -2,6 +2,9 @@ import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import type { ExportFormat, WavDepth } from "../../lib/audiotool/helpers";
+import { LOUDNESS_TARGETS, parseLoudness } from "../../lib/loudness";
+import VoiceCleanupFields from "../VoiceCleanupFields";
+import type { VoiceCleanup } from "../../lib/voice";
 import "../NewProjectModal.css";
 
 const FORMATS: { value: ExportFormat; label: string }[] = [
@@ -23,6 +26,10 @@ interface Props {
   wavDepth: WavDepth;
   onFormat: (format: ExportFormat) => void;
   onWavDepth: (depth: WavDepth) => void;
+  loudness: number | null;
+  onLoudness: (loudness: number | null) => void;
+  voice: VoiceCleanup;
+  onVoice: (voice: VoiceCleanup) => void;
   /** Ce qui ferait refuser l'export, déjà traduit ; vide si rien. */
   problem: string;
   processing: boolean;
@@ -43,6 +50,10 @@ export default function ExportDialog({
   wavDepth,
   onFormat,
   onWavDepth,
+  loudness,
+  onLoudness,
+  voice,
+  onVoice,
   problem,
   processing,
   progress,
@@ -112,6 +123,42 @@ export default function ExportDialog({
               </select>
             </div>
           )}
+          <VoiceCleanupFields
+            value={voice}
+            onChange={onVoice}
+            disabled={processing}
+            classes={{ row: "at-opt-row", label: "", select: "at-select", check: "at-check" }}
+            texts={{
+              label: t("voice.label"),
+              levels: {
+                off: t("voice.off"),
+                light: t("voice.light"),
+                medium: t("voice.medium"),
+                strong: t("voice.strong"),
+              },
+              denoise: t("voice.denoise"),
+              gate: t("voice.gate"),
+              hint: t("voice.hint"),
+            }}
+          />
+          <div className="at-opt-row">
+            <label htmlFor="at-loudness">{t("loudness.label")}</label>
+            <select
+              id="at-loudness"
+              className="at-select"
+              value={loudness ?? ""}
+              disabled={processing}
+              title={t("loudness.hint")}
+              onChange={(e) => onLoudness(parseLoudness(e.target.value || null))}
+            >
+              <option value="">{t("loudness.off")}</option>
+              {LOUDNESS_TARGETS.map((target) => (
+                <option key={target} value={target}>
+                  {target} LUFS
+                </option>
+              ))}
+            </select>
+          </div>
           {processing && (
             <div
               className="at-progress"

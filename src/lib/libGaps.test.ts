@@ -141,7 +141,7 @@ describe("commands", () => {
   });
 
   it("exports a project with its options", async () => {
-    const options = { width: 1280, height: 720, fps: 30, crf: 23 };
+    const options = { width: 1280, height: 720, fps: 30, crf: 23, loudness: null };
     await commands.exportProject("/p", project, "/out.mp4", options);
     expect(mockInvoke).toHaveBeenCalledWith("export_project", {
       projectDir: "/p",
@@ -164,6 +164,7 @@ describe("commands", () => {
         height: null,
         fps: null,
         crf: null,
+        loudness: null,
       }),
     ).rejects.toThrow("ffmpeg missing");
   });

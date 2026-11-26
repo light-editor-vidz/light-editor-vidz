@@ -42,7 +42,7 @@ export const audioAllowAsset = (path: string): Promise<void> => invoke("audio_al
 export const audioLoad = (path: string, points: number): Promise<AudioInfo> => invoke("audio_load", { path, points });
 
 /** `owner` : l'onglet qui exporte, pour que l'annulation et la progression ne concernent que lui. */
-export const audioProcess = (opts: ProcessOptions, owner: string): Promise<void> =>
+export const audioProcess = (opts: ProcessOptions, owner: string): Promise<{ loudness_skipped: boolean }> =>
   invoke("audio_process", { opts, owner });
 
 /** Libère le décodage gardé en mémoire pour ce fichier (fermeture de l'onglet). */

@@ -305,3 +305,18 @@ describe("PropertiesPanel — subtitles", () => {
     expect(screen.getByRole("button", { name: "Edit subtitles" })).toBeInTheDocument();
   });
 });
+
+describe("PropertiesPanel — baisse sous les autres sons", () => {
+  it("règle de combien la piste baisse", () => {
+    const onUpdateAudio = vi.fn();
+    setup({
+      element: null,
+      onUpdateAudio,
+      audioTrack: { id: "a1", name: "Music", src: "m.mp3", duck_db: 0, speed: 1, volume: 1 } as AudioTrack,
+    });
+
+    fireEvent.change(screen.getByLabelText("Lower under other sounds"), { target: { value: "12" } });
+
+    expect(onUpdateAudio).toHaveBeenCalledWith({ duck_db: 12 });
+  });
+});

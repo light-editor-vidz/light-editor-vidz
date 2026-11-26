@@ -97,3 +97,29 @@ describe("getActiveCharCount", () => {
     expect(getActiveCharCount(c, 100)).toBe(3);
   });
 });
+
+describe("getWordWindows with transcription times", () => {
+  const spoken = (start: number, end: number, text: string) => ({ start, end, text });
+  const cue = { id: 1, start: 1, end: 5, text: "un deux trois" };
+
+  it("follows the real time of each word, without a gap in the silences", () => {
+    const words = [spoken(1.1, 1.4, "un"), spoken(3, 3.5, "deux"), spoken(4.2, 4.9, "trois")];
+
+    expect(getWordWindows({ ...cue, words }).map((w) => [w.start, w.end])).toEqual([
+      [1, 3],
+      [3, 4.2],
+      [4.2, 5],
+    ]);
+  });
+
+  it("estimates again when the times no longer describe the cue", () => {
+    const guess = getWordWindows(cue);
+    const stale = [
+      [spoken(1, 2, "un"), spoken(2, 3, "deux"), spoken(3, 4, "quatre")],
+      [spoken(1, 2, "un")],
+      [spoken(1, 2, "un"), spoken(9, 10, "deux"), spoken(9, 10, "trois")],
+      [spoken(1, 2, "un"), spoken(3, 4, "deux"), spoken(2, 3, "trois")],
+    ];
+    for (const words of stale) expect(getWordWindows({ ...cue, words })).toEqual(guess);
+  });
+});

@@ -31,6 +31,7 @@ import {
   type SubsFormat,
   type SubsLanguage,
   type SubsOutput,
+  type SubsWord,
   type SubsSettings,
 } from "../../lib/subs/commands";
 import { parseSrt } from "../videotool/utils/srt";
@@ -55,7 +56,7 @@ interface Props {
   onPlace?: (cues: TimedCue[]) => void;
   /** Vue Vidéo, vue Audio, média d'un projet : le sous-titre est associé au média dès qu'il est
    * généré, puis à chaque correction (même `sessionId` : il remplace le précédent). */
-  onAssociate?: (srt: string, sessionId: string) => void;
+  onAssociate?: (srt: string, sessionId: string, words?: SubsWord[]) => void;
 }
 
 const baseName = (p: string) => p.replace(/\\/g, "/").split("/").pop() ?? p;
@@ -228,7 +229,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
       sessionId.current = crypto.randomUUID();
       // La transcription est associée tout de suite : si la traduction enchaînée échoue, elle
       // n'est pas perdue.
-      onAssociate?.(out.srt_content, sessionId.current);
+      associate(out);
       if (out.warnings?.includes("vad_unavailable")) setError(t("subs.vadUnavailable"));
       // Une traduction demandée dès le départ s'ajoute à l'original, qui reste disponible.
       const translated =
@@ -240,7 +241,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
         setView("translation");
         setUse("translation");
       }
-      if (translated) onAssociate?.(translated.srt_content, sessionId.current);
+      if (translated) associate(translated);
     } catch (e) {
       if (!cancelled.current) setError(describeError(e));
     } finally {
@@ -254,6 +255,12 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
   const missingTranslationKey =
     !!translationKey && !keys[translationKey[0]] && !(typedKeys[translationKey[0]] ?? "").trim();
   const missingTranslationRegion = settings?.translation_engine === "azure" && !settings.azure_translator_region.trim();
+
+  /** Associe une version au média, avec le temps de ses mots quand il est connu. */
+  function associate({ srt_content, words }: SubsOutput) {
+    if (words?.length) onAssociate?.(srt_content, sessionId.current, words);
+    else onAssociate?.(srt_content, sessionId.current);
+  }
 
   /** Traduit le résultat après coup ; l'original est gardé. */
   async function runTranslation() {
@@ -271,7 +278,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
       setTranslation(out);
       setView("translation");
       setUse("translation");
-      onAssociate?.(out.srt_content, sessionId.current);
+      associate(out);
     } catch (e) {
       if (!cancelled.current) setError(describeError(e));
     } finally {
@@ -292,7 +299,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
   function chooseVersion(version: Version) {
     setUse(version);
     const picked = version === "translation" && translation ? translation : result;
-    if (picked) onAssociate?.(picked.srt_content, sessionId.current);
+    if (picked) associate(picked);
   }
 
   /** Corrige la version affichée ; si c'est celle qui sert, le média suit. */
@@ -304,7 +311,7 @@ export default function GenerateSubtitlesDialog({ source, label, onClose, onPlac
       const next = { ...shown, srt_content: edited.srt_content };
       if (view === "translation" && translation) setTranslation(next);
       else setResult(next);
-      if (view === use) onAssociate?.(next.srt_content, sessionId.current);
+      if (view === use) associate(next);
       setEditing(false);
     } catch (e) {
       setError(describeError(e));

@@ -1,4 +1,5 @@
 mod ffmpeg;
+pub mod inspect;
 
 pub use ffmpeg::AudioFormat;
 use ffmpeg::{
@@ -33,6 +34,8 @@ pub struct ExportOverrides {
     pub height: Option<u32>,
     pub fps: Option<u32>,
     pub crf: Option<u32>,
+    /// Volume ressenti visé (LUFS) ; `None` : le mix n'est pas retouché.
+    pub loudness: Option<f64>,
 }
 
 /// Résultat d'un export réussi : sources média qui n'ont pas pu être lues (le fichier est
@@ -40,6 +43,8 @@ pub struct ExportOverrides {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ExportReport {
     pub missing_media: Vec<String>,
+    /// Une normalisation était demandée, mais le son est trop faible : son niveau est gardé.
+    pub loudness_skipped: bool,
 }
 
 /// Durée exploitable (finie et non nulle) : un NaN ou une durée négative issus d'un projet
@@ -98,6 +103,7 @@ fn collect_project_audio_inputs(
             source_duration: None,
             fade_curve: track.fade_curve,
             filter: track.filter,
+            duck_db: track.duck_db,
         });
     }
     inputs
@@ -170,10 +176,22 @@ fn collect_audio_inputs(
                 source_duration,
                 fade_curve: Default::default(),
                 filter: None,
+                duck_db: 0.0,
             });
         }
     }
     inputs
+}
+
+/// Les passages où les sons qui ne baissent pas (voix, son des vidéos) se font entendre : ce que
+/// l'aperçu utilise pour baisser les pistes réglées pour cela.
+pub fn voice_ranges(project: &Project, project_dir: &Path) -> Result<Vec<(f64, f64)>, String> {
+    if !is_usable_duration(project.duration) {
+        return Ok(Vec::new());
+    }
+    let mut inputs = collect_audio_inputs(project, project_dir, &mut Vec::new());
+    inputs.retain(|input| scene_core::ducking::amount(input.duck_db) <= 0.0);
+    ffmpeg::voice_ranges(&inputs, project.duration)
 }
 
 /// Limites d'un export : 8K de côté, 240 images par seconde.
@@ -314,6 +332,22 @@ fn partial_output_path(output_path: &Path) -> PathBuf {
     output_path.with_file_name(format!(".{name}.part"))
 }
 
+/// La correction de volume demandée pour ce mix, et si elle a dû être abandonnée.
+fn loudness_filter(
+    audio: &[AudioMixInput],
+    duration: f64,
+    target: Option<f64>,
+    cancel: &AtomicBool,
+) -> Result<(Option<String>, bool), String> {
+    let Some(target) = target.filter(|_| !audio.is_empty()) else {
+        return Ok((None, false));
+    };
+    let target = scene_core::loudness::validate_target(target)?;
+    let filter = ffmpeg::measure_mix(audio, duration, target, || cancel.load(Ordering::SeqCst))?;
+    let skipped = filter.is_none();
+    Ok((filter, skipped))
+}
+
 /// Rend chaque frame du projet et encode le mp4 final (vidéo + audio mixé).
 /// `on_progress` est appelé régulièrement avec une fraction 0.0..1.0. `cancel` interrompt
 /// l'export (erreur `CANCELLED`) ; dans tous les cas d'échec, aucun fichier partiel ni process
@@ -355,6 +389,8 @@ pub fn export_video(
 
     let mut missing = Vec::new();
     let audio_inputs = collect_audio_inputs(project, project_dir, &mut missing);
+    let (normalize, loudness_skipped) =
+        loudness_filter(&audio_inputs, duration, overrides.loudness, cancel)?;
     let partial = partial_output_path(output_path);
     let _tracked = crate::commands::partials::track(&partial);
     let encoder = VideoEncoder::start(&EncoderSpec {
@@ -364,6 +400,7 @@ pub fn export_video(
         crf: overrides.crf,
         duration,
         audio: &audio_inputs,
+        normalize: normalize.as_deref(),
         output_path: &partial,
     })?;
 
@@ -386,6 +423,7 @@ pub fn export_video(
     }
     result.map(|()| ExportReport {
         missing_media: missing,
+        loudness_skipped,
     })
 }
 
@@ -397,6 +435,7 @@ pub fn export_audio(
     project_dir: &Path,
     output_path: &Path,
     format: AudioFormat,
+    loudness: Option<f64>,
     cancel: &AtomicBool,
     on_progress: impl FnMut(f32),
 ) -> Result<ExportReport, String> {
@@ -408,6 +447,8 @@ pub fn export_audio(
     if audio_inputs.is_empty() {
         return Err("The project has no audio to export.".to_string());
     }
+    let (normalize, loudness_skipped) =
+        loudness_filter(&audio_inputs, project.duration, loudness, cancel)?;
     let partial = partial_output_path(output_path);
     let _tracked = crate::commands::partials::track(&partial);
     let result = run_audio_export(
@@ -415,6 +456,7 @@ pub fn export_audio(
             audio: &audio_inputs,
             duration: project.duration,
             format,
+            normalize: normalize.as_deref(),
             title: &project.name,
             output_path: &partial,
         },
@@ -430,6 +472,7 @@ pub fn export_audio(
     }
     result.map(|()| ExportReport {
         missing_media: missing,
+        loudness_skipped,
     })
 }
 
@@ -467,6 +510,7 @@ mod tests {
             speed: 1.0,
             fade_curve: FadeCurve::Linear,
             filter: None,
+            duck_db: 0.0,
             subtitles: None,
         }
     }
@@ -754,6 +798,7 @@ mod tests {
                 height: Some(60),
                 fps: Some(5),
                 crf: Some(30),
+                loudness: None,
             },
             &AtomicBool::new(false),
             |_| {},
@@ -864,6 +909,7 @@ mod tests {
                     playback_speed: 1.0,
                     loop_video: false,
                     color_filter: None,
+                    chroma_key: None,
                     subtitles: None,
                     crop: None,
                 })],
@@ -1218,9 +1264,15 @@ mod tests {
         let out = dir.join("mix.flac");
         let cancel = AtomicBool::new(false);
         let mut last = 0.0;
-        let report = export_audio(&project, &dir, &out, AudioFormat::Flac, &cancel, |p| {
-            last = p
-        })
+        let report = export_audio(
+            &project,
+            &dir,
+            &out,
+            AudioFormat::Flac,
+            None,
+            &cancel,
+            |p| last = p,
+        )
         .expect("l'export audio doit réussir");
         assert!(report.missing_media.is_empty());
         assert!(out.exists());
@@ -1248,6 +1300,7 @@ mod tests {
             &dir,
             &out,
             AudioFormat::Wav16,
+            None,
             &AtomicBool::new(false),
             |_| {},
         )
@@ -1273,6 +1326,7 @@ mod tests {
             &dir,
             &out,
             AudioFormat::Mp3,
+            None,
             &AtomicBool::new(true),
             |_| {},
         )

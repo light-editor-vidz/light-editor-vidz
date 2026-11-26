@@ -6,6 +6,8 @@ function setup(props: Partial<Parameters<typeof ExportDialog>[0]> = {}) {
   const handlers = {
     onFormat: vi.fn(),
     onWavDepth: vi.fn(),
+    onLoudness: vi.fn(),
+    onVoice: vi.fn(),
     onExport: vi.fn(),
     onCancel: vi.fn(),
     onClose: vi.fn(),
@@ -14,6 +16,8 @@ function setup(props: Partial<Parameters<typeof ExportDialog>[0]> = {}) {
     <ExportDialog
       format="wav"
       wavDepth="float32"
+      loudness={null}
+      voice={{ level: "off", denoise: false, gate: false }}
       problem=""
       processing={false}
       progress={0}
@@ -51,6 +55,38 @@ describe("ExportDialog", () => {
   it("le masque pour les autres formats", () => {
     setup({ format: "mp3" });
     expect(screen.queryByLabelText("WAV sample format")).not.toBeInTheDocument();
+  });
+
+  it("règle le nettoyage de la voix", () => {
+    const { onVoice } = setup();
+
+    fireEvent.change(screen.getByLabelText("Voice clean-up"), { target: { value: "strong" } });
+    fireEvent.click(screen.getByLabelText("Noise gate (lowers the gaps)"));
+    fireEvent.click(screen.getByLabelText("Reduce noise"));
+
+    expect(onVoice.mock.calls).toEqual([
+      [{ level: "strong", denoise: false, gate: false }],
+      [{ level: "off", denoise: false, gate: true }],
+      [{ level: "off", denoise: true, gate: false }],
+    ]);
+  });
+
+  it("montre la réduction du bruit comme acquise aux niveaux qui la font toujours", () => {
+    setup({ voice: { level: "medium", denoise: false, gate: false } });
+    const denoise = screen.getByLabelText("Reduce noise");
+    expect(denoise).toBeChecked();
+    expect(denoise).toBeDisabled();
+  });
+
+  it("propose de viser un volume ressenti, ou de le laisser tel quel", () => {
+    const { onLoudness } = setup({ loudness: -16 });
+    const select = screen.getByLabelText("Loudness");
+    expect(select).toHaveValue("-16");
+
+    fireEvent.change(select, { target: { value: "-14" } });
+    fireEvent.change(select, { target: { value: "" } });
+
+    expect(onLoudness.mock.calls).toEqual([[-14], [null]]);
   });
 
   it("exporte au clic", () => {

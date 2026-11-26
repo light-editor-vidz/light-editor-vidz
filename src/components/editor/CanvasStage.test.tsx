@@ -606,3 +606,47 @@ describe("CanvasStage — chevauchement de scènes", () => {
     expect(q(".canvas-scene-layer").style.pointerEvents).toBe("none");
   });
 });
+
+describe("CanvasStage — zones sûres", () => {
+  beforeEach(() => localStorage.clear());
+
+  const view = (width: number, height: number) =>
+    render(
+      <CanvasStage
+        project={project({ width, height })}
+        projectDir="/p"
+        composition={composition()}
+        clock={createPlaybackClock(0)}
+        playing={false}
+        onTogglePlay={vi.fn()}
+        onSeekToStart={vi.fn()}
+        selectedIds={[]}
+        onSelectElement={vi.fn()}
+        onMarqueeSelect={vi.fn()}
+        onUpdateElement={vi.fn()}
+        onSetTransitionIn={vi.fn()}
+        onSetTransitionOut={vi.fn()}
+        onSeekToNext={vi.fn()}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        canUndo={false}
+        canRedo={false}
+      />,
+    );
+
+  it("les montre sur un projet vertical, à la demande", () => {
+    const { container } = view(1080, 1920);
+    expect(container.querySelector(".safe-zone")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Safe zones"), { target: { value: "tiktok" } });
+
+    expect(container.querySelector<HTMLElement>(".safe-zone-frame")?.style.right).toBe("14%");
+  });
+
+  it("ne les propose pas sur un projet horizontal", () => {
+    localStorage.setItem("lev_safe_zone", "tiktok");
+    const { container } = view(1920, 1080);
+    expect(screen.getByLabelText("Safe zones")).toBeDisabled();
+    expect(container.querySelector(".safe-zone")).toBeNull();
+  });
+});

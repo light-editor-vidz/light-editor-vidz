@@ -1,3 +1,4 @@
+import type { VoiceRange } from "./ducking";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import i18n from "i18next";
@@ -83,12 +84,16 @@ export interface ExportOptions {
   height: number | null;
   fps: number | null;
   crf: number | null;
+  /** Volume ressenti visé (LUFS) ; `null` : le mix n'est pas retouché. */
+  loudness: number | null;
 }
 
 /** Résultat d'un export réussi. */
 export interface ExportResult {
   /** Médias (images, vidéos, sons) introuvables ou illisibles : absents du fichier produit. */
   missing_media: string[];
+  /** Le son est trop faible pour être porté au volume visé : son niveau est gardé. */
+  loudness_skipped?: boolean;
 }
 
 /** Message d'erreur renvoyé par `export_project` quand l'utilisateur a annulé l'export. */
@@ -141,8 +146,14 @@ export function exportProjectAudio(
   project: Project,
   outputPath: string,
   format: AudioExportFormat,
+  loudness: number | null,
 ): Promise<ExportResult> {
-  return invoke("export_project_audio", { projectDir, project, outputPath, format });
+  return invoke("export_project_audio", { projectDir, project, outputPath, format, loudness });
+}
+
+/** Les passages du projet où la voix (tout ce qui ne baisse pas) se fait entendre. */
+export function projectVoiceRanges(projectDir: string, project: Project): Promise<VoiceRange[]> {
+  return invoke("project_voice_ranges", { projectDir, project });
 }
 
 /** Demande l'arrêt de l'export en cours. */

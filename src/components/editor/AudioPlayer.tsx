@@ -6,6 +6,8 @@ import { useMediaSource } from "../../lib/useMediaSource";
 import { audioFadeGain, audioSourceTime, isAudioTrackActive, isTrackAudible } from "../../lib/audio";
 import { syncMedia } from "../../lib/mediaSync";
 import { useClockValue, type PlaybackClock } from "../../lib/playbackClock";
+import { duckGain, type VoiceRange } from "../../lib/ducking";
+import { useVoiceRanges } from "../../lib/useVoiceRanges";
 
 interface TrackProps {
   track: AudioTrack;
@@ -14,15 +16,18 @@ interface TrackProps {
   clock: PlaybackClock;
   playing: boolean;
   audible: boolean;
+  voices: VoiceRange[];
 }
 
-function SingleAudio({ track, projectDir, projectDuration, clock, playing, audible }: TrackProps) {
+function SingleAudio({ track, projectDir, projectDuration, clock, playing, audible, voices }: TrackProps) {
   const ref = useRef<HTMLAudioElement>(null);
   const { src: mediaSrc, usingBlob, fallBack } = useMediaSource(projectDir, track.src);
   // Seuls l'état « actif » et le volume (qui ne varie que pendant un fondu) font re-rendre la piste :
   // la position, elle, change à chaque image et est suivie hors de React (abonnement ci-dessous).
   const active = useClockValue(clock, (t) => isAudioTrackActive(track.start_time, track.duration, t));
-  const gain = useClockValue(clock, (t) => (audible ? audioFadeGain(track, t, projectDuration) : 0));
+  const gain = useClockValue(clock, (t) =>
+    audible ? audioFadeGain(track, t, projectDuration) * duckGain(voices, t, track.duck_db) : 0,
+  );
   const volume = Math.min(1, Math.max(0, track.volume)) * gain;
 
   useEffect(() => {
@@ -83,6 +88,7 @@ export default function AudioPlayer({
   clock: PlaybackClock;
   playing: boolean;
 }) {
+  const voices = useVoiceRanges(project, projectDir);
   return (
     <>
       {project.audio_tracks.map((track) => (
@@ -94,6 +100,7 @@ export default function AudioPlayer({
           clock={clock}
           playing={playing}
           audible={isTrackAudible(track, project.audio_tracks)}
+          voices={voices}
         />
       ))}
     </>

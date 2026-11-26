@@ -4,6 +4,7 @@
 
 use crate::commands::assets::{has_allowed_extension, unique_destination};
 use crate::commands::registry::OpenProjects;
+use crate::subz::pipeline::segmentation::TimedWord;
 use audio_dsp::approval::Approved;
 use audio_dsp::error::CmdError;
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,9 @@ pub struct SubEntry {
     pub id: String,
     pub label: String,
     pub srt: String,
+    /// Les mots horodatés, pour le surlignage mot à mot (un `.srt` ne les garde pas).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<TimedWord>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -430,7 +434,26 @@ mod tests {
             id: id.into(),
             label: "#1".into(),
             srt: srt.into(),
+            words: vec![],
         }
+    }
+
+    #[test]
+    fn word_times_are_kept_and_older_entries_still_load() {
+        let (store, media) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let file = media_in(media.path());
+        let mut timed = entry("1", "one");
+        timed.words = vec![TimedWord {
+            text: "one".into(),
+            start: 0.1,
+            end: 0.4,
+        }];
+        save_in(store.path(), &file, timed.clone()).unwrap();
+        assert_eq!(list_in(store.path(), &file), [timed]);
+
+        // Un enregistrement d'une version précédente n'a pas de mots.
+        let old: SubEntry = serde_json::from_str(r##"{"id":"1","label":"#1","srt":"x"}"##).unwrap();
+        assert!(old.words.is_empty());
     }
 
     fn media_in(dir: &Path) -> PathBuf {

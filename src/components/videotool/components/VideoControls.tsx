@@ -9,9 +9,11 @@ interface Props {
   isPlaying: boolean;
   onPlayPause: () => void;
   onSeek: (time: number) => void;
+  /** Réglages d'affichage, à droite de la ligne des commandes. */
+  children?: React.ReactNode;
 }
 
-function VideoControls({ currentTime, duration, isPlaying, onPlayPause, onSeek }: Props) {
+function VideoControls({ currentTime, duration, isPlaying, onPlayPause, onSeek, children }: Props) {
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
   const seekbarRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
@@ -82,6 +84,7 @@ function VideoControls({ currentTime, duration, isPlaying, onPlayPause, onSeek }
           <span className="vc-time-sep"> / </span>
           {formatTime(duration)}
         </span>
+        {children}
       </div>
     </div>
   );

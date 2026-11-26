@@ -40,8 +40,24 @@ pub fn can_play_directly(info: &MediaInfo) -> bool {
         .all(|a| DIRECT_AUDIO.contains(&a.codec_name.as_str()))
 }
 
+/// `filters`, précédés de la conversion HDR → SDR quand la source en demande une.
+fn after_sdr(sdr: Option<&str>, filters: String) -> String {
+    match sdr {
+        Some(sdr) => format!("{sdr},{filters}"),
+        None => filters,
+    }
+}
+
 /// Arguments de la transcription d'aperçu vers `out` (WebM VP9 + Opus, dimensions paires).
-pub fn preview_args(input: &str, out: &str) -> Vec<String> {
+/// `sdr` : le filtre de `MediaInfo::sdr_filter`.
+pub fn preview_args(input: &str, out: &str, sdr: Option<&str>) -> Vec<String> {
+    let scale = after_sdr(
+        sdr,
+        // Au plus 1080p : un 4K transcodé à sa résolution d'origine serait très lent et inutile
+        // pour un aperçu.
+        "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"
+            .to_string(),
+    );
     [
         "-i",
         input,
@@ -62,9 +78,7 @@ pub fn preview_args(input: &str, out: &str) -> Vec<String> {
         "-b:a",
         "128k",
         "-vf",
-        // Au plus 1080p : un 4K transcodé à sa résolution d'origine serait très lent et inutile
-        // pour un aperçu.
-        "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        &scale,
         out,
     ]
     .iter()
@@ -89,16 +103,26 @@ pub fn thumbnail_times(count: u32, duration: f64) -> Vec<f64> {
 /// Arguments de l'extraction de `count` vignettes réparties sur `duration` secondes, écrites
 /// selon le motif `out_pattern` (`%03d.jpg`). Faite par ffmpeg : le WebView ne sait pas lire
 /// fiablement une image d'une vidéo hors écran (il rend du bruit).
-pub fn thumbnail_args(input: &str, out_pattern: &str, count: u32, duration: f64) -> Vec<String> {
+pub fn thumbnail_args(
+    input: &str,
+    out_pattern: &str,
+    count: u32,
+    duration: f64,
+    sdr: Option<&str>,
+) -> Vec<String> {
     let (w, h) = THUMB_SIZE;
     vec![
         "-i".into(),
         input.into(),
         "-an".into(),
         "-vf".into(),
-        format!(
-            "fps={count}/{duration:.6},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
-        ),
+        // `fps` d'abord : seules les images gardées sont converties.
+        {
+            let sdr = sdr.map(|f| format!(",{f}")).unwrap_or_default();
+            format!(
+                "fps={count}/{duration:.6}{sdr},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+            )
+        },
         "-frames:v".into(),
         count.to_string(),
         "-q:v".into(),
@@ -108,7 +132,7 @@ pub fn thumbnail_args(input: &str, out_pattern: &str, count: u32, duration: f64)
 }
 
 /// Arguments de l'extraction d'une seule vignette, de l'image à l'instant `time` (secondes).
-pub fn frame_args(input: &str, out: &str, time: f64) -> Vec<String> {
+pub fn frame_args(input: &str, out: &str, time: f64, sdr: Option<&str>) -> Vec<String> {
     let (w, h) = THUMB_SIZE;
     vec![
         "-ss".into(),
@@ -119,7 +143,10 @@ pub fn frame_args(input: &str, out: &str, time: f64) -> Vec<String> {
         "-frames:v".into(),
         "1".into(),
         "-vf".into(),
-        format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"),
+        after_sdr(
+            sdr,
+            format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"),
+        ),
         "-q:v".into(),
         "5".into(),
         out.into(),
@@ -205,7 +232,7 @@ mod tests {
 
     #[test]
     fn the_preview_transcode_writes_even_sized_vp9() {
-        let a = preview_args("/in.avi", "/out.webm").join(" ");
+        let a = preview_args("/in.avi", "/out.webm", None).join(" ");
         assert!(
             a.starts_with("-i /in.avi -c:v libvpx-vp9")
                 && a.ends_with("scale=trunc(iw/2)*2:trunc(ih/2)*2 /out.webm")
@@ -218,11 +245,21 @@ mod tests {
 
     #[test]
     fn thumbnails_are_spread_over_the_whole_duration() {
-        let args = thumbnail_args("in.mp4", "t_%03d.jpg", 10, 20.0);
+        let args = thumbnail_args("in.mp4", "t_%03d.jpg", 10, 20.0, None);
         assert_eq!(args[1], "in.mp4");
         assert!(args[4].starts_with("fps=10/20.000000,scale=160:90"));
         assert_eq!(args[6], "10");
         assert_eq!(args.last().unwrap(), "t_%03d.jpg");
+    }
+
+    #[test]
+    fn an_hdr_source_is_converted_before_it_is_scaled() {
+        let sdr = Some("SDR");
+        let vf = |a: Vec<String>| a[a.iter().position(|x| x == "-vf").unwrap() + 1].clone();
+        assert!(vf(preview_args("a", "b", sdr)).starts_with("SDR,scale="));
+        assert!(vf(frame_args("a", "b", 0.0, sdr)).starts_with("SDR,scale="));
+        // Après `fps` : seules les vignettes gardées sont converties.
+        assert!(vf(thumbnail_args("a", "b", 2, 4.0, sdr)).starts_with("fps=2/4.000000,SDR,scale="));
     }
 
     #[test]
@@ -233,7 +270,7 @@ mod tests {
 
     #[test]
     fn a_single_frame_is_taken_at_the_given_time() {
-        let args = frame_args("in.mp4", "f.jpg", 4.5);
+        let args = frame_args("in.mp4", "f.jpg", 4.5, None);
         assert_eq!(&args[..4], ["-ss", "4.500", "-i", "in.mp4"]);
         assert_eq!(args.last().unwrap(), "f.jpg");
     }

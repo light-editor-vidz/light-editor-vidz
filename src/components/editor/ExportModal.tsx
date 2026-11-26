@@ -3,15 +3,20 @@ import { useTranslation } from "react-i18next";
 import { X, ArrowRight } from "lucide-react";
 import type { AudioExportFormat, ExportOptions } from "../../lib/commands";
 import { exportDimensions } from "../../lib/exportSize";
+import { LOUDNESS_TARGETS } from "../../lib/loudness";
+import { CheckList, DestinationSelect } from "../DeliveryCheck";
+import { checkDelivery, parsePlatform, platformOf, type PlatformId } from "../../lib/platforms";
 import "../NewProjectModal.css";
 
 interface Props {
   projectWidth: number;
   projectHeight: number;
   projectFps: number;
-  onExport: (options: ExportOptions) => void;
+  projectDuration: number;
+  /** `platform` : la destination choisie, contrôlée une fois le fichier écrit. */
+  onExport: (options: ExportOptions, platform?: PlatformId) => void;
   /** Export du son seul (mix des pistes audio et de l'audio des vidéos). */
-  onExportAudio: (format: AudioExportFormat) => void;
+  onExportAudio: (format: AudioExportFormat, loudness: number | null) => void;
   onClose: () => void;
   exporting: boolean;
 }
@@ -41,6 +46,7 @@ export default function ExportModal({
   projectWidth,
   projectHeight,
   projectFps,
+  projectDuration,
   onExport,
   onExportAudio,
   onClose,
@@ -52,6 +58,8 @@ export default function ExportModal({
   const [quality, setQuality] = useState<QualityChoice>("medium");
   const [mode, setMode] = useState<ModeChoice>("video");
   const [audioFormat, setAudioFormat] = useState<AudioExportFormat>("mp3");
+  const [loudness, setLoudness] = useState<number | null>(null);
+  const [platform, setPlatform] = useState<PlatformId | null>(null);
 
   const RESOLUTION_OPTIONS: { value: ResolutionChoice; label: string }[] = [
     { value: "original", label: t("exportModal.resolutionOriginal") },
@@ -73,17 +81,41 @@ export default function ExportModal({
 
   const dimensions = exportDimensions(projectWidth, projectHeight, resolution);
 
+  // Le préréglage règle la sortie ; le format du projet, lui, ne change pas.
+  function applyDestination(id: string) {
+    const next = parsePlatform(id);
+    setPlatform(next);
+    const spec = platformOf(next);
+    if (!spec) return;
+    setResolution(spec.preset.resolution);
+    setFps(spec.preset.fps ?? "original");
+    setQuality("medium");
+    setLoudness(spec.loudness);
+  }
+  const destination = platformOf(platform);
+  const foreseen = destination
+    ? checkDelivery(destination, {
+        duration: projectDuration,
+        ratio: projectWidth / projectHeight,
+        height: dimensions.effective.height,
+        fps: fps === "original" ? projectFps : fps,
+      }).filter((item) => !item.ok)
+    : [];
+
   function handleExport() {
     if (mode === "audio") {
-      onExportAudio(audioFormat);
+      onExportAudio(audioFormat, loudness);
       return;
     }
-    onExport({
+    const options: ExportOptions = {
       width: dimensions.width,
       height: dimensions.height,
       fps: fps === "original" ? null : fps,
       crf: QUALITY_CRF[quality],
-    });
+      loudness,
+    };
+    if (platform) onExport(options, platform);
+    else onExport(options);
   }
 
   return (
@@ -141,6 +173,12 @@ export default function ExportModal({
           ) : (
             <>
               <div className="field-group">
+                <span className="field-label">{t("delivery.destination")}</span>
+                <DestinationSelect className="properties-input" value={platform} onChange={applyDestination} />
+                {destination && foreseen.length > 0 && <CheckList platform={platform!} items={foreseen} />}
+              </div>
+
+              <div className="field-group">
                 <span className="field-label">{t("exportModal.resolution")}</span>
                 <div className="fps-row">
                   {RESOLUTION_OPTIONS.map((opt) => (
@@ -190,6 +228,24 @@ export default function ExportModal({
               </div>
             </>
           )}
+
+          <div className="field-group">
+            <span className="field-label">{t("loudness.label")}</span>
+            <div className="fps-row" role="group" aria-label={t("loudness.label")}>
+              {[null, ...LOUDNESS_TARGETS].map((value) => (
+                <button
+                  type="button"
+                  key={String(value)}
+                  className={`fps-option${loudness === value ? " selected" : ""}`}
+                  aria-pressed={loudness === value}
+                  onClick={() => setLoudness(value)}
+                >
+                  <span className="fps-value mono">{value === null ? t("loudness.off") : `${value} LUFS`}</span>
+                </button>
+              ))}
+            </div>
+            <span className="modal-hint">{t("loudness.hint")}</span>
+          </div>
         </div>
 
         <div className="modal-footer">

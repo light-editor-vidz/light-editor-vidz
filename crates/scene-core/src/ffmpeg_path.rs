@@ -54,6 +54,27 @@ fn sibling_ffprobe(ffmpeg: &str) -> String {
     dir.join(file_name).to_string_lossy().into_owned()
 }
 
+/// Échappe un chemin pour un filtre ffmpeg : deux couches, la valeur d'option (`\`, `:`, `'`) puis
+/// le graphe qui la porte (`\`, `'`, `,`, `;`, crochets, espaces). Des guillemets ne suffiraient
+/// pas : dans '…' un antislash ne peut pas échapper une apostrophe.
+pub fn escape_for_ffmpeg_filter(p: &str) -> String {
+    let mut option = String::new();
+    for c in p.chars() {
+        if matches!(c, '\\' | '\'' | ':') {
+            option.push('\\');
+        }
+        option.push(c);
+    }
+    let mut out = String::new();
+    for c in option.chars() {
+        if matches!(c, '\\' | '\'' | ',' | ';' | '[' | ']' | ' ') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

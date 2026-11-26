@@ -32,6 +32,7 @@ window.electronAPI = {
   queueAdd: async () => ({ id: 1 }),
   queueList: async () => [],
   queueCancel: async () => true,
+  detectSilences: async () => [],
   queueClearFinished: async () => {},
   queueReveal: async () => {},
   onQueueUpdate: () => () => {},

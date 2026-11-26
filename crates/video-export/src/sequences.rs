@@ -96,7 +96,13 @@ pub fn total_duration(sequences: &[Sequence]) -> f64 {
 /// jointe dans l'ordre donné. Chaque séquence est une **entrée** à elle (`-ss début -t durée -i`),
 /// et non une branche `trim` d'une même entrée : avec `trim`, une séquence tardive placée en tête
 /// obligeait ffmpeg à garder en mémoire toutes les images décodées qui la précèdent.
-pub fn merge_args(input: &str, out: &str, sequences: &[Sequence], with_audio: bool) -> Vec<String> {
+pub fn merge_args(
+    input: &str,
+    out: &str,
+    sequences: &[Sequence],
+    with_audio: bool,
+    sdr: Option<&str>,
+) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     let mut parts = Vec::new();
     for (i, s) in sequences.iter().enumerate() {
@@ -128,7 +134,8 @@ pub fn merge_args(input: &str, out: &str, sequences: &[Sequence], with_audio: bo
         u8::from(with_audio),
         if with_audio { "[ac]" } else { "" }
     ));
-    parts.push("[vc]scale=trunc(iw/2)*2:trunc(ih/2)*2[vout]".into());
+    let sdr = sdr.map(|f| format!("{f},")).unwrap_or_default();
+    parts.push(format!("[vc]{sdr}scale=trunc(iw/2)*2:trunc(ih/2)*2[vout]"));
 
     args.extend([
         "-filter_complex".into(),
@@ -201,7 +208,13 @@ mod tests {
 
     #[test]
     fn the_merge_keeps_the_given_order() {
-        let a = merge_args("/in.mp4", "/out.mp4", &[seq(5.0, 8.0), seq(0.0, 2.0)], true);
+        let a = merge_args(
+            "/in.mp4",
+            "/out.mp4",
+            &[seq(5.0, 8.0), seq(0.0, 2.0)],
+            true,
+            None,
+        );
         let graph = &a[a.iter().position(|x| x == "-filter_complex").unwrap() + 1];
         // Une entrée par séquence, dans l'ordre choisi : rien n'est décodé en avance.
         let inputs: Vec<&[String]> = a.windows(6).filter(|w| w[0] == "-ss").collect();
@@ -224,7 +237,7 @@ mod tests {
 
     #[test]
     fn without_audio_no_audio_stream_is_mapped() {
-        let a = merge_args("/in.mp4", "/out.mp4", &[seq(0.0, 2.0)], false);
+        let a = merge_args("/in.mp4", "/out.mp4", &[seq(0.0, 2.0)], false, None);
         assert!(!a.iter().any(|x| x.contains("atrim") || x == "aac"));
         let graph = &a[a.iter().position(|x| x == "-filter_complex").unwrap() + 1];
         assert!(graph.contains("concat=n=1:v=1:a=0[vc];"));

@@ -7,6 +7,8 @@ export interface SubtitleCue {
   start: number;
   end: number;
   text: string;
+  /** Le temps de chaque mot, quand la transcription l'a donné (jamais lu d'un `.srt`). */
+  words?: { start: number; end: number; text: string }[];
 }
 
 const TIME_RE = /(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})/;

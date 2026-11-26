@@ -1,0 +1,23 @@
+/* Classe doublée : la remise à zéro des marges de la vue Vidéo a le même poids qu'une classe. */
+.delivery-check.delivery-check {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 8px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.delivery-check ul {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+
+.delivery-check li.warn {
+  color: #e0a100;
+}
+
+.delivery-check small {
+  opacity: 0.7;
+}

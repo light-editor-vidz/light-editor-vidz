@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { listen } from "@tauri-apps/api/event";
@@ -28,11 +29,14 @@ vi.mock("../../lib/commands", () => ({
 }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir: vi.fn(() => Promise.resolve()) }));
 
+const mockInvoke = vi.mocked(invoke);
 const mockListen = vi.mocked(listen);
 const mockSave = vi.mocked(pickVideoExportOutput);
 const mockPickAudio = vi.mocked(audioPickOutput);
 const mockExport = vi.mocked(exportProject);
 const mockExportAudio = vi.mocked(exportProjectAudio);
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 /** Progress handlers the bar registered, keyed by event name. */
 let handlers: Record<string, (e: { payload: unknown }) => void>;
@@ -286,9 +290,25 @@ describe("TopBar — exporting", () => {
     });
 
     expect(mockPickAudio).toHaveBeenCalledWith("My clip.flac", "flac");
-    expect(mockExportAudio).toHaveBeenCalledWith("/p", expect.anything(), "/out.flac", "flac");
+    expect(mockExportAudio).toHaveBeenCalledWith("/p", expect.anything(), "/out.flac", "flac", null);
     expect(mockExport).not.toHaveBeenCalled();
     expect(onNotice).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "info", message: "Export finished." }));
+  });
+
+  it("warns when the sound was too quiet for the loudness target", async () => {
+    mockPickAudio.mockResolvedValue("/out.flac");
+    mockExportAudio.mockResolvedValueOnce({ missing_media: [], loudness_skipped: true });
+    const { confirm, onNotice } = await chooseAudioFormat("FLAC");
+    fireEvent.click(screen.getByRole("button", { name: "-16 LUFS" }));
+
+    await act(async () => {
+      fireEvent.click(confirm());
+    });
+
+    expect(mockExportAudio.mock.calls[0][4]).toBe(-16);
+    expect(onNotice).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: "warning", message: expect.stringContaining("too quiet") }),
+    );
   });
 
   it("exports no audio when the save dialog is dismissed", async () => {
@@ -350,5 +370,53 @@ describe("TopBar — subtitles", () => {
     setup({ onGenerateSubtitles });
     fireEvent.click(screen.getByRole("button", { name: "Generate subtitles…" }));
     expect(onGenerateSubtitles).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("TopBar — contrôle avant publication", () => {
+  async function exportFor(destination: string) {
+    mockSave.mockResolvedValue("/out.mp4");
+    const view = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    fireEvent.change(screen.getByLabelText("Destination"), { target: { value: destination } });
+    const buttons = screen.getAllByRole("button", { name: "Export" });
+    await act(async () => {
+      fireEvent.click(buttons[buttons.length - 1]);
+    });
+    return view;
+  }
+
+  it("relit le fichier exporté et résume ce qui est à vérifier", async () => {
+    mockInvoke.mockResolvedValue({
+      duration: 30,
+      size_bytes: 1000,
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      video_codec: "h264",
+      hdr: false,
+      has_audio: false,
+      loudness: null,
+      true_peak: null,
+    });
+    const { onNotice } = await exportFor("youtube");
+
+    expect(mockInvoke).toHaveBeenCalledWith("inspect_export", { path: "/out.mp4" });
+    expect(onNotice).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: "warning",
+        message: "Export finished. YouTube: 1 point to check",
+        details: ["No sound in the file"],
+      }),
+    );
+  });
+
+  it("garde l'export réussi quand le fichier ne peut pas être relu", async () => {
+    mockInvoke.mockRejectedValue(new Error("gone"));
+    const { onNotice } = await exportFor("youtube");
+
+    expect(onNotice).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: "warning", message: "Export finished. The file could not be checked." }),
+    );
   });
 });

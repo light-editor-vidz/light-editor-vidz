@@ -197,6 +197,14 @@
     "line": "Ligne"
   },
   "properties": {
+    "chromaKey": "Fond vert",
+    "chromaColor": "Couleur à rendre transparente",
+    "chromaSimilarity": "Tolérance",
+    "chromaBlend": "Douceur du bord",
+    "chromaDespill": "Retirer le reflet de la couleur (sans filtre de couleur)",
+    "duck": "Baisser sous les autres sons",
+    "duckOff": "Désactivé",
+    "duckHint": "Pour une musique : elle baisse tant qu'une autre piste ou le son d'une vidéo se fait entendre.",
     "empty": "Aucun élément sélectionné",
     "emptyHint": "Cliquez sur un élément du canvas ou de la timeline pour voir ses propriétés.",
     "textTitle": "Propriétés du texte",
@@ -353,6 +361,7 @@
     "strokeToggle": "Activer le contour"
   },
   "canvas": {
+    "chromaUnavailable": "Aperçu du fond vert indisponible ; l'export l'applique.",
     "videoDecodeError": "Cette vidéo ne peut pas être lue (format/codec non supporté)",
     "videoDecodeErrorCode": "Code d'erreur {{code}}",
     "undo": "Annuler",
@@ -395,6 +404,51 @@
     "duplicateScene": "Dupliquer la scène",
     "renameSceneHint": "Double-cliquer pour renommer",
     "beyondMedia": "Ce clip est plus long que son média"
+  },
+  "loudness": {
+    "label": "Volume ressenti",
+    "off": "Inchangé",
+    "hint": "−14 : plateformes vidéo · −16 : podcasts · −23 : télévision.",
+    "skipped": "Son trop faible pour être normalisé : son niveau est gardé."
+  },
+  "safeZone": {
+    "label": "Zones sûres",
+    "off": "Zones sûres : aucune",
+    "hint": "Ce que l'interface de l'application couvre (marges indicatives). Absent de l'export.",
+    "unavailable": "Zones sûres : il faut une image verticale 9:16 non pivotée."
+  },
+  "voice": {
+    "label": "Nettoyage de la voix",
+    "off": "Désactivé",
+    "light": "Léger",
+    "medium": "Moyen",
+    "strong": "Fort",
+    "denoise": "Réduire le bruit",
+    "gate": "Noise gate (atténue entre les phrases)",
+    "hint": "Appliqué au fichier exporté ; l'aperçu ne le fait pas entendre."
+  },
+  "delivery": {
+    "destination": "Destination",
+    "none": "Aucune",
+    "checking": "Contrôle du fichier…",
+    "failed": "Le fichier n'a pas pu être contrôlé.",
+    "allGood": "{{platform}} : tout est conforme",
+    "warnings_one": "{{platform}} : {{count}} point à vérifier",
+    "warnings_other": "{{platform}} : {{count}} points à vérifier",
+    "indicative": "Valeurs indicatives au {{date}} : les plateformes les changent.",
+    "before": "À vérifier avant l'export pour {{platform}} :",
+    "item": {
+      "duration": "Durée : {{value}} (attendu {{expected}})",
+      "aspect": "Format : {{value}} (attendu {{expected}})",
+      "height": "Hauteur : {{value}} (attendu {{expected}})",
+      "fps": "Images par seconde : {{value}} (attendu {{expected}})",
+      "codec": "Codec vidéo : {{value}} (attendu {{expected}})",
+      "size": "Taille : {{value}} (attendu {{expected}})",
+      "hdr": "Couleurs : {{value}} (attendu {{expected}})",
+      "audio": "Aucun son dans le fichier",
+      "loudness": "Volume : {{value}} (attendu {{expected}})",
+      "truePeak": "Crête : {{value}} (attendu {{expected}})"
+    }
   },
   "exportModal": {
     "title": "Exporter la vidéo",

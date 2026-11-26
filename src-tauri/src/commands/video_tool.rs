@@ -22,6 +22,7 @@ use video_export::plan::{
 };
 use video_export::queue::{ExportQueue, JobMeta, JobSnapshot};
 use video_export::sequences::{self, Sequence};
+use video_export::silence::{self, Silence};
 
 pub const VIDEO_EXTENSIONS: [&str; 7] = ["mp4", "mov", "avi", "mkv", "webm", "flv", "m4v"];
 const RECENT_FILE: &str = "recent-video.json";
@@ -211,7 +212,11 @@ fn run_job(options: &ExportOptions, ctx: &video_export::queue::JobContext) -> Re
         &job,
         &work,
         &mut |p| ctx.set_progress(p),
-        &mut |_| {},
+        &mut |warning| {
+            if warning == video_export::export::LOUDNESS_SKIPPED {
+                ctx.set_notice(warning);
+            }
+        },
     );
     let _ = std::fs::remove_dir_all(&work);
     match result {
@@ -491,13 +496,14 @@ pub async fn video_preview<R: Runtime>(
         .unwrap_or_else(|e| e.into_inner())
         .insert(owner.clone(), out.clone());
     let duration = info.as_ref().and_then(|i| i.duration).unwrap_or(0.0);
+    let sdr = info.as_ref().and_then(|i| i.sdr_filter());
     let (input, output) = (path.clone(), out.to_string_lossy().into_owned());
     let emitter = app.clone();
     let progress_owner = owner.clone();
     let result = blocking(move || {
         runner
             .run(
-                &video_export::preview::preview_args(&input, &output),
+                &video_export::preview::preview_args(&input, &output, sdr.as_deref()),
                 &mut |sec| {
                     if duration > 0.0 {
                         emit_preview_progress(
@@ -583,6 +589,49 @@ pub async fn video_detect_scenes(
     .await
 }
 
+/// Les silences de la bande son, pour les couper au montage ; `None` sans piste audio.
+#[tauri::command]
+pub async fn video_detect_silences(
+    approved: State<'_, Approved>,
+    state: State<'_, VideoState>,
+    path: String,
+    threshold_db: f64,
+    min_silence: f64,
+    owner: Option<String>,
+) -> Result<Option<Vec<Silence>>, CmdError> {
+    approved.check_input(&path).map_err(CmdError::from)?;
+    silence::validate_settings(threshold_db, min_silence)
+        .map_err(|m| CmdError::from(anyhow::anyhow!(m)))?;
+    let runner = ProcessRunner::system(fresh_cancel(&state, &owner.unwrap_or_default()));
+    blocking(move || detect_silences(&runner, &path, threshold_db, min_silence)).await
+}
+
+fn detect_silences(
+    runner: &ProcessRunner,
+    path: &str,
+    threshold_db: f64,
+    min_silence: f64,
+) -> Result<Option<Vec<Silence>>, String> {
+    let info = runner.probe(path)?;
+    if !info.streams.iter().any(|s| s.codec_type == "audio") {
+        return Ok(None);
+    }
+    let duration = info
+        .duration
+        .filter(|d| *d > 0.0)
+        .ok_or("Cannot read the video duration")?;
+    let work = tempfile_dir().map_err(|e| e.to_string())?;
+    let log = work.join("silences.log");
+    let result = runner.run(
+        &silence::silence_detect_args(path, &log.to_string_lossy(), threshold_db, min_silence),
+        &mut |_| {},
+    );
+    let found = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&work);
+    result.map_err(|e| e.to_string())?;
+    Ok(Some(silence::parse_silences(&found, duration)))
+}
+
 /// Le contenu d'un fichier JPEG, en data URL.
 fn jpeg_data_url(path: &Path) -> std::io::Result<String> {
     let bytes = std::fs::read(path)?;
@@ -603,8 +652,9 @@ pub async fn video_thumbnails(
     let count = count.clamp(1, 200);
     let runner = ProcessRunner::system(Arc::new(AtomicBool::new(false)));
     blocking(move || {
-        let duration = runner
-            .probe(&path)?
+        let info = runner.probe(&path)?;
+        let sdr = info.sdr_filter();
+        let duration = info
             .duration
             .filter(|d| *d > 0.0)
             .ok_or("Cannot read the video duration")?;
@@ -618,7 +668,12 @@ pub async fn video_thumbnails(
                 .try_for_each(|(i, time)| {
                     let out = work.join(format!("t_{:03}.jpg", i + 1));
                     runner.run(
-                        &video_export::preview::frame_args(&path, &out.to_string_lossy(), *time),
+                        &video_export::preview::frame_args(
+                            &path,
+                            &out.to_string_lossy(),
+                            *time,
+                            sdr.as_deref(),
+                        ),
                         &mut |_| {},
                     )
                 })
@@ -630,6 +685,7 @@ pub async fn video_thumbnails(
                     &pattern.to_string_lossy(),
                     count,
                     duration,
+                    sdr.as_deref(),
                 ),
                 &mut |_| {},
             )
@@ -663,6 +719,7 @@ pub async fn video_frames(
     let runner = ProcessRunner::system(Arc::new(AtomicBool::new(false)));
     blocking(move || {
         let work = tempfile_dir().map_err(|e| e.to_string())?;
+        let sdr = runner.probe(&path).ok().and_then(|i| i.sdr_filter());
         // Jusqu'à 200 images : quelques processus ffmpeg en parallèle plutôt qu'un par un.
         let workers = times.len().clamp(1, 4);
         let mut frames = vec![String::new(); times.len()];
@@ -670,6 +727,7 @@ pub async fn video_frames(
             let handles: Vec<_> = (0..workers)
                 .map(|w| {
                     let (runner, work, path, times) = (&runner, &work, &path, &times);
+                    let sdr = sdr.as_deref();
                     scope.spawn(move || {
                         (w..times.len())
                             .step_by(workers)
@@ -682,6 +740,7 @@ pub async fn video_frames(
                                                 path,
                                                 &out.to_string_lossy(),
                                                 times[i],
+                                                sdr,
                                             ),
                                             &mut |_| {},
                                         )
@@ -789,14 +848,12 @@ pub async fn video_merge_sequences<R: Runtime>(
     let emitter = app.clone();
     let (input, output) = (path.clone(), out_str.clone());
     let result = blocking(move || {
-        let with_audio = runner
-            .probe(&input)?
-            .streams
-            .iter()
-            .any(|s| s.codec_type == "audio");
+        let info = runner.probe(&input)?;
+        let with_audio = info.streams.iter().any(|s| s.codec_type == "audio");
+        let sdr = info.sdr_filter();
         runner
             .run(
-                &sequences::merge_args(&input, &output, &sequences, with_audio),
+                &sequences::merge_args(&input, &output, &sequences, with_audio, sdr.as_deref()),
                 &mut |sec| {
                     emit_preview_progress(
                         &emitter,

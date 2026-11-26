@@ -5,6 +5,7 @@ pub mod approval;
 pub mod audio;
 pub mod error;
 pub mod job;
+pub mod loudness;
 pub mod ops;
 pub mod pipeline;
 pub mod recent;

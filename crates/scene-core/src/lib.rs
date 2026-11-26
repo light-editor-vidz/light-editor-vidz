@@ -4,8 +4,12 @@
 
 pub mod animate;
 pub mod audio_fx;
+pub mod chroma;
 pub mod color;
+pub mod ducking;
 pub mod ffmpeg_path;
+pub mod hdr;
+pub mod loudness;
 pub mod model;
 pub mod paths;
 pub mod project;
@@ -13,3 +17,4 @@ pub mod raster;
 pub mod timeline;
 pub mod video;
 pub mod video_fx;
+pub mod voice;

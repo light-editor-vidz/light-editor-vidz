@@ -32,10 +32,18 @@ export interface SubsAudioTrack {
   channels: number | null;
 }
 
+export interface SubsWord {
+  start: number;
+  end: number;
+  text: string;
+}
+
 export interface SubsOutput {
   srt_path: string;
   srt_content: string;
   language: string;
+  /** Les mots horodatés de la transcription, quand le moteur les donne. */
+  words?: SubsWord[];
   /** Codes d'avertissement non bloquants (ex. `vad_unavailable`). */
   warnings?: string[];
 }
@@ -109,6 +117,7 @@ export interface MediaSubEntry {
   id: string;
   label: string;
   srt: string;
+  words?: SubsWord[];
 }
 
 /** Les sous-titres associés à un fichier ouvert hors projet. */

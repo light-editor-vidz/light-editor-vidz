@@ -6,6 +6,7 @@ use crate::job::Job;
 use crate::ops::{fade, filter, normalize, speed, trim};
 use crate::tags;
 use anyhow::Result;
+use scene_core::voice::VoiceCleanup;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -35,6 +36,12 @@ pub struct ProcessOptions {
     #[serde(default)]
     pub fade_curve: Option<String>,
     pub normalize: bool,
+    /// Nettoyage de la voix, avant la normalisation.
+    #[serde(default)]
+    pub voice: VoiceCleanup,
+    /// Volume ressenti visé (LUFS), appliqué après tout le reste.
+    #[serde(default)]
+    pub loudness: Option<f64>,
     pub speed: Option<f64>,
     pub filters: Vec<String>,
     /// WAV sample format: `"float32"` (the default), `"pcm24"` or `"pcm16"`.
@@ -148,7 +155,7 @@ fn check_format(opts: &ProcessOptions) -> Result<()> {
     }
 }
 
-/// cuts → trim → fades → speed → filters → normalise. Normalising comes last on
+/// cuts → trim → fades → speed → filters → voice → normalise. Normalising comes last on
 /// purpose: speed and filters change the peak, and the promised −1 dBFS must
 /// describe the file that is actually written.
 pub fn run_pipeline(opts: &ProcessOptions, buf: &mut AudioBuffer, job: &Job) -> Result<()> {
@@ -189,6 +196,10 @@ fn run_edits(opts: &ProcessOptions, buf: &mut AudioBuffer, job: &Job) -> Result<
         let spec = filter::FilterSpec::parse(spec_str)?;
         filter::apply_filter(buf, &spec)?;
     }
+    if let Some(chain) = opts.voice.filter() {
+        job.check()?;
+        crate::loudness::apply_filter_chain(buf, &chain, job)?;
+    }
     if opts.normalize {
         job.check()?;
         normalize::normalize(buf)?;
@@ -198,7 +209,18 @@ fn run_edits(opts: &ProcessOptions, buf: &mut AudioBuffer, job: &Job) -> Result<
 
 /// Decoding is the first tenth of an export, the edits (resampling is the slow
 /// part) the next three, and writing the file the rest.
-pub fn process_blocking(cache: &DecodeCache, opts: &ProcessOptions, job: &Job) -> Result<()> {
+/// Ce qu'un export réussi a à signaler.
+#[derive(Serialize, Debug, Default, PartialEq)]
+pub struct ProcessReport {
+    /// Un volume était visé, mais le son est trop faible : son niveau est gardé.
+    pub loudness_skipped: bool,
+}
+
+pub fn process_blocking(
+    cache: &DecodeCache,
+    opts: &ProcessOptions,
+    job: &Job,
+) -> Result<ProcessReport> {
     check_format(opts)?;
     // The cached decode is shared, so the pipeline works on its own copy, made from the kept
     // ranges only (the cut parts are never copied).
@@ -221,6 +243,10 @@ pub fn process_blocking(cache: &DecodeCache, opts: &ProcessOptions, job: &Job) -
     let edits = job.slice(0.1, 0.4);
     edits.check()?;
     run_edits(opts, &mut buf, &edits)?;
+    let mut report = ProcessReport::default();
+    if let Some(target) = opts.loudness {
+        report.loudness_skipped = !crate::loudness::normalize_to(&mut buf, target, &edits)?;
+    }
 
     let write = job.slice(0.4, 1.0);
     match opts.format.as_str() {
@@ -233,7 +259,7 @@ pub fn process_blocking(cache: &DecodeCache, opts: &ProcessOptions, job: &Job) -
         }
     }?;
     job.progress(1.0);
-    Ok(())
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -254,6 +280,8 @@ mod tests {
             fade_out: None,
             fade_curve: None,
             normalize: false,
+            voice: VoiceCleanup::default(),
+            loudness: None,
             speed: None,
             filters: vec![],
             wav_depth: None,
@@ -261,7 +289,7 @@ mod tests {
     }
 
     fn process(opts: &ProcessOptions) -> Result<()> {
-        process_blocking(&DecodeCache::default(), opts, &Job::detached())
+        process_blocking(&DecodeCache::default(), opts, &Job::detached()).map(|_| ())
     }
 
     #[test]

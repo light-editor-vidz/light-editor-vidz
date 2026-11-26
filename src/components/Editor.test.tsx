@@ -76,6 +76,7 @@ const comp = (over: Partial<Composition> = {}): Composition => ({
 
 const track = (over: Partial<AudioTrack> = {}): AudioTrack => ({
   subtitles: null,
+  duck_db: 0,
   id: "a1",
   name: "Music",
   src: "assets/audio/a.mp3",

@@ -3,6 +3,7 @@
 
 use crate::atempo::clamp_atempo;
 use crate::video_filters::{Crop, Reframe, ASPECTS, REFRAME_MODES};
+use scene_core::voice::VoiceCleanup;
 use serde::Deserialize;
 
 pub const FORMATS: [&str; 5] = ["mp4", "mov", "webm", "avi", "gif"];
@@ -45,6 +46,16 @@ pub struct RawReframe {
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct Cue {
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+    /// Le temps de chaque mot, quand la transcription l'a donné.
+    #[serde(default)]
+    pub words: Vec<WordTime>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct WordTime {
     pub start: f64,
     pub end: f64,
     pub text: String,
@@ -93,6 +104,10 @@ pub struct RawExportOptions {
     pub resolution: Option<f64>,
     pub stabilize: Option<String>,
     pub hardware: Option<String>,
+    /// Volume ressenti visé (LUFS) ; absent : le son n'est pas retouché.
+    pub loudness: Option<f64>,
+    #[serde(default)]
+    pub voice: Option<VoiceCleanup>,
     pub gif_width: Option<f64>,
     pub gif_fps: Option<f64>,
 }
@@ -126,6 +141,8 @@ pub struct ExportOptions {
     pub resolution: Option<u32>,
     pub stabilize: String,
     pub hardware: Option<String>,
+    pub loudness: Option<f64>,
+    pub voice: VoiceCleanup,
     pub gif_width: u32,
     pub gif_fps: u32,
 }
@@ -314,6 +331,11 @@ pub fn validate_export_options(raw: RawExportOptions) -> Result<ExportOptions, S
         resolution,
         stabilize,
         hardware: raw.hardware,
+        loudness: raw
+            .loudness
+            .map(scene_core::loudness::validate_target)
+            .transpose()?,
+        voice: raw.voice.unwrap_or_default(),
         gif_width: num(raw.gif_width, "gifWidth", 64.0, 1920.0, 480.0)?.round() as u32,
         gif_fps: num(raw.gif_fps, "gifFps", 1.0, 60.0, 15.0)?.round() as u32,
     })
@@ -478,26 +500,7 @@ fn stabilize_params(level: &str) -> (u32, u32) {
     }
 }
 
-/// Échappe un chemin pour un filtre ffmpeg : deux couches, la valeur d'option (`\`, `:`, `'`) puis
-/// le graphe qui la porte (`\`, `'`, `,`, `;`, crochets, espaces). Des guillemets ne suffiraient
-/// pas : dans '…' un antislash ne peut pas échapper une apostrophe.
-pub fn escape_for_ffmpeg_filter(p: &str) -> String {
-    let mut option = String::new();
-    for c in p.chars() {
-        if matches!(c, '\\' | '\'' | ':') {
-            option.push('\\');
-        }
-        option.push(c);
-    }
-    let mut out = String::new();
-    for c in option.chars() {
-        if matches!(c, '\\' | '\'' | ',' | ';' | '[' | ']' | ' ') {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
-}
+pub use scene_core::ffmpeg_path::escape_for_ffmpeg_filter;
 
 /// Passe 1 de la stabilisation : chaque segment conservé est analysé SEPAREMENT par son propre
 /// `vidstabdetect` (sortie `[vo{i}]`, résultat `trfs[i]`), vidéo seule : mesurer sur les images
@@ -543,6 +546,33 @@ pub struct FilterComplexParams<'a> {
     /// applied before the segments are joined.
     pub stabilize: Option<&'a [String]>,
     pub hardware_filter: &'a str,
+    /// Filtres ajoutés au son après la vitesse (mesure ou correction du volume).
+    pub audio_tail: Option<&'a str>,
+}
+
+/// Le son seul des parties conservées, à la vitesse choisie, suivi de `tail` ; sortie `[aout]`.
+pub fn build_audio_graph(segments: &[Segment], speed: f64, tail: &str) -> String {
+    let mut parts: Vec<String> = segments
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            format!(
+                "[0:a]atrim=start={:.3}:end={:.3},asetpts=PTS-STARTPTS[a{i}]",
+                s.start, s.end
+            )
+        })
+        .collect();
+    let inputs: String = (0..segments.len()).map(|i| format!("[a{i}]")).collect();
+    let tempo = if speed == 1.0 {
+        String::new()
+    } else {
+        format!("atempo={},", clamp_atempo(speed))
+    };
+    parts.push(format!(
+        "{inputs}concat=n={}:v=0:a=1[ac];[ac]{tempo}{tail}[aout]",
+        segments.len()
+    ));
+    parts.join(";")
 }
 
 /// Un seul graphe pour tout l'export : découpe de chaque segment conservé, concaténation,
@@ -586,11 +616,15 @@ pub fn build_filter_complex(p: &FilterComplexParams) -> String {
     }
     parts.push(format!("[vc]{chain}[vout]"));
     if p.with_audio {
-        parts.push(if p.speed == 1.0 {
-            "[ac]anull[aout]".into()
+        let mut audio = if p.speed == 1.0 {
+            "anull".to_string()
         } else {
-            format!("[ac]atempo={}[aout]", clamp_atempo(p.speed))
-        });
+            format!("atempo={}", clamp_atempo(p.speed))
+        };
+        if let Some(tail) = p.audio_tail {
+            audio = format!("{audio},{tail}");
+        }
+        parts.push(format!("[ac]{audio}[aout]"));
     }
     parts.join(";")
 }
@@ -913,6 +947,7 @@ mod tests {
             gif: None,
             stabilize: None,
             hardware_filter: "",
+            audio_tail: None,
         });
         assert!(g.starts_with("[0:V]trim=start=0.000:end=2.000,setpts=PTS-STARTPTS[v0];[0:a]atrim=start=0.000:end=2.000,asetpts=PTS-STARTPTS[a0];"));
         assert!(g.contains("[v0][a0][v1][a1]concat=n=2:v=1:a=1[vc][ac]"));
@@ -935,6 +970,7 @@ mod tests {
             gif: None,
             stabilize: None,
             hardware_filter: "",
+            audio_tail: None,
         });
         assert!(!muted.contains("[0:a]") && muted.contains("concat=n=1:v=1:a=0[vc];"));
         let fast = build_filter_complex(&FilterComplexParams {
@@ -945,6 +981,7 @@ mod tests {
             gif: None,
             stabilize: None,
             hardware_filter: "",
+            audio_tail: None,
         });
         assert!(fast.ends_with("[ac]atempo=2.0,atempo=2.0000[aout]"));
     }
@@ -965,6 +1002,7 @@ mod tests {
             gif: Some("fps=15"),
             stabilize: Some(&stab),
             hardware_filter: "format=nv12",
+            audio_tail: None,
         });
         assert!(
             g.contains(&format!(
@@ -981,6 +1019,7 @@ mod tests {
             gif: None,
             stabilize: None,
             hardware_filter: "format=nv12",
+            audio_tail: None,
         });
         assert!(hw.contains("[vc]hue=s=0,format=nv12[vout]"));
     }

@@ -19,6 +19,7 @@ use crate::animate::{
     resolve_composition_transition, resolve_element_animations, resolve_image_pan,
     resolve_text_reveal, resolve_wipe, ResolvedTransform,
 };
+use crate::chroma::{ChromaKey, Keyer};
 pub use crate::color::parse_css_color;
 use crate::color::try_parse_css_color;
 
@@ -446,18 +447,32 @@ fn shared_sprite(path: &Path) -> Option<Arc<Sprite>> {
 struct VideoFx {
     crop: Option<VideoCrop>,
     chain: String,
+    /// Détourage appliqué aux frames décodées.
+    keyer: Option<Keyer>,
+    /// Avec un filtre de couleur, le détourage se juge sur l'image d'origine : la chaîne sans
+    /// filtre qui la décode.
+    mask_chain: Option<String>,
 }
 
 /// Ce dont dépend `VideoFx` : tant que c'est identique, la chaîne n'est pas reconstruite (le JSON des
 /// filtres était reparsé à chaque frame, pour chaque vidéo).
-type FxSignature = (Option<String>, Option<VideoCrop>);
+type FxSignature = (Option<String>, Option<VideoCrop>, Option<Box<ChromaKey>>);
 
 impl VideoFx {
     fn of(el: &crate::model::VideoElement) -> Self {
         let crop = el.crop.map(VideoCrop::clamped);
+        let chain = element_filter_chain(crop, el.color_filter.as_deref());
+        let plain = element_filter_chain(crop, None);
+        let filtered = chain != plain;
+        let keyer = el
+            .chroma_key
+            .as_deref()
+            .and_then(|key| Keyer::new(key, !filtered));
         Self {
             crop,
-            chain: element_filter_chain(crop, el.color_filter.as_deref()),
+            mask_chain: (filtered && keyer.is_some()).then_some(plain),
+            chain,
+            keyer,
         }
     }
 }
@@ -909,13 +924,19 @@ impl FrameRenderer {
                 ((full_w as f32 * scale).ceil() as u32).max(2),
                 ((full_h as f32 * scale).ceil() as u32).max(2),
             );
+            // Une source HDR est ramenée en SDR avant le recadrage et le filtre de l'élément.
+            let chain = match crate::hdr::sdr_filter(probe.hdr) {
+                Some(sdr) if fx.chain.is_empty() => sdr,
+                Some(sdr) => format!("{sdr},{}", fx.chain),
+                None => fx.chain.clone(),
+            };
             match self.shared_videos.get_or_open(
                 &format!("{}\n{key}", source.display()),
                 &source,
                 fps,
                 idx,
                 out_size,
-                &fx.chain,
+                &chain,
             ) {
                 Ok(video) => {
                     self.videos.insert(
@@ -940,6 +961,55 @@ impl FrameRenderer {
             return None;
         };
         Some((pixmap, effective_size((probe.width, probe.height), fx.crop)))
+    }
+
+    /// Comme `video_frame_at`, détourée si l'élément a un fond vert.
+    #[allow(clippy::too_many_arguments)]
+    fn keyed_video_frame_at(
+        &mut self,
+        key: &str,
+        project_dir: &Path,
+        relative_src: &str,
+        fps: u32,
+        local_time: f64,
+        loop_video: bool,
+        video_offset: f64,
+        target_scale: f32,
+        fx: &VideoFx,
+    ) -> Option<(Arc<Pixmap>, (u32, u32))> {
+        let mut frame_of = |key: &str, fx: &VideoFx| {
+            self.video_frame_at(
+                key,
+                project_dir,
+                relative_src,
+                fps,
+                local_time,
+                loop_video,
+                video_offset,
+                target_scale,
+                fx,
+            )
+        };
+        let (frame, size) = frame_of(key, fx)?;
+        let Some(keyer) = fx.keyer else {
+            return Some((frame, size));
+        };
+        let mask = match &fx.mask_chain {
+            Some(chain) => {
+                let plain = VideoFx {
+                    crop: fx.crop,
+                    chain: chain.clone(),
+                    keyer: None,
+                    mask_chain: None,
+                };
+                Some(frame_of(&format!("{key}/mask"), &plain)?.0)
+            }
+            None => None,
+        };
+        // La frame décodée est partagée entre les workers : on en détoure une copie.
+        let mut keyed = (*frame).clone();
+        keyer.apply(keyed.data_mut(), mask.as_deref().map(|m| m.data()));
+        Some((Arc::new(keyed), size))
     }
 
     pub fn render_frame(&mut self, project: &Project, project_dir: &Path, t: f64) -> Pixmap {
@@ -1202,7 +1272,11 @@ impl FrameRenderer {
                         let s = fit_scale(video_el.fit_mode, inner, orig, 1.0);
                         (s.0.max(s.1) * 2.0).min(1.0)
                     };
-                    let signature: FxSignature = (video_el.color_filter.clone(), video_el.crop);
+                    let signature: FxSignature = (
+                        video_el.color_filter.clone(),
+                        video_el.crop,
+                        video_el.chroma_key.clone(),
+                    );
                     let fx = match self.fx_cache.get(&key) {
                         Some((cached, fx)) if *cached == signature => fx.clone(),
                         _ => {
@@ -1215,7 +1289,7 @@ impl FrameRenderer {
                         .probe(project_dir, &video_el.src)
                         .map(|p| effective_size((p.width, p.height), fx.crop));
                     let target_scale = probe_size.map(frame_scale).unwrap_or(1.0);
-                    let frame = self.video_frame_at(
+                    let frame = self.keyed_video_frame_at(
                         &key,
                         project_dir,
                         &video_el.src,
@@ -2267,6 +2341,7 @@ mod tests {
             color_filter: None,
             subtitles: None,
             crop: None,
+            chroma_key: None,
         }
     }
 
@@ -3195,6 +3270,114 @@ mod tests {
         );
         assert!(renderer.missing_media.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_hdr_video_element_is_rendered_with_its_colours() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let dir = temp_dir("videohdr");
+        // Un cyan SDR (0, 188, 188) encodé en HLG 10 bits, blanc de référence à 203 nits.
+        let status = std::process::Command::new(crate::ffmpeg_path::ffmpeg_binary())
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i"])
+            .arg("color=c=0x00bcbc:s=64x64:d=1:r=10")
+            .args([
+                "-vf",
+                "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:\
+                 range=tv,zscale=t=linear:npl=203,format=gbrpf32le,\
+                 zscale=p=bt2020:t=arib-std-b67:m=bt2020nc:r=tv:npl=203,format=yuv420p10le",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "8",
+            ])
+            .arg(dir.join("video.mp4"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let project = project_with(64, 64, 1.0, vec![Element::Video(video("v1", "video.mp4"))]);
+
+        let pixel = FrameRenderer::new()
+            .render_frame(&project, &dir, 0.3)
+            .pixel(32, 32)
+            .unwrap();
+
+        // Sans conversion, le cyan sort délavé (rouge ≈ 110, vert et bleu ≈ 157).
+        assert!(
+            pixel.red() < 30 && pixel.green().abs_diff(186) < 14,
+            "{pixel:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn green_screen() -> ChromaKey {
+        ChromaKey {
+            color: "#00ff00".into(),
+            similarity: 0.2,
+            blend: 0.1,
+            despill: true,
+        }
+    }
+
+    /// Une vidéo « sujet rouge à gauche, fond vert à droite », posée sur un fond bleu.
+    fn keyed_pixels(color_filter: Option<&str>, name: &str) -> Option<[(u8, u8, u8); 2]> {
+        if !ffmpeg_available() {
+            return None;
+        }
+        let dir = temp_dir(name);
+        let status = std::process::Command::new(crate::ffmpeg_path::ffmpeg_binary())
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=64x64:d=1:r=10",
+            ])
+            .args(["-f", "lavfi", "-i", "color=c=0x00ff00:s=64x64:d=1:r=10"])
+            .args(["-filter_complex", "[0][1]hstack,format=yuv420p"])
+            .arg(dir.join("video.mp4"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let mut el = video("v1", "video.mp4");
+        el.fit_mode = FitMode::Stretch;
+        el.chroma_key = Some(Box::new(green_screen()));
+        el.color_filter = color_filter.map(str::to_string);
+        el.background_color = Some("rgba(0,0,255,1)".into());
+        let project = project_with(100, 100, 1.0, vec![Element::Video(el)]);
+        let frame = FrameRenderer::new().render_frame(&project, &dir, 0.3);
+        let at = |x| {
+            let p = frame.pixel(x, 50).unwrap();
+            (p.red(), p.green(), p.blue())
+        };
+        let pixels = [at(20), at(80)];
+        let _ = std::fs::remove_dir_all(&dir);
+        Some(pixels)
+    }
+
+    #[test]
+    fn a_green_screen_lets_what_is_behind_show_through() {
+        let Some([subject, background]) = keyed_pixels(None, "videokey") else {
+            return;
+        };
+        assert!(subject.0 > 200 && subject.2 < 60, "{subject:?}");
+        assert!(
+            background.2 > 200 && background.1 < 60 && background.0 < 60,
+            "{background:?}"
+        );
+    }
+
+    #[test]
+    fn a_colour_filter_does_not_change_what_is_keyed_out() {
+        let Some([subject, background]) = keyed_pixels(Some("invert"), "videokeyfx") else {
+            return;
+        };
+        // Le sujet est inversé (cyan) ; le vert d'origine reste détouré, pas son inverse.
+        assert!(subject.0 < 60 && subject.1 > 200, "{subject:?}");
+        assert!(background.2 > 200 && background.0 < 60, "{background:?}");
     }
 
     #[test]

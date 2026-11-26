@@ -7,6 +7,30 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-26
+
+### Sécurité
+
+- Dépendances `cookie` (0.18.3) et `url` (2.5.9) mises à jour pour corriger deux vulnérabilités publiées.
+
+### Ajouté
+
+- Vue Vidéo : « Couper les silences » repère les pauses du son et retire celles que vous choisissez.
+- Normalisation du volume ressenti (-14, -16 ou -23 LUFS) à l'export du projet, de la vue Vidéo et de la vue Audio ; un son trop faible pour être monté garde son niveau, et c'est signalé.
+- Zones sûres TikTok, Instagram Reels et YouTube Shorts sur l'aperçu d'une image 9:16 (jamais exportées).
+- Une piste audio peut baisser sous les autres sons (6, 12 ou 18 dB), dans l'aperçu comme à l'export.
+- Nettoyage de la voix à l'export des vues Audio et Vidéo : trois niveaux, réduction du bruit et noise gate.
+- Préréglages par destination (TikTok, Reels, Shorts, YouTube, X, LinkedIn, Facebook) avec un contrôle avant l'export puis sur le fichier produit. Les limites des plateformes sont indicatives et ne bloquent jamais un export.
+- Fond vert sur les éléments vidéo d'un projet, dans l'aperçu comme à l'export.
+
+### Corrigé
+
+- Des pistes fortes additionnées ne saturent plus : le mix est plafonné à -1 dBFS.
+- Les vidéos HDR (iPhone, HDR10, HLG) sont converties en SDR au lieu de sortir délavées ou étiquetées HDR.
+- Le bandeau de notification de l'éditeur est lisible en thème clair.
+- Les fenêtres d'export plus hautes que l'écran défilent au lieu de cacher leurs boutons.
+- Le surlignage des sous-titres mot à mot suit les temps donnés par la transcription ; un `.srt` importé garde l'estimation.
+
 ## [1.3.1] - 2026-11-19
 
 ### Modifié

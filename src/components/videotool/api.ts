@@ -1,3 +1,4 @@
+import type { VoiceCleanup } from "../../lib/voice";
 import {
   listMediaSubs,
   removeMediaSub,
@@ -25,6 +26,7 @@ export interface QueueJob {
   progress: number;
   outputPath: string;
   error: string | null;
+  notice?: string | null;
 }
 
 export interface RecentEntry {
@@ -55,8 +57,16 @@ export interface ExportRequest {
   hardware?: string | null;
   gifWidth?: number;
   gifFps?: number;
+  loudness?: number | null;
+  voice?: VoiceCleanup | null;
   subtitles?: {
-    cues: { id?: number; start: number; end: number; text: string }[];
+    cues: {
+      id?: number;
+      start: number;
+      end: number;
+      text: string;
+      words?: { start: number; end: number; text: string }[];
+    }[];
     style: {
       fontFamily: string;
       fontSize: number;
@@ -111,6 +121,8 @@ export interface VideoApi {
   previewVideo: (filePath: string, force?: boolean) => Promise<string>;
   /** Les séquences de la vidéo, coupées à chaque changement de plan. */
   detectScenes: (path: string) => Promise<Sequence[]>;
+  /** Les silences de la bande son (`null` : pas de piste audio). */
+  detectSilences: (path: string, thresholdDb: number, minSilence: number) => Promise<Sequence[] | null>;
   /** `count` vignettes (data URL) réparties sur la vidéo, pour la frise de la timeline. */
   videoThumbnails: (path: string, count: number) => Promise<string[]>;
   /** Une vignette (data URL, `""` si indisponible) par instant demandé. */
@@ -125,7 +137,7 @@ export interface VideoApi {
   exportVideo: (
     options: ExportRequest,
     onQueued?: (id: number) => void,
-  ) => Promise<{ success: boolean; outputPath: string }>;
+  ) => Promise<{ success: boolean; outputPath: string; notice?: string | null }>;
   onProgress: (callback: (progress: number) => void) => () => void;
 }
 
@@ -232,6 +244,8 @@ const makeTauriApi = (owner: string): VideoApi => {
       return assetUrl(preview.path);
     },
     detectScenes: (path) => invoke<Sequence[]>("video_detect_scenes", { path, owner }),
+    detectSilences: (path, thresholdDb, minSilence) =>
+      invoke<Sequence[] | null>("video_detect_silences", { path, thresholdDb, minSilence, owner }),
     videoThumbnails: (path, count) => invoke<string[]>("video_thumbnails", { path, count }),
     videoFrames: (path, times) => invoke<string[]>("video_frames", { path, times }),
     extractAudio: (path) => invoke<string | null>("video_extract_audio", { path, owner }),
@@ -271,7 +285,7 @@ const makeTauriApi = (owner: string): VideoApi => {
           progressListeners.forEach((l) => l(job.progress));
           if (job.status === "done") {
             done();
-            resolve({ success: true, outputPath: job.outputPath });
+            resolve({ success: true, outputPath: job.outputPath, notice: job.notice });
           } else if (job.status === "error") {
             done();
             reject(new Error(job.error ?? "Export failed"));

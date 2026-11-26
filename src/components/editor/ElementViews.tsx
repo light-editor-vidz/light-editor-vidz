@@ -1,12 +1,13 @@
 import { syncMedia } from "../../lib/mediaSync";
 import { useTabActive } from "../../lib/menuBridge";
 import { VIGNETTE_GRADIENT, videoEffectsStyle } from "../../lib/videoFx";
-import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import type { Element } from "../../bindings/Element";
 import { assetUrl } from "../../lib/assetUrl";
 import { reportMediaDuration } from "../../lib/mediaDurations";
 import { useMediaSource } from "../../lib/useMediaSource";
+import KeyedVideoCanvas from "./KeyedVideoCanvas";
 
 /**
  * Vues de rendu des éléments du canvas (texte, image, vidéo — les formes ont déjà `ShapeView`).
@@ -237,29 +238,39 @@ export const ImageElementView = memo(function ImageElementView({
   );
 });
 
-export const VideoElementView = memo(function VideoElementView({
-  element,
-  projectDir,
-  localTime,
-  playing,
-  panTransform,
-}: {
+interface VideoViewProps {
   element: Extract<Element, { type: "video" }>;
   projectDir: string;
   localTime: number;
   playing: boolean;
   panTransform: string;
-}) {
+}
+
+export const VideoElementView = memo(function VideoElementView(props: VideoViewProps) {
+  // Lire les pixels (fond vert) exige un chargement CORS, que `<video>` ne prend en compte qu'à sa
+  // création : activer ou retirer le fond vert recrée la vue.
+  return <VideoElementBody key={props.element.chroma_key ? "keyed" : "plain"} {...props} />;
+});
+
+function VideoElementBody({ element, projectDir, localTime, playing, panTransform }: VideoViewProps) {
   const tabActive = useTabActive();
   const ref = useRef<HTMLVideoElement>(null);
-  const [error, setError] = useState<{ code: number; message: string } | null>(null);
-  const { src: mediaSrc, usingBlob, blobError, fallBack } = useMediaSource(projectDir, element.src);
+  const [mediaError, setError] = useState<{ code: number; message: string } | null>(null);
+  const {
+    src: mediaSrc,
+    usingBlob,
+    blobError,
+    fallBack,
+  } = useMediaSource(projectDir, element.src, {
+    readablePixels: !!element.chroma_key,
+  });
   const { t } = useTranslation();
+  const [keyingFailed, setKeyingFailed] = useState(false);
+  const onKeyingUnavailable = useCallback(() => setKeyingFailed(true), []);
+  const keyed = !!element.chroma_key && !keyingFailed;
 
   // Un échec de chargement du repli blob est affiché comme erreur de décodage.
-  useEffect(() => {
-    if (blobError) setError({ code: 0, message: blobError });
-  }, [blobError]);
+  const error = blobError ? { code: 0, message: blobError } : mediaError;
 
   // Réglages : seulement quand ils changent (pas à chaque image de lecture).
   useEffect(() => {
@@ -326,30 +337,48 @@ export const VideoElementView = memo(function VideoElementView({
     <div style={mediaFrameStyle(element)}>
       <video
         ref={ref}
+        crossOrigin={element.chroma_key ? "anonymous" : undefined}
         src={mediaSrc ?? undefined}
         style={{
           ...mediaFit(element.fit_mode),
           ...videoEffectsStyle(element),
           pointerEvents: "none",
           transform: panTransform || undefined,
+          // Détourée, la vidéo ne sert plus que de source : le canvas la montre.
+          ...(keyed ? { position: "absolute", opacity: 0 } : {}),
         }}
         // Un onglet masqué (ils restent montés) ne garde pas ses vidéos préchargées en mémoire.
         preload={tabActive ? "auto" : "metadata"}
         loop={element.loop_video}
         onError={(e) => {
-          const mediaError = e.currentTarget.error;
+          const failure = e.currentTarget.error;
           // Le flux `lvmedia://` refusé par la webview : on retente avec l'URL blob avant de
           // signaler une erreur à l'utilisateur.
           if (!usingBlob) {
             fallBack();
             return;
           }
-          setError({ code: mediaError?.code ?? 0, message: mediaError?.message ?? "" });
+          setError({ code: failure?.code ?? 0, message: failure?.message ?? "" });
         }}
         onLoadedMetadata={(e) => reportMediaDuration(projectDir, element.src, e.currentTarget.duration)}
         onLoadedData={() => setError(null)}
       />
-      {element.color_filter === "vignette" && (
+      {keyed && (
+        <KeyedVideoCanvas
+          videoRef={ref}
+          chromaKey={element.chroma_key!}
+          crop={element.crop}
+          colorFilter={element.color_filter}
+          onUnavailable={onKeyingUnavailable}
+          style={{ ...mediaFit(element.fit_mode), pointerEvents: "none", transform: panTransform || undefined }}
+        />
+      )}
+      {keyingFailed && element.chroma_key && (
+        <div className="video-keying-notice" role="status">
+          {t("canvas.chromaUnavailable")}
+        </div>
+      )}
+      {!keyed && element.color_filter === "vignette" && (
         <div
           className="video-vignette"
           style={{ position: "absolute", inset: 0, pointerEvents: "none", background: VIGNETTE_GRADIENT }}
@@ -366,4 +395,4 @@ export const VideoElementView = memo(function VideoElementView({
       )}
     </div>
   );
-});
+}

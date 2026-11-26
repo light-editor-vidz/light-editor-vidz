@@ -9,7 +9,8 @@ use audio_dsp::approval::{self, Approved};
 use audio_dsp::error::CmdError;
 use audio_dsp::job::Job;
 use audio_dsp::pipeline::{
-    load_audio_blocking, process_blocking, AudioInfo, DecodeCache, ProcessOptions, AUDIO_EXTENSIONS,
+    load_audio_blocking, process_blocking, AudioInfo, DecodeCache, ProcessOptions, ProcessReport,
+    AUDIO_EXTENSIONS,
 };
 use audio_dsp::recent::{self, RecentFile};
 use serde::Serialize;
@@ -260,7 +261,7 @@ pub async fn audio_process<R: Runtime>(
     control: State<'_, AudioExportControl>,
     opts: ProcessOptions,
     owner: Option<String>,
-) -> Result<(), CmdError> {
+) -> Result<ProcessReport, CmdError> {
     let owner = owner.unwrap_or_default();
     approved.check_input(&opts.input).map_err(CmdError::from)?;
     approved

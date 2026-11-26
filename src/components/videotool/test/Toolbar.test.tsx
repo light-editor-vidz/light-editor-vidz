@@ -59,6 +59,7 @@ function makeProps(
     onGeometryToggle: vi.fn(),
     onSubtitlesToggle: vi.fn(),
     onSequences: vi.fn(),
+    onSilences: vi.fn(),
     onExtractAudio: vi.fn(),
     ...callbacks,
   };

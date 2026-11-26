@@ -5,14 +5,15 @@
 use crate::ffmpeg::{FfError, Runner};
 use crate::filters;
 use crate::plan::{
-    build_detect_graph, build_filter_complex, escape_for_ffmpeg_filter, expected_duration,
-    final_options, gif_tail, hardware_setup, stabilize_filter, ExportOptions, FilterComplexParams,
-    ProgressTracker, Subtitles,
+    build_audio_graph, build_detect_graph, build_filter_complex, escape_for_ffmpeg_filter,
+    expected_duration, final_options, gif_tail, hardware_setup, stabilize_filter, ExportOptions,
+    FilterComplexParams, ProgressTracker, Subtitles,
 };
 use crate::subtitles::{
     build_ass_content, expand_cues_to_events, remap_events_to_kept_segments, ExpandOptions,
 };
 use crate::video_filters::{build_video_filters, VideoFilterParams};
+use scene_core::loudness;
 use std::path::Path;
 
 /// Construit le filtre `subtitles` pour la vidéo intermédiaire : on la sonde pour connaître ses
@@ -100,6 +101,9 @@ fn with_fallback(
     }
 }
 
+/// Avertissement : le son est trop faible pour être porté au volume visé.
+pub const LOUDNESS_SKIPPED: &str = "loudness-skipped";
+
 /// Exporte `options`. `send_progress` reçoit 0-99 ; `warn` les événements non fatals.
 pub fn export_video(
     runner: &dyn Runner,
@@ -137,13 +141,25 @@ pub fn export_video(
         reframe: options.reframe.clone(),
     });
 
+    // Avant toute géométrie ou couleur : les filtres suivants travaillent sur des pixels SDR.
+    if let Some(sdr) = info.sdr_filter() {
+        video_chain.insert(0, sdr);
+    }
+
     let subtitles = options.subtitles.as_ref();
     let gif = (options.format == "gif")
         .then(|| gif_tail(options.gif_width, options.gif_fps, &options.quality));
     let kept_seconds: f64 = options.segments.iter().map(|x| x.end - x.start).sum();
     let total = expected_duration(&options.segments, options.speed);
     let stabilizing = options.stabilize != "off";
-    let pass_count = u32::from(stabilizing) + 1;
+    let loudness = options.loudness.filter(|_| with_audio);
+    // Le nettoyage précède la mesure du volume : c'est le son nettoyé qu'on porte à la cible.
+    let voice = options.voice.filter().filter(|_| with_audio);
+    let after_voice = |tail: Option<String>| match (&voice, tail) {
+        (Some(voice), Some(tail)) => Some(format!("{voice},{tail}")),
+        (voice, tail) => tail.or_else(|| voice.clone()),
+    };
+    let pass_count = u32::from(stabilizing) + u32::from(loudness.is_some()) + 1;
     let mut tracker = ProgressTracker::default();
     let mut report = |index: u32, seconds: f64, out_total: f64| {
         if let Some(p) = tracker.update(index, pass_count, seconds, out_total) {
@@ -192,6 +208,37 @@ pub fn export_video(
         );
     }
 
+    // Volume, passe de mesure : le son des seules parties conservées, à la vitesse choisie.
+    let mut normalize: Option<String> = None;
+    if let Some(target) = loudness {
+        let stats = work_dir
+            .join("loudness.json")
+            .to_string_lossy()
+            .into_owned();
+        let measure = after_voice(Some(loudness::measure_filter(target, &stats)))
+            .expect("la mesure est toujours présente");
+        let index = pass;
+        pass += 1;
+        let mut args = seek_args(&options.segments);
+        args.push("-i".into());
+        args.push(options.input_path.clone());
+        args.extend([
+            "-filter_complex".into(),
+            build_audio_graph(&options.segments, options.speed, &measure),
+        ]);
+        args.extend(s(&["-map", "[aout]", "-f", "null", "-"]));
+        runner.run(&args, &mut |sec| report(index, sec, total))?;
+        let json = std::fs::read_to_string(&stats)
+            .map_err(|e| FfError::Failed(format!("Cannot read the loudness measure: {e}")))?;
+        let measured = loudness::parse_measure(&json).map_err(FfError::Failed)?;
+        normalize = loudness::apply_filter(target, &measured, loudness::OUTPUT_RATE);
+        if normalize.is_none() {
+            warn(LOUDNESS_SKIPPED);
+        }
+    }
+
+    let audio_tail = after_voice(normalize);
+
     // Sous-titres : le .ass a besoin des dimensions de l'image finie. Plutôt que d'encoder deux fois
     // (un intermédiaire, puis la gravure, avec l'audio réencodé deux fois), on les mesure sur
     // UNE image du même graphe, puis le filtre `subtitles` rejoint la passe principale.
@@ -205,6 +252,7 @@ pub fn export_video(
             gif: None,
             stabilize: None,
             hardware_filter: "",
+            audio_tail: None,
         });
         let mut args = s(&["-y"]);
         args.extend(seek_args(&options.segments));
@@ -232,6 +280,7 @@ pub fn export_video(
             gif: gif.as_deref(),
             stabilize: stab_filters.as_deref(),
             hardware_filter: &hw_filter,
+            audio_tail: audio_tail.as_deref(),
         });
         let mut args: Vec<String> = input_args;
         args.extend(seek_args(&options.segments));

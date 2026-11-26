@@ -26,6 +26,7 @@ Website: <https://light-editor-vidz.github.io/light-editor-vidz/> (its source is
 - **Linked subtitles and project library** — subtitles generated for a video or a sound stay linked to it; in a project they can be switched on per media and follow it on the timeline. Any export can be added to one or several projects' media library
 - **Video elements in a project** — colour filter and crop next to the existing trim, speed, volume and loop, previewed live and applied at export
 - **Audio tracks** — trim (source in-point, drag the clip edge), fades with a linear or equal-power curve, speed 0.25×–4× (pitch kept), low-pass / high-pass (12–48 dB/octave) / band-pass filters, mute and solo
+- **Publishing helpers** — silence cutting (Video view), loudness normalisation, voice clean-up (Audio and Video views), music lowered under the voice and green screen (projects), safe zones over 9:16 previews, and destination presets that check the exported file (platform limits are indicative)
 - **Audio-only export** — the mix of every track and of your videos' sound as WAV (16/24-bit, 32-bit float), MP3, FLAC, OGG Vorbis or M4A
 - **Real mp4 export** — frames are rasterized natively (in parallel) and piped to `ffmpeg`, which mixes the audio in the same pass; not a DOM/CSS replay. Cancellable, with a report of any media that could not be read
 - **Signed update on demand** — _Help › Check for updates_ checks GitHub Releases, downloads, installs and relaunches (pending changes are saved first)

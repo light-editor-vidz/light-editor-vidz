@@ -29,6 +29,8 @@ pub struct JobSnapshot {
     #[serde(rename = "outputPath")]
     pub output_path: String,
     pub error: Option<String>,
+    /// Code d'un événement non fatal à signaler à côté du résultat.
+    pub notice: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,11 +44,16 @@ pub struct JobMeta {
 pub struct JobContext {
     pub cancel: Arc<AtomicBool>,
     progress: Box<dyn Fn(u32) + Send + Sync>,
+    notice: Box<dyn Fn(&str) + Send + Sync>,
 }
 
 impl JobContext {
     pub fn set_progress(&self, pct: u32) {
         (self.progress)(pct);
+    }
+
+    pub fn set_notice(&self, code: &str) {
+        (self.notice)(code);
     }
 }
 
@@ -139,6 +146,7 @@ impl<S: Send + 'static> ExportQueue<S> {
                     progress: 0,
                     output_path: meta.output_path,
                     error: None,
+                    notice: None,
                 },
                 spec: Some(spec),
                 cancel: Arc::new(AtomicBool::new(false)),
@@ -271,8 +279,16 @@ fn worker<S: Send + 'static>(
         on_change(snapshot);
 
         let ctx = {
+            // La notice part avec l'instantané de fin de travail : pas besoin de prévenir avant.
+            let notices = state.clone();
             let (state, on_change) = (state.clone(), on_change.clone());
             JobContext {
+                notice: Box::new(move |code| {
+                    let mut st = notices.0.lock().unwrap();
+                    if let Some(job) = st.jobs.iter_mut().find(|j| j.snap.id == id) {
+                        job.snap.notice = Some(code.to_string());
+                    }
+                }),
                 cancel: cancel.clone(),
                 progress: Box::new(move |pct| {
                     let pct = pct.min(100);
@@ -321,6 +337,30 @@ fn worker<S: Send + 'static>(
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[test]
+    fn a_notice_reaches_the_finished_job() {
+        let (tx, rx) = mpsc::channel();
+        let queue = ExportQueue::new(
+            |(), ctx: &JobContext| {
+                ctx.set_notice("careful");
+                Ok(())
+            },
+            move |jobs| {
+                if let Some(job) = jobs.iter().find(|j| j.status == JobStatus::Done) {
+                    let _ = tx.send(job.notice.clone());
+                }
+            },
+        );
+        let meta = JobMeta {
+            name: "n".into(),
+            format: "mp4".into(),
+            output_path: "/tmp/n.mp4".into(),
+        };
+        queue.add((), meta).unwrap();
+        let notice = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(notice.as_deref(), Some("careful"));
+    }
     use std::time::Duration;
 
     fn meta(out: &str) -> JobMeta {

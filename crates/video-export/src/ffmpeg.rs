@@ -32,6 +32,7 @@ pub struct StreamInfo {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub pix_fmt: Option<String>,
+    pub color_transfer: Option<String>,
     /// Rotation d'affichage (matrice ou étiquette `rotate`), en degrés positifs.
     pub rotation: Option<i32>,
     pub attached_pic: bool,
@@ -64,9 +65,22 @@ struct ProbeStream {
     width: Option<u32>,
     height: Option<u32>,
     pix_fmt: Option<String>,
+    color_transfer: Option<String>,
     tags: Option<std::collections::HashMap<String, String>>,
     side_data_list: Option<Vec<serde_json::Value>>,
     disposition: Option<std::collections::HashMap<String, i32>>,
+}
+
+impl MediaInfo {
+    /// Le filtre qui ramène la vidéo principale en SDR, ou `None` si elle l'est déjà.
+    pub fn sdr_filter(&self) -> Option<String> {
+        let video = self
+            .streams
+            .iter()
+            .find(|s| s.codec_type == "video" && !s.attached_pic)?;
+        let transfer = video.color_transfer.as_deref()?;
+        scene_core::hdr::sdr_filter(scene_core::hdr::HdrTransfer::from_name(transfer))
+    }
 }
 
 /// Lit la sortie JSON de `ffprobe -show_streams -show_format`.
@@ -101,6 +115,7 @@ pub fn parse_probe(json: &str) -> Result<MediaInfo, String> {
                 width: s.width,
                 height: s.height,
                 pix_fmt: s.pix_fmt,
+                color_transfer: s.color_transfer,
                 rotation,
                 attached_pic: s
                     .disposition

@@ -1,0 +1,68 @@
+.vt-root .silence-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vt-root .silence-modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 460px;
+  max-width: 95vw;
+  max-height: 92vh;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vt-root .silence-modal h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.vt-root .silence-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.vt-root .silence-field {
+  display: grid;
+  grid-template-columns: 1fr 140px 40px;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.vt-root .silence-field output {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.vt-root .silence-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.vt-root .silence-status {
+  min-height: 18px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.vt-root .silence-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

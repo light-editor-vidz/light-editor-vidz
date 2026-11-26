@@ -1,3 +1,4 @@
+import { NO_VOICE_CLEANUP, type VoiceCleanup } from "../voice";
 // Fonctions pures de la vue Audio, sans accès au DOM.
 
 import { cutRanges, keptDuration, keptSegments, type Cut } from "./cuts";
@@ -163,6 +164,8 @@ export interface UiSettings {
   filterSlope?: number | string;
   filterQ?: number | string;
   wavDepth?: WavDepth | string;
+  loudness?: number | null;
+  voice?: VoiceCleanup;
 }
 
 /** Requête de la commande `audio_process`. */
@@ -176,6 +179,8 @@ export interface ProcessOptions {
   fade_curve: FadeCurve;
   wav_depth: string | null;
   normalize: boolean;
+  loudness: number | null;
+  voice: VoiceCleanup;
   speed: number | null;
   filters: string[];
 }
@@ -194,6 +199,8 @@ export function buildProcessOptions(ui: UiSettings, outputPath: string): Process
     fade_curve: ui.fadeCurve === "equal-power" ? "equal-power" : "linear",
     wav_depth: ui.format === "wav" ? ui.wavDepth || "float32" : null,
     normalize: !!ui.normalize,
+    loudness: ui.loudness ?? null,
+    voice: ui.voice ?? NO_VOICE_CLEANUP,
     speed: Math.abs(speed - 1.0) > 1e-6 ? speed : null,
     filters: buildFilterSpecs({
       type: ui.filterType ?? "",

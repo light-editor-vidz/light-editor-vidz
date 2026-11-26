@@ -395,6 +395,7 @@ impl SttEngine for LocalWhisperEngine {
             language = self.detect_language(&mut state, &mut source, &blocks);
         }
         let mut last_detected: Option<String> = None;
+        let mut spoken = Vec::new();
         let mut segments = Vec::new();
         let mut done = 0.0;
         for &(from, to) in &blocks {
@@ -433,7 +434,7 @@ impl SttEngine for LocalWhisperEngine {
             done += span;
 
             let offset_cs = (from * 100.0).round() as i64;
-            segments.extend(self.read_segments(&state, offset_cs)?);
+            segments.extend(self.read_segments(&state, offset_cs, &mut spoken)?);
             if language.is_none() {
                 last_detected =
                     whisper_rs::get_lang_str(state.full_lang_id_from_state()).map(str::to_string);
@@ -450,6 +451,7 @@ impl SttEngine for LocalWhisperEngine {
         Ok(Transcript {
             language: language.unwrap_or_else(|| "unknown".to_string()),
             segments,
+            words: spoken,
         })
     }
 }
@@ -461,6 +463,7 @@ impl LocalWhisperEngine {
         &self,
         state: &whisper_rs::WhisperState,
         offset_cs: i64,
+        spoken: &mut Vec<TimedWord>,
     ) -> Result<Vec<Segment>> {
         let mut segments = Vec::new();
         for i in 0..state.full_n_segments() {
@@ -481,7 +484,14 @@ impl LocalWhisperEngine {
                 })
                 .collect();
             let words = words_from_tokens(&tokens, start, end);
-            segments.extend(cues_from_words(start, end, text.trim(), words, self.limits));
+            segments.extend(cues_from_words(
+                start,
+                end,
+                text.trim(),
+                words,
+                self.limits,
+                spoken,
+            ));
         }
         Ok(segments)
     }

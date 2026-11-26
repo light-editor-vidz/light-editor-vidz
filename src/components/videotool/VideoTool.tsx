@@ -16,6 +16,11 @@ import { UndoIcon, RedoIcon } from "./components/icons";
 import SubtitleOverlay from "./components/SubtitleOverlay";
 import FilterDefs from "./components/FilterDefs";
 import VignetteOverlay from "./components/VignetteOverlay";
+import VideoSafeZone from "./components/VideoSafeZone";
+import { lastReframeMode } from "./utils/exportPrefs";
+import SafeZoneSelect from "../SafeZoneSelect";
+import { useSafeZone } from "../../lib/useSafeZone";
+import { safeZoneOf } from "../../lib/platforms";
 import { useEditorHistory, type EditableState } from "./hooks/useHistory";
 import { formatTime, getKeptSegments, getVirtualDuration, realToVirtual, virtualToReal } from "./utils/time";
 import { getApi } from "./api";
@@ -32,9 +37,12 @@ import { History as HistoryIcon } from "lucide-react";
 import HistoryPanel from "../HistoryPanel";
 import { stepLabels, videoStepLabel, type Translate } from "../../lib/historyLabels";
 import GenerateSubtitlesDialog from "../subtitles/GenerateSubtitlesDialog";
+import { mergeSegments } from "./utils/timeline";
 import { cuesToSrt, remapCues } from "../../lib/subs/linked";
 import i18n from "i18next";
 import { parseSrt } from "./utils/srt";
+import { attachWords } from "../../lib/subs/words";
+import type { SubsWord } from "../../lib/subs/commands";
 import "./videotool.css";
 
 export type { CropRect, EditorState, SubtitleAnimation, SubtitleStyle, TrimSegment };
@@ -47,6 +55,7 @@ const GeometrySettings = lazy(() => import("./components/GeometrySettings"));
 const CropOverlay = lazy(() => import("./components/CropOverlay"));
 const SubtitlesPanel = lazy(() => import("./components/SubtitlesPanel"));
 const SequencesModal = lazy(() => import("./components/SequencesModal"));
+const SilenceDialog = lazy(() => import("./components/SilenceDialog"));
 import type { GeneratedSubtitles } from "./components/SubtitlesPanel";
 
 type ActivePanel = "crop" | "filters" | "geometry" | "subtitles" | null;
@@ -97,6 +106,7 @@ function VideoToolView({ path, origin, onOpenFile, onOpenPath, onOpenAudio, onCl
   const [showExport, setShowExport] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
   const [showSequences, setShowSequences] = useState(false);
+  const [showSilences, setShowSilences] = useState(false);
   const [generated, setGenerated] = useState<GeneratedSubtitles[]>([]);
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const [filterFrameUrl, setFilterFrameUrl] = useState<string | null>(null);
@@ -109,6 +119,8 @@ function VideoToolView({ path, origin, onOpenFile, onOpenPath, onOpenAudio, onCl
     useEditorHistory();
   const { t: tr } = useTranslation();
   const [showHistory, setShowHistory] = useState(false);
+  const [safeZone, setSafeZone] = useSafeZone();
+  const safeZoneArea = safeZoneOf(safeZone);
   const ht = useCallback<Translate>((key, vars) => tr(key, vars ?? {}), [tr]);
   const historyLabels = useMemo(
     () => (showHistory ? stepLabels(steps, (a, b) => videoStepLabel(a, b, ht), ht) : []),
@@ -284,7 +296,9 @@ function VideoToolView({ path, origin, onOpenFile, onOpenPath, onOpenAudio, onCl
         .listSubs(filePath)
         .then((entries) => {
           if (id === loadId.current) {
-            setGenerated(entries.map((e) => ({ id: e.id, label: e.label, cues: parseSrt(e.srt) })));
+            setGenerated(
+              entries.map((e) => ({ id: e.id, label: e.label, cues: attachWords(parseSrt(e.srt), e.words ?? []) })),
+            );
           }
         })
         .catch(() => {});
@@ -485,7 +499,7 @@ function VideoToolView({ path, origin, onOpenFile, onOpenPath, onOpenAudio, onCl
   const FRAME = 1 / 30; // the real frame rate is not known to the renderer
 
   useEffect(() => {
-    if (!videoPath || showExport || showGenerate || showSequences || !tabActive) return;
+    if (!videoPath || showExport || showGenerate || showSequences || showSilences || !tabActive) return;
     const isTextual = (el: EventTarget | null) => {
       const node = el as HTMLElement | null;
       if (!node) return false;
@@ -567,6 +581,7 @@ function VideoToolView({ path, origin, onOpenFile, onOpenPath, onOpenAudio, onCl
     showExport,
     showGenerate,
     showSequences,
+    showSilences,
     tabActive,
     handlePlayPause,
     seekVirtual,
@@ -645,8 +660,8 @@ function VideoToolView({ path, origin, onOpenFile, onOpenPath, onOpenAudio, onCl
     else setToast(t.error_video_unreadable);
   }, [t, videoPath, videoUrl, loadVideo]);
   /** Un sous-titre généré est associé tout de suite à la vidéo, et le reste d'une session à l'autre. */
-  const associateSubtitles = (srt: string, id: string) => {
-    const cues = parseSrt(srt);
+  const associateSubtitles = (srt: string, id: string, words: SubsWord[] = []) => {
+    const cues = attachWords(parseSrt(srt), words);
     if (!videoPath || cues.length === 0) return;
     const label = generated.find((g) => g.id === id)?.label ?? `#${generated.length + 1}`;
     setGenerated((list) =>
@@ -655,7 +670,7 @@ function VideoToolView({ path, origin, onOpenFile, onOpenPath, onOpenAudio, onCl
         : [...list, { id, label, cues }],
     );
     setActivePanel("subtitles");
-    void getApi().saveSub(videoPath, { id, label, srt });
+    void getApi().saveSub(videoPath, { id, label, srt, words });
   };
   /** Le sous-titre à emporter dans un projet : s'il n'est pas incrusté, recalé sur le montage. */
   const associatedSrt = () => {
@@ -829,6 +844,16 @@ function VideoToolView({ path, origin, onOpenFile, onOpenPath, onOpenAudio, onCl
               currentTime={currentTime}
               crop={editable.crop}
             />
+            {!showCrop && safeZoneArea && (
+              <VideoSafeZone
+                videoRef={videoRef}
+                zone={safeZoneArea}
+                crop={editable.crop}
+                rotation={editable.rotation}
+                mode={lastReframeMode()}
+                label={t.safe_zone_inset}
+              />
+            )}
             <CompositionGrid visible={showCrop || showGeometry} videoRef={videoRef} />
             {showCrop && (
               <Suspense fallback={null}>
@@ -876,6 +901,10 @@ function VideoToolView({ path, origin, onOpenFile, onOpenPath, onOpenAudio, onCl
             onSequences={() => {
               videoRef.current?.pause();
               setShowSequences(true);
+            }}
+            onSilences={() => {
+              videoRef.current?.pause();
+              setShowSilences(true);
             }}
           />
 
@@ -935,7 +964,16 @@ function VideoToolView({ path, origin, onOpenFile, onOpenPath, onOpenAudio, onCl
           isPlaying={isPlaying}
           onPlayPause={handlePlayPause}
           onSeek={seekVirtual}
-        />
+        >
+          <SafeZoneSelect
+            className="vc-select"
+            value={safeZone}
+            onChange={setSafeZone}
+            label={t.safe_zone_label}
+            offLabel={t.safe_zone_off}
+            hint={t.safe_zone_hint}
+          />
+        </VideoControls>
 
         <div className="timeline-section">
           <Timeline
@@ -963,6 +1001,24 @@ function VideoToolView({ path, origin, onOpenFile, onOpenPath, onOpenAudio, onCl
               onQueued={onExportQueued}
               onProjectsExport={onProjectsExport}
               origin={origin}
+            />
+          </Suspense>
+        )}
+
+        {showSilences && videoPath && (
+          <Suspense fallback={null}>
+            <SilenceDialog
+              videoPath={videoPath}
+              duration={duration}
+              cues={generated[generated.length - 1]?.cues ?? []}
+              onClose={() => setShowSilences(false)}
+              onApply={(cuts) => {
+                // One undo step for all of them, merged with the cuts already there.
+                setCutSegments(
+                  mergeSegments([...editable.cutSegments, ...cuts.map((c) => ({ ...c, id: crypto.randomUUID() }))]),
+                );
+                setShowSilences(false);
+              }}
             />
           </Suspense>
         )}

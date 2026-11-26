@@ -1,3 +1,5 @@
+import { platformOf, type PlatformId } from "../../lib/platforms";
+import { describeCheck, inspectDelivery } from "../../lib/deliveryCheck";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -80,23 +82,46 @@ export default function TopBar({
   // The File menu's Export… opens the same window.
   useRegisterMenuActions({ openExport: () => setShowExportModal(true) });
 
-  async function handleExport(options: ExportOptions) {
+  async function handleExport(options: ExportOptions, platform?: PlatformId) {
     onNotice(null);
     const outputPath = await pickVideoExportOutput(`${project.name.trim() || "video"}.mp4`);
     if (!outputPath) return;
-    await runExport(outputPath, () => exportProject(projectDir, expandLinkedSubtitles(project), outputPath, options));
+    await runExport(
+      outputPath,
+      () => exportProject(projectDir, expandLinkedSubtitles(project), outputPath, options),
+      platform,
+    );
   }
 
-  async function handleExportAudio(format: AudioExportFormat) {
+  async function handleExportAudio(format: AudioExportFormat, loudness: number | null) {
     onNotice(null);
     const extension = AUDIO_FORMAT_EXTENSION[format];
     const outputPath = await audioPickOutput(`${project.name.trim() || "audio"}.${extension}`, extension);
     if (!outputPath) return;
-    await runExport(outputPath, () => exportProjectAudio(projectDir, project, outputPath, format));
+    await runExport(outputPath, () => exportProjectAudio(projectDir, project, outputPath, format, loudness));
+  }
+
+  /** Le contrôle avant publication, résumé pour la notification. Son échec ne dit rien de
+   * l'export, qui a réussi. */
+  async function checkFile(outputPath: string, platform: PlatformId) {
+    const spec = platformOf(platform)!;
+    try {
+      const failed = (await inspectDelivery(outputPath, spec)).filter((item) => !item.ok);
+      return {
+        warning: failed.length > 0,
+        summary:
+          failed.length === 0
+            ? t("delivery.allGood", { platform: spec.title })
+            : t("delivery.warnings", { platform: spec.title, count: failed.length }),
+        details: failed.map((item) => describeCheck(item, t)),
+      };
+    } catch {
+      return { warning: true, summary: t("delivery.failed"), details: [] };
+    }
   }
 
   /** Suivi commun aux deux exports : progression, notification de fin, annulation, erreurs. */
-  async function runExport(outputPath: string, run: () => Promise<ExportResult>) {
+  async function runExport(outputPath: string, run: () => Promise<ExportResult>, platform?: PlatformId) {
     setExporting(true);
     setExportProgress(0);
     setExportStartedAt(performance.now());
@@ -104,11 +129,14 @@ export default function TopBar({
       const result = await run();
       setShowExportModal(false);
       const missing = result.missing_media;
+      const done =
+        missing.length > 0 ? t("topbar.exportMissingMedia", { count: missing.length }) : t("topbar.exportDone");
+      const check = platform ? await checkFile(outputPath, platform) : null;
+      const message = [done, result.loudness_skipped ? t("loudness.skipped") : "", check?.summary ?? ""];
       onNotice({
-        kind: missing.length > 0 ? "warning" : "info",
-        message:
-          missing.length > 0 ? t("topbar.exportMissingMedia", { count: missing.length }) : t("topbar.exportDone"),
-        details: missing,
+        kind: missing.length > 0 || result.loudness_skipped || check?.warning ? "warning" : "info",
+        message: message.filter(Boolean).join(" "),
+        details: [...missing, ...(check?.details ?? [])],
         action: {
           label: t("topbar.showInFolder"),
           onClick: () => {
@@ -202,6 +230,7 @@ export default function TopBar({
           projectWidth={project.width}
           projectHeight={project.height}
           projectFps={project.fps}
+          projectDuration={project.duration}
           onExport={handleExport}
           onExportAudio={handleExportAudio}
           onClose={() => setShowExportModal(false)}

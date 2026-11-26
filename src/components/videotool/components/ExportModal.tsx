@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
 import { getApi } from "../api";
 import type { EditorState } from "../types";
@@ -17,6 +18,13 @@ import {
 import AddToProjects from "../../AddToProjects";
 import { noDestination } from "../../../lib/exportDestination";
 import { stagedExportPath, type MediaOrigin } from "../../../lib/subs/commands";
+import { LOUDNESS_TARGETS, parseLoudness } from "../../../lib/loudness";
+import VoiceCleanupFields from "../../VoiceCleanupFields";
+import { NO_VOICE_CLEANUP, parseVoice, type VoiceCleanup } from "../../../lib/voice";
+import DeliveryCheck, { CheckList, DestinationSelect } from "../../DeliveryCheck";
+import { checkDelivery, parsePlatform, platformOf, type PlatformId } from "../../../lib/platforms";
+import { queuedDestinations } from "../../../lib/deliveryCheck";
+import { EXPORT_PREFS_KEY as PREFS_KEY } from "../utils/exportPrefs";
 import "./ExportModal.css";
 
 interface Props {
@@ -48,6 +56,11 @@ interface Prefs {
   gifWidth: number;
   gifFps: number;
   hardware: boolean;
+  /** Volume ressenti visé (LUFS), ou null pour laisser le son tel quel. */
+  loudness: number | null;
+  voice: VoiceCleanup;
+  /** Destination choisie : son préréglage a été appliqué, et le fichier sera contrôlé. */
+  platform: PlatformId | null;
   /** Social format to fit the picture to, or null to keep its own proportions. */
   aspect: Aspect | null;
   reframeMode: ReframeMode;
@@ -59,10 +72,12 @@ const DEFAULT_PREFS: Prefs = {
   gifWidth: 480,
   gifFps: 15,
   hardware: true,
+  loudness: null,
+  voice: NO_VOICE_CLEANUP,
+  platform: null,
   aspect: null,
   reframeMode: "blur",
 };
-const PREFS_KEY = "lcv_export_prefs";
 
 /** Last used choices, validated: a stale or hand-edited value falls back to its default. */
 function loadPrefs(): Prefs {
@@ -75,6 +90,9 @@ function loadPrefs(): Prefs {
       gifWidth: GIF_WIDTHS.includes(raw.gifWidth) ? raw.gifWidth : DEFAULT_PREFS.gifWidth,
       gifFps: GIF_FPS.includes(raw.gifFps) ? raw.gifFps : DEFAULT_PREFS.gifFps,
       hardware: raw.hardware !== false,
+      loudness: parseLoudness(raw.loudness),
+      voice: parseVoice(raw.voice),
+      platform: parsePlatform(raw.platform),
       aspect: ASPECTS.includes(raw.aspect) ? raw.aspect : null,
       reframeMode: raw.reframeMode === "crop" ? "crop" : "blur",
     };
@@ -86,6 +104,7 @@ function loadPrefs(): Prefs {
 export default function ExportModal({ state, onClose, onQueued, onProjectsExport, associatedSrt, origin }: Props) {
   const owner = useVideoOwner();
   const { t, lang } = useT();
+  const { t: tr } = useTranslation();
   const [projects, setProjects] = useState<string[]>([]);
   const [toComputer, setToComputer] = useState(!origin);
   const [toOrigin, setToOrigin] = useState(!!origin);
@@ -125,6 +144,25 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
     });
   };
 
+  const destination = platformOf(prefs.platform);
+  const applyDestination = (id: string) => {
+    const platform = parsePlatform(id);
+    const spec = platformOf(platform);
+    update(
+      spec
+        ? {
+            platform,
+            aspect: spec.preset.aspect,
+            resolution: spec.preset.resolution,
+            format: PRESET_SETTINGS.format,
+            reframeMode: PRESET_SETTINGS.mode,
+            quality: PRESET_SETTINGS.quality,
+            loudness: spec.loudness,
+          }
+        : { platform: null },
+    );
+  };
+
   // What this machine's ffmpeg can do: hardware encoders (probed) and stabilisation.
   const [caps, setCaps] = useState<{ hardware: string[]; stabilization: boolean }>({
     hardware: [],
@@ -147,6 +185,7 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [loudnessSkipped, setLoudnessSkipped] = useState(false);
   // Position dans la file : l'export attend derrière les travaux actifs plus anciens (worker unique).
   const [queuedId, setQueuedId] = useState<number | null>(null);
   const [ahead, setAhead] = useState(0);
@@ -193,9 +232,19 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
   }, [owner]);
 
   // Closing mid-export would leave it running with no way to see or stop it.
+  // Ce qu'on sait avant d'exporter ; le reste est contrôlé sur le fichier produit.
+  const [ratioW, ratioH] = (prefs.aspect ?? "").split(":").map(Number);
+  const foreseen = destination
+    ? checkDelivery(destination, { duration: keptDuration, ratio: ratioH ? ratioW / ratioH : undefined }).filter(
+        (item) => !item.ok,
+      )
+    : [];
+
   const requestClose = () => {
     if (!exporting) onClose();
   };
+
+  const soundApplies = !state.muted && format !== "gif";
 
   const buildOptions = (savePath: string) => ({
     inputPath: state.videoPath as string,
@@ -209,6 +258,8 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
     perspectiveH: state.perspectiveHorizontal,
     perspectiveV: state.perspectiveVertical,
     muted: state.muted,
+    loudness: soundApplies ? prefs.loudness : null,
+    voice: soundApplies ? prefs.voice : null,
     format,
     quality,
     resolution: format === "gif" ? null : resolution,
@@ -233,6 +284,7 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
   const handleExport = async (mode: "now" | "queue" = "now") => {
     setError(null);
     setDone(false);
+    setLoudnessSkipped(false);
     // Progress still reads 100 after a finished export: without this, cancelling the save dialog
     // of "Export again" would leave the window "exporting" with every button disabled.
     setProgress(null);
@@ -268,6 +320,8 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
     }
 
     if (mode === "queue") {
+      if (prefs.platform && toComputer) queuedDestinations.set(savePath, prefs.platform);
+      else queuedDestinations.delete(savePath);
       try {
         await getApi().queueAdd(buildOptions(savePath));
         onQueued?.();
@@ -286,6 +340,7 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
     try {
       const result = await getApi(owner).exportVideo(buildOptions(savePath), setQueuedId);
       setDone(true);
+      setLoudnessSkipped(result.notice === "loudness-skipped");
       setOutputPath(result.outputPath);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -371,6 +426,15 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
 
         {/* Social network presets */}
         <div className="export-options">
+          <div className="opt-row">
+            <span className="opt-label">{tr("delivery.destination")}</span>
+            <DestinationSelect
+              className="opt-select"
+              value={prefs.platform}
+              onChange={applyDestination}
+              disabled={exporting}
+            />
+          </div>
           <div className="opt-row">
             <label className="opt-label" htmlFor="opt-preset">
               {t.export_preset}
@@ -546,6 +610,45 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
               </label>
             </div>
           )}
+
+          {soundApplies && (
+            <VoiceCleanupFields
+              value={prefs.voice}
+              onChange={(voice) => update({ voice })}
+              disabled={exporting}
+              classes={{ row: "opt-row", label: "opt-label", select: "opt-select", check: "opt-check" }}
+              texts={{
+                label: t.voice_label,
+                levels: { off: t.voice_off, light: t.voice_light, medium: t.voice_medium, strong: t.voice_strong },
+                denoise: t.voice_denoise,
+                gate: t.voice_gate,
+                hint: t.voice_hint,
+              }}
+            />
+          )}
+
+          {soundApplies && (
+            <div className="opt-row">
+              <label className="opt-label" htmlFor="opt-loudness">
+                {t.export_loudness}
+              </label>
+              <select
+                id="opt-loudness"
+                className="opt-select"
+                value={prefs.loudness ?? ""}
+                disabled={exporting}
+                title={t.export_loudness_hint}
+                onChange={(e) => update({ loudness: parseLoudness(e.target.value || null) })}
+              >
+                <option value="">{t.export_loudness_off}</option>
+                {LOUDNESS_TARGETS.map((target) => (
+                  <option key={target} value={target}>
+                    {target} LUFS
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Progress */}
@@ -565,6 +668,14 @@ export default function ExportModal({ state, onClose, onQueued, onProjectsExport
             {t.export_saved} <strong>{outputPath}</strong>
           </div>
         )}
+
+        {!done && destination && foreseen.length > 0 && <CheckList platform={prefs.platform!} items={foreseen} />}
+
+        {done && outputPath && toComputer && prefs.platform && (
+          <DeliveryCheck platform={prefs.platform} path={outputPath} />
+        )}
+
+        {done && loudnessSkipped && <div className="export-error">{t.export_loudness_skipped}</div>}
 
         <AddToProjects
           selected={projects}

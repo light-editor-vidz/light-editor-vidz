@@ -139,6 +139,7 @@ pub async fn subs_generate_project(
             &mix_dir,
             &mix_out,
             AudioFormat::Wav16,
+            None,
             cancel::flag(),
             |_| {},
         )

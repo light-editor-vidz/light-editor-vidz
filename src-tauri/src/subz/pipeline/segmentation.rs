@@ -328,7 +328,7 @@ fn split_if_too_long(seg: &Segment) -> Vec<Segment> {
 }
 
 /// A word with the time whisper gave it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TimedWord {
     pub text: String,
     pub start: f64,

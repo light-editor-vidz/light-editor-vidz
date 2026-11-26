@@ -93,7 +93,7 @@ beforeEach(() => {
   mocked.fetchAudioData.mockResolvedValue(new ArrayBuffer(8));
   mocked.audioLoad.mockResolvedValue(INFO);
   mocked.audioRecentList.mockResolvedValue([]);
-  mocked.audioProcess.mockResolvedValue(undefined);
+  mocked.audioProcess.mockResolvedValue({ loudness_skipped: false });
   mocked.audioPickOutput.mockResolvedValue("/out/song-edit.wav");
   mockListen.mockImplementation((_event, handler) => {
     progressHandler = handler as never;
@@ -523,6 +523,8 @@ describe("AudioTool — export", () => {
         fade_curve: "linear",
         wav_depth: null,
         normalize: true,
+        loudness: null,
+        voice: { level: "off", denoise: false, gate: false },
         speed: 1.5,
         filters: [],
       },
@@ -532,9 +534,25 @@ describe("AudioTool — export", () => {
     expect(screen.getByText("Exported: song-edit.wav", { selector: ".at-toast" })).toBeInTheDocument();
   });
 
+  it("signale un son trop faible pour être porté au volume visé", async () => {
+    mocked.audioProcess.mockResolvedValue({ loudness_skipped: true });
+    await openFile();
+    const modal = openDialog();
+    fireEvent.change(within(modal).getByLabelText("Loudness"), { target: { value: "-16" } });
+
+    await act(async () => {
+      fireEvent.click(confirm(modal));
+    });
+
+    expect(mocked.audioProcess.mock.calls[0][0]).toMatchObject({ loudness: -16 });
+    expect(screen.getByText(/too quiet to be normalised/, { selector: ".at-toast" })).toBeInTheDocument();
+  });
+
   it("déclare l'export en cours, pour que quitter demande confirmation", async () => {
     let finish: () => void = () => {};
-    mocked.audioProcess.mockReturnValue(new Promise<void>((r) => (finish = r)));
+    mocked.audioProcess.mockReturnValue(
+      new Promise<{ loudness_skipped: boolean }>((r) => (finish = () => r({ loudness_skipped: false }))),
+    );
     await openFile();
     const modal = openDialog();
     await act(async () => {
@@ -580,7 +598,9 @@ describe("AudioTool — export", () => {
 
   it("montre l'avancement envoyé par le moteur, puis la fin", async () => {
     let finish: () => void = () => {};
-    mocked.audioProcess.mockReturnValue(new Promise<void>((resolve) => (finish = resolve)));
+    mocked.audioProcess.mockReturnValue(
+      new Promise<{ loudness_skipped: boolean }>((resolve) => (finish = () => resolve({ loudness_skipped: false }))),
+    );
     await openFile();
     const modal = openDialog();
 
@@ -601,7 +621,7 @@ describe("AudioTool — export", () => {
 
   it("Annuler pendant l'export le demande au moteur, et le signale", async () => {
     let fail: (e: unknown) => void = () => {};
-    mocked.audioProcess.mockReturnValue(new Promise<void>((_, reject) => (fail = reject)));
+    mocked.audioProcess.mockReturnValue(new Promise<never>((_, reject) => (fail = reject)));
     mocked.audioCancel.mockResolvedValue(undefined);
     await openFile();
     const modal = openDialog();

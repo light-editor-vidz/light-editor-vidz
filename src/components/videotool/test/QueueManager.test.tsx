@@ -4,6 +4,11 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import QueueManager, { SHOW_QUEUE_EVENT } from "../components/QueueManager";
 import { LangProvider } from "../i18n";
 import type { QueueJob } from "../api";
+import { queuedDestinations } from "../../../lib/deliveryCheck";
+
+vi.mock("../../DeliveryCheck", () => ({
+  default: ({ platform, path }: { platform: string; path: string }) => <p>{`check ${platform} ${path}`}</p>,
+}));
 
 const job = (over: Partial<QueueJob> = {}): QueueJob => ({
   id: 1,
@@ -230,5 +235,29 @@ describe("QueueManager — ordering of the initial snapshot and pushed updates",
       </LangProvider>,
     ).unmount();
     expect(off).toHaveBeenCalled();
+  });
+});
+
+describe("QueueManager — contrôle et avertissements", () => {
+  beforeEach(() => queuedDestinations.clear());
+
+  it("contrôle le fichier fini d'un export qui avait une destination", async () => {
+    queuedDestinations.set("/out/clip.mp4", "tiktok");
+    setup([job({ status: "done" }), job({ id: 2, status: "done", outputPath: "/out/other.mp4" })]);
+    await act(async () => {
+      window.dispatchEvent(new Event(SHOW_QUEUE_EVENT));
+    });
+
+    expect(screen.getByText("check tiktok /out/clip.mp4")).toBeInTheDocument();
+    expect(screen.queryByText(/other\.mp4$/, { selector: "p" })).not.toBeInTheDocument();
+    queuedDestinations.clear();
+  });
+
+  it("signale un son trop faible pour être normalisé", async () => {
+    setup([job({ status: "done", notice: "loudness-skipped" })]);
+    await act(async () => {
+      window.dispatchEvent(new Event(SHOW_QUEUE_EVENT));
+    });
+    expect(screen.getByText(/too quiet to be normalised/)).toBeInTheDocument();
   });
 });

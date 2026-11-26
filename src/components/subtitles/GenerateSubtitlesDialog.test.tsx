@@ -141,6 +141,34 @@ describe("GenerateSubtitlesDialog", () => {
     expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
   });
 
+  it("passes the word times along, also after a correction", async () => {
+    const words = [{ start: 0.1, end: 0.4, text: "Hello" }];
+    vi.mocked(subs.generateForFile).mockResolvedValue({
+      srt_path: "/v/a.srt",
+      srt_content: SRT,
+      language: "en",
+      words,
+    });
+    vi.mocked(subs.updateSubs).mockResolvedValue({ srt_content: SRT.replace("World", "Monde") });
+    const onAssociate = vi.fn();
+    render(
+      <GenerateSubtitlesDialog
+        source={{ kind: "file", path: "/v/a.mp4" }}
+        label="a"
+        onClose={vi.fn()}
+        onAssociate={onAssociate}
+      />,
+    );
+    await generate();
+    await screen.findByText("2 subtitles generated");
+    fireEvent.click(screen.getByRole("button", { name: "Edit subtitles" }));
+    fireEvent.change(screen.getByLabelText("Text of subtitle 2"), { target: { value: "Monde" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply changes" }));
+
+    await waitFor(() => expect(onAssociate).toHaveBeenCalledTimes(2));
+    expect(onAssociate.mock.calls.map((call) => call[2])).toEqual([words, words]);
+  });
+
   it("does not add the subtitles twice when the save dialog is closed", async () => {
     vi.mocked(subs.generateForMedia).mockResolvedValue({ srt_path: "/p/a.srt", srt_content: SRT, language: "en" });
     vi.mocked(subs.saveSubs).mockResolvedValueOnce(null).mockResolvedValueOnce(["/p/a.srt"]);

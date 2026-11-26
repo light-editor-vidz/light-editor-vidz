@@ -2,6 +2,7 @@
 //! pipe, lues au rythme du rendu. Aucune extraction sur disque (une minute de 1080p en PNG
 //! pesait ~7 Gio) et seule la plage réellement utilisée est décodée (`-ss` au point d'entrée).
 
+use crate::hdr::HdrTransfer;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, ChildStdout, Command, Stdio};
@@ -14,6 +15,8 @@ pub struct VideoProbe {
     pub height: u32,
     /// Durée en secondes (0.0 si inconnue).
     pub duration: f64,
+    /// Courbe d'une source HDR, à convertir en SDR au décodage ; `None` pour une source SDR.
+    pub hdr: Option<HdrTransfer>,
 }
 
 /// Lit largeur, hauteur et durée d'une vidéo. `None` si ffprobe est absent ou ne comprend pas
@@ -28,7 +31,7 @@ pub fn probe_video(source: &Path) -> Option<VideoProbe> {
             "-show_entries",
             // La rotation (smartphones) : ffmpeg la applique au décodage, donc les frames sont dans
             // les dimensions tournées alors que width/height sont celles du codage.
-            "stream=width,height,duration:stream_tags=rotate:stream_side_data=rotation:format=duration",
+            "stream=width,height,duration,color_transfer:stream_tags=rotate:stream_side_data=rotation:format=duration",
             "-of",
             "default=noprint_wrappers=1",
         ])
@@ -47,6 +50,7 @@ fn parse_probe(text: &str) -> Option<VideoProbe> {
     let mut height = None;
     let mut duration = 0.0;
     let mut rotation = 0.0_f64;
+    let mut hdr = None;
     for line in text.lines() {
         let Some((key, value)) = line.split_once('=') else {
             continue;
@@ -64,6 +68,7 @@ fn parse_probe(text: &str) -> Option<VideoProbe> {
                     }
                 }
             }
+            "color_transfer" => hdr = HdrTransfer::from_name(value),
             "rotation" | "TAG:rotate" => {
                 rotation = value.trim().parse::<f64>().unwrap_or(rotation);
             }
@@ -82,6 +87,7 @@ fn parse_probe(text: &str) -> Option<VideoProbe> {
         width,
         height,
         duration: if duration.is_finite() { duration } else { 0.0 },
+        hdr,
     })
 }
 
@@ -238,7 +244,8 @@ mod tests {
             VideoProbe {
                 width: 1920,
                 height: 1080,
-                duration: 12.5
+                duration: 12.5,
+                hdr: None,
             }
         );
     }
@@ -287,6 +294,18 @@ mod tests {
 
         assert_eq!((probe.width, probe.height), (180, 320));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_transfer_curve_marks_an_hdr_source() {
+        let hdr = |curve: &str| {
+            parse_probe(&format!("width=4\nheight=4\ncolor_transfer={curve}\n"))
+                .unwrap()
+                .hdr
+        };
+        assert_eq!(hdr("arib-std-b67"), Some(HdrTransfer::Hlg));
+        assert_eq!(hdr("smpte2084"), Some(HdrTransfer::Pq));
+        assert_eq!(hdr("bt709"), None);
     }
 
     #[test]

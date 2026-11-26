@@ -52,6 +52,63 @@ describe("ExportModal", () => {
     };
   });
 
+  it("sends the loudness target, and says when the sound was too quiet for it", async () => {
+    localStorage.clear();
+    const exportVideo = vi
+      .fn()
+      .mockResolvedValue({ success: true, outputPath: "/tmp/out.mp4", notice: "loudness-skipped" });
+    window.electronAPI = { ...window.electronAPI, exportVideo };
+    r();
+
+    fireEvent.change(screen.getByLabelText("Loudness"), { target: { value: "-14" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Export$/i }));
+
+    expect(await screen.findByText(/too quiet to be normalised/)).toBeInTheDocument();
+    expect(exportVideo.mock.calls[0][0]).toMatchObject({ loudness: -14 });
+    localStorage.clear();
+  });
+
+  it("sends the voice clean-up with the export", async () => {
+    localStorage.clear();
+    const exportVideo = vi.fn().mockResolvedValue({ success: true, outputPath: "/tmp/out.mp4" });
+    window.electronAPI = { ...window.electronAPI, exportVideo };
+    r();
+    fireEvent.change(screen.getByLabelText("Voice clean-up"), { target: { value: "light" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Export$/i }));
+
+    await waitFor(() => expect(exportVideo).toHaveBeenCalled());
+    expect(exportVideo.mock.calls[0][0].voice).toEqual({ level: "light", denoise: false, gate: false });
+
+    localStorage.clear();
+  });
+
+  it("applies a destination preset and warns before the export about the duration", async () => {
+    localStorage.clear();
+    const exportVideo = vi.fn().mockResolvedValue({ success: true, outputPath: "/tmp/out.mp4" });
+    window.electronAPI = { ...window.electronAPI, exportVideo };
+    r({ duration: 300 });
+
+    fireEvent.change(screen.getByLabelText("Destination"), { target: { value: "tiktok" } });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Destination"), { target: { value: "reels" } });
+    expect(screen.getByRole("status")).toHaveTextContent("Duration: 5:00 (expected ≤ 1:30)");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Export$/i }));
+    await waitFor(() => expect(exportVideo).toHaveBeenCalled());
+    expect(exportVideo.mock.calls[0][0]).toMatchObject({
+      format: "mp4",
+      resolution: 1080,
+      loudness: -14,
+      reframe: { aspect: "9:16", mode: "blur" },
+    });
+    localStorage.clear();
+  });
+
+  it("offers no loudness when there is no sound to export", () => {
+    r({ muted: true });
+    expect(screen.queryByLabelText("Loudness")).not.toBeInTheDocument();
+  });
+
   it("renders the modal with all format cards", () => {
     const { container } = r();
     expect(container.querySelectorAll(".format-card")).toHaveLength(5);

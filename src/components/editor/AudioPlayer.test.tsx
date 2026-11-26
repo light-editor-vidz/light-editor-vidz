@@ -7,6 +7,8 @@ import type { Project } from "../../bindings/Project";
 import { createPlaybackClock } from "../../lib/playbackClock";
 
 vi.mock("../../lib/mediaCache", () => ({ acquireMediaObjectUrl: vi.fn() }));
+const voices = vi.hoisted(() => ({ current: [] as { start: number; end: number }[] }));
+vi.mock("../../lib/useVoiceRanges", () => ({ useVoiceRanges: () => voices.current }));
 vi.mock("../../lib/assetUrl", () => ({ streamUrl: (dir: string, rel: string) => `lvmedia://${dir}::${rel}` }));
 
 const mockAcquire = vi.mocked(acquireMediaObjectUrl);
@@ -27,6 +29,7 @@ const track = (over: Partial<AudioTrack> = {}): AudioTrack =>
     speed: 1,
     fade_curve: "linear",
     filter: null,
+    duck_db: 0,
     ...over,
   }) as AudioTrack;
 
@@ -229,5 +232,19 @@ describe("AudioPlayer — fondus", () => {
     await renderPlayer([track({ start_time: 2, audio_offset: 1, speed: 2 })], 5);
     // 3s into the track at 2× → 6s of source, +1s of offset.
     expect(audios()[0].currentTime).toBeCloseTo(7);
+  });
+});
+
+describe("AudioPlayer — baisse sous la voix", () => {
+  afterEach(() => (voices.current = []));
+
+  it("baisse la piste réglée pour cela pendant la voix, pas les autres", async () => {
+    mockAcquire.mockReturnValue({ promise: Promise.resolve("blob:a"), release });
+    voices.current = [{ start: 4, end: 6 }];
+    const { container } = await renderPlayer([track({ duck_db: 12 }), track({ id: "a2" })], 5);
+
+    const [music, other] = [...container.querySelectorAll("audio")];
+    expect(music.volume).toBeCloseTo(10 ** (-12 / 20), 3);
+    expect(other.volume).toBe(1);
   });
 });

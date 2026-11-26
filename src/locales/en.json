@@ -197,6 +197,14 @@
     "line": "Line"
   },
   "properties": {
+    "chromaKey": "Green screen",
+    "chromaColor": "Colour to make transparent",
+    "chromaSimilarity": "Tolerance",
+    "chromaBlend": "Edge softness",
+    "chromaDespill": "Remove the colour spill (without a colour filter)",
+    "duck": "Lower under other sounds",
+    "duckOff": "Off",
+    "duckHint": "For music: it is lowered while another track or a video's sound is heard.",
     "empty": "No element selected",
     "emptyHint": "Click an element on the canvas or timeline to see its properties.",
     "textTitle": "Text properties",
@@ -353,6 +361,7 @@
     "strokeToggle": "Toggle stroke"
   },
   "canvas": {
+    "chromaUnavailable": "Green screen preview unavailable; the export applies it.",
     "videoDecodeError": "This video cannot be played (unsupported format/codec)",
     "videoDecodeErrorCode": "Error code {{code}}",
     "undo": "Undo",
@@ -395,6 +404,51 @@
     "duplicateScene": "Duplicate scene",
     "renameSceneHint": "Double-click to rename",
     "beyondMedia": "This clip is longer than its media"
+  },
+  "loudness": {
+    "label": "Loudness",
+    "off": "Unchanged",
+    "hint": "−14: video platforms · −16: podcasts · −23: broadcast.",
+    "skipped": "The sound is too quiet to be normalised: its level is kept."
+  },
+  "safeZone": {
+    "label": "Safe zones",
+    "off": "Safe zones: none",
+    "hint": "What the app's own interface covers (indicative margins). Not part of the export.",
+    "unavailable": "Safe zones need an unrotated vertical 9:16 picture."
+  },
+  "voice": {
+    "label": "Voice clean-up",
+    "off": "Off",
+    "light": "Light",
+    "medium": "Medium",
+    "strong": "Strong",
+    "denoise": "Reduce noise",
+    "gate": "Noise gate (lowers the gaps)",
+    "hint": "Applied to the exported file; the preview does not play it."
+  },
+  "delivery": {
+    "destination": "Destination",
+    "none": "None",
+    "checking": "Checking the file…",
+    "failed": "The file could not be checked.",
+    "allGood": "{{platform}}: everything fits",
+    "warnings_one": "{{platform}}: {{count}} point to check",
+    "warnings_other": "{{platform}}: {{count}} points to check",
+    "indicative": "Indicative values as of {{date}}: platforms change them.",
+    "before": "To check before exporting for {{platform}}:",
+    "item": {
+      "duration": "Duration: {{value}} (expected {{expected}})",
+      "aspect": "Format: {{value}} (expected {{expected}})",
+      "height": "Height: {{value}} (expected {{expected}})",
+      "fps": "Frame rate: {{value}} (expected {{expected}})",
+      "codec": "Video codec: {{value}} (expected {{expected}})",
+      "size": "Size: {{value}} (expected {{expected}})",
+      "hdr": "Colours: {{value}} (expected {{expected}})",
+      "audio": "No sound in the file",
+      "loudness": "Loudness: {{value}} (expected {{expected}})",
+      "truePeak": "True peak: {{value}} (expected {{expected}})"
+    }
   },
   "exportModal": {
     "title": "Export video",

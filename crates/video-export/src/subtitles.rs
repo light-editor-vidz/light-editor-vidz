@@ -14,11 +14,43 @@ pub struct Event {
     pub text: String,
 }
 
-/// Répartit une réplique en mots, la durée de chacun étant proportionnelle à sa longueur.
-pub fn split_words_proportional(cue: &Cue) -> Vec<Event> {
+/// Les mots d'une réplique avec leur temps réel, ou `None` s'ils ne décrivent plus son texte
+/// (corrigé, traduit) ou sont incohérents. Chaque mot reste affiché jusqu'au suivant ; le premier
+/// commence avec la réplique et le dernier finit avec elle.
+fn spoken_windows(cue: &Cue, words: &[&str]) -> Option<Vec<Event>> {
+    if cue.words.len() != words.len() || cue.words.iter().zip(words).any(|(w, t)| w.text != *t) {
+        return None;
+    }
+    let mut starts = vec![cue.start];
+    for word in &cue.words[1..] {
+        let start = word.start;
+        if !start.is_finite() || start < *starts.last()? || start > cue.end {
+            return None;
+        }
+        starts.push(start);
+    }
+    Some(
+        words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| Event {
+                start: starts[i],
+                end: starts.get(i + 1).copied().unwrap_or(cue.end),
+                text: (*w).to_string(),
+            })
+            .collect(),
+    )
+}
+
+/// Découpe une réplique en mots : au temps réel de chacun quand il est connu, sinon avec une durée
+/// proportionnelle à sa longueur.
+pub fn word_windows(cue: &Cue) -> Vec<Event> {
     let words: Vec<&str> = cue.text.split_whitespace().collect();
     if words.is_empty() {
         return vec![];
+    }
+    if let Some(spoken) = spoken_windows(cue, &words) {
+        return spoken;
     }
     let total: usize = words.iter().map(|w| w.chars().count()).sum();
     let duration = cue.end - cue.start;
@@ -159,7 +191,7 @@ pub fn expand_cues_to_events(cues: &[Cue], animation: &str, o: &ExpandOptions) -
     for cue in cues {
         match animation {
             "word-pop" => {
-                for w in split_words_proportional(cue) {
+                for w in word_windows(cue) {
                     events.push(Event {
                         start: w.start,
                         end: w.end,
@@ -171,7 +203,7 @@ pub fn expand_cues_to_events(cues: &[Cue], animation: &str, o: &ExpandOptions) -
                 }
             }
             "word-bounce" => {
-                for w in split_words_proportional(cue) {
+                for w in word_windows(cue) {
                     events.push(Event {
                         start: w.start,
                         end: w.end,
@@ -183,7 +215,7 @@ pub fn expand_cues_to_events(cues: &[Cue], animation: &str, o: &ExpandOptions) -
                 }
             }
             "rainbow" => {
-                let text: Vec<String> = split_words_proportional(cue)
+                let text: Vec<String> = word_windows(cue)
                     .iter()
                     .enumerate()
                     .map(|(i, w)| {
@@ -223,7 +255,7 @@ pub fn expand_cues_to_events(cues: &[Cue], animation: &str, o: &ExpandOptions) -
                 }
             }
             "word-highlight" => {
-                let words = split_words_proportional(cue);
+                let words = word_windows(cue);
                 // Every word escaped and decorated once, then assembled per event.
                 let plain: Vec<String> = words.iter().map(|w| escape_ass_text(&w.text)).collect();
                 let lit: Vec<String> = plain
@@ -398,6 +430,7 @@ mod tests {
             start,
             end,
             text: text.into(),
+            words: vec![],
         }
     }
 
@@ -417,11 +450,63 @@ mod tests {
 
     #[test]
     fn words_share_the_duration_in_proportion_to_their_length() {
-        let w = split_words_proportional(&cue(0.0, 10.0, "aa bbbbbb"));
+        let w = word_windows(&cue(0.0, 10.0, "aa bbbbbb"));
         assert_eq!(w.len(), 2);
         assert!((w[0].end - 2.5).abs() < 1e-9 && w[1].start == w[0].end);
         assert_eq!(w[1].end, 10.0);
-        assert!(split_words_proportional(&cue(0.0, 1.0, "   ")).is_empty());
+        assert!(word_windows(&cue(0.0, 1.0, "   ")).is_empty());
+    }
+
+    fn spoken(start: f64, end: f64, text: &str) -> crate::plan::WordTime {
+        crate::plan::WordTime {
+            start,
+            end,
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn known_word_times_replace_the_proportional_guess() {
+        let mut c = cue(1.0, 5.0, "un deux trois");
+        c.words = vec![
+            spoken(1.1, 1.4, "un"),
+            spoken(3.0, 3.5, "deux"),
+            spoken(4.2, 4.9, "trois"),
+        ];
+
+        let w = word_windows(&c);
+
+        // Un mot reste affiché pendant le silence qui le suit : aucun trou dans le surlignage.
+        let times: Vec<(f64, f64)> = w.iter().map(|e| (e.start, e.end)).collect();
+        assert_eq!(times, [(1.0, 3.0), (3.0, 4.2), (4.2, 5.0)]);
+    }
+
+    #[test]
+    fn word_times_that_no_longer_match_the_text_are_ignored() {
+        let guess = word_windows(&cue(0.0, 10.0, "aa bbbbbb"));
+        let stale = [
+            vec![spoken(0.0, 1.0, "aa"), spoken(9.0, 10.0, "corrigé")],
+            vec![spoken(0.0, 1.0, "aa")],
+            // Hors de la réplique, puis dans le désordre.
+            vec![spoken(0.0, 1.0, "aa"), spoken(12.0, 13.0, "bbbbbb")],
+            vec![spoken(0.0, 1.0, "aa"), spoken(-1.0, 0.5, "bbbbbb")],
+        ];
+        for words in stale {
+            let mut c = cue(0.0, 10.0, "aa bbbbbb");
+            c.words = words;
+            assert_eq!(word_windows(&c), guess, "{:?}", c.words);
+        }
+    }
+
+    #[test]
+    fn the_highlight_follows_the_spoken_times() {
+        let mut c = cue(0.0, 4.0, "un deux");
+        c.words = vec![spoken(0.0, 0.5, "un"), spoken(3.0, 4.0, "deux")];
+
+        let events = expand_cues_to_events(&[c], "word-highlight", &ExpandOptions::default());
+
+        assert_eq!((events[0].start, events[0].end), (0.0, 3.0));
+        assert_eq!((events[1].start, events[1].end), (3.0, 4.0));
     }
 
     #[test]

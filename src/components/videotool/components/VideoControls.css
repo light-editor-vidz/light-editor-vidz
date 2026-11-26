@@ -106,3 +106,17 @@
 .vt-root .vc-time-sep {
   color: var(--text-muted);
 }
+
+.video-controls .vc-select {
+  margin-left: auto;
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+}
+
+.video-controls .vc-select option {
+  color: #000;
+}

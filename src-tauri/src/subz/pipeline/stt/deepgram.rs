@@ -98,26 +98,36 @@ fn to_transcript(parsed: DeepgramResponse, forced: Option<&str>) -> Transcript {
         .map(|l| lang::to_code(&l))
         .unwrap_or_else(|| "unknown".to_string());
 
+    let mut spoken = Vec::new();
+    let segments = parsed
+        .results
+        .utterances
+        .into_iter()
+        .flat_map(|u| {
+            let words = u
+                .words
+                .into_iter()
+                .map(|w| TimedWord {
+                    text: w.punctuated_word.unwrap_or(w.word).trim().to_string(),
+                    start: w.start,
+                    end: w.end,
+                })
+                .filter(|w| !w.text.is_empty())
+                .collect();
+            cues_from_words(
+                u.start,
+                u.end,
+                u.transcript.trim(),
+                words,
+                DEFAULT_LIMITS,
+                &mut spoken,
+            )
+        })
+        .collect();
     Transcript {
         language,
-        segments: parsed
-            .results
-            .utterances
-            .into_iter()
-            .flat_map(|u| {
-                let words = u
-                    .words
-                    .into_iter()
-                    .map(|w| TimedWord {
-                        text: w.punctuated_word.unwrap_or(w.word).trim().to_string(),
-                        start: w.start,
-                        end: w.end,
-                    })
-                    .filter(|w| !w.text.is_empty())
-                    .collect();
-                cues_from_words(u.start, u.end, u.transcript.trim(), words, DEFAULT_LIMITS)
-            })
-            .collect(),
+        segments,
+        words: spoken,
     }
 }
 
@@ -205,6 +215,19 @@ mod tests {
 
     fn transcript_of(json: &str) -> Transcript {
         to_transcript(serde_json::from_str(json).unwrap(), None)
+    }
+
+    #[test]
+    fn the_transcript_keeps_the_time_of_every_word() {
+        let t = transcript_of(
+            r#"{"results":{"channels":[{}],"utterances":[{"start":0.0,"end":2.0,
+            "transcript":"Salut toi.","words":[
+              {"word":"salut","punctuated_word":"Salut","start":0.1,"end":0.5},
+              {"word":"toi","punctuated_word":"toi.","start":1.2,"end":1.6}]}]}}"#,
+        );
+
+        let words: Vec<(&str, f64)> = t.words.iter().map(|w| (w.text.as_str(), w.start)).collect();
+        assert_eq!(words, [("Salut", 0.1), ("toi.", 1.2)]);
     }
 
     #[test]

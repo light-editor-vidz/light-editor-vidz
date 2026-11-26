@@ -130,7 +130,7 @@ fn poll_progress(i: u32, max: u32) -> f32 {
 }
 
 /// Turns sentences (milliseconds) into segments (seconds).
-fn to_segments(sentences: SentencesResponse) -> Vec<Segment> {
+fn to_segments(sentences: SentencesResponse, spoken: &mut Vec<TimedWord>) -> Vec<Segment> {
     sentences
         .sentences
         .into_iter()
@@ -151,6 +151,7 @@ fn to_segments(sentences: SentencesResponse) -> Vec<Segment> {
                 s.text.trim(),
                 words,
                 DEFAULT_LIMITS,
+                spoken,
             )
         })
         .collect()
@@ -303,9 +304,12 @@ impl AssemblyAiEngine {
 
         on_progress(1.0);
 
+        let mut words = Vec::new();
+        let segments = to_segments(sentences, &mut words);
         Ok(Transcript {
             language: lang::to_code(&language),
-            segments: to_segments(sentences),
+            segments,
+            words,
         })
     }
 }
@@ -439,7 +443,7 @@ mod tests {
         )
         .unwrap();
 
-        let segments = to_segments(sentences);
+        let segments = to_segments(sentences, &mut Vec::new());
 
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[0].start, 0.0);
@@ -452,7 +456,7 @@ mod tests {
     fn an_empty_sentence_list_yields_no_segment() {
         let sentences: SentencesResponse = serde_json::from_str(r#"{"sentences":[]}"#).unwrap();
 
-        assert!(to_segments(sentences).is_empty());
+        assert!(to_segments(sentences, &mut Vec::new()).is_empty());
     }
 
     #[test]
@@ -512,7 +516,7 @@ mod tests {
         )
         .unwrap();
 
-        let segments = to_segments(sentences);
+        let segments = to_segments(sentences, &mut Vec::new());
 
         let texts: Vec<_> = segments.iter().map(|s| s.text.as_str()).collect();
         assert_eq!(texts, ["Hello there.", "Again."]);

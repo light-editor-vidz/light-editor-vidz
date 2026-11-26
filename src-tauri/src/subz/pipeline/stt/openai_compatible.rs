@@ -140,6 +140,7 @@ fn to_transcript(parsed: ApiResponse, offset: f64) -> Transcript {
             });
         }
     }
+    let mut spoken = Vec::new();
     let segments = parsed
         .segments
         .iter()
@@ -152,12 +153,14 @@ fn to_transcript(parsed: ApiResponse, offset: f64) -> Transcript {
                 s.text.trim(),
                 words,
                 DEFAULT_LIMITS,
+                &mut spoken,
             )
         })
         .collect();
     Transcript {
         language: lang::to_code(&parsed.language),
         segments,
+        words: spoken,
     }
 }
 
@@ -187,6 +190,7 @@ impl SttEngine for OpenAiCompatibleWhisperEngine {
 
         let mut language = "unknown".to_string();
         let mut segments = Vec::new();
+        let mut words = Vec::new();
         for (i, (start, len)) in chunks.iter().enumerate() {
             cancel::check()?;
             on_progress(i as f32 / chunks.len() as f32);
@@ -204,10 +208,15 @@ impl SttEngine for OpenAiCompatibleWhisperEngine {
                 language = part.language;
             }
             segments.extend(part.segments);
+            words.extend(part.words);
         }
         on_progress(1.0);
 
-        Ok(Transcript { language, segments })
+        Ok(Transcript {
+            language,
+            segments,
+            words,
+        })
     }
 }
 

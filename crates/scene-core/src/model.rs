@@ -153,6 +153,9 @@ pub struct VideoElement {
     /// Zone de l'image source conservée ; `None` = toute l'image.
     #[serde(default)]
     pub crop: Option<crate::video_fx::VideoCrop>,
+    /// Fond vert : la couleur rendue transparente ; `None` = image entière.
+    #[serde(default)]
+    pub chroma_key: Option<Box<crate::chroma::ChromaKey>>,
     /// Sous-titre associé à la vidéo ; affiché sur la scène s'il est activé.
     #[serde(default)]
     pub subtitles: Option<LinkedSubtitles>,
@@ -206,6 +209,10 @@ pub struct AudioTrack {
     /// Filtre passe-bas / passe-haut / passe-bande appliqué à la piste.
     #[serde(default)]
     pub filter: Option<AudioFilter>,
+    /// Baisse (dB) de la piste tant qu'un autre son (autre piste, son d'une vidéo) se fait
+    /// entendre ; 0 = jamais baissée.
+    #[serde(default)]
+    pub duck_db: f64,
     /// Sous-titre associé à la piste ; affiché sur les scènes s'il est activé.
     #[serde(default)]
     pub subtitles: Option<LinkedSubtitles>,

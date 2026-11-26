@@ -25,6 +25,7 @@ export function createAudioTrack(relativeSrc: string, name: string, startTime = 
     speed: 1,
     fade_curve: "linear",
     filter: null,
+    duck_db: 0,
     subtitles: null,
   };
 }

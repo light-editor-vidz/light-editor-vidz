@@ -21,6 +21,10 @@ import {
 import { useEditMenu } from "./EditMenu";
 import ElementInteraction, { type GeometryPatch, type SnapGuides } from "./ElementInteraction";
 import ShapeView from "./ShapeView";
+import SafeZoneOverlay from "../SafeZoneOverlay";
+import SafeZoneSelect from "../SafeZoneSelect";
+import { useSafeZone } from "../../lib/useSafeZone";
+import { isVertical916, safeZoneOf } from "../../lib/platforms";
 import { ImageElementView, TextElementView, VideoElementView } from "./ElementViews";
 
 interface Props {
@@ -114,6 +118,10 @@ function CanvasStage({
   const stageRef = useRef<HTMLDivElement>(null);
   const stageWrapRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
+  const [safeZone, setSafeZone] = useSafeZone();
+  // Les marges ne valent que pour un projet vertical 9:16.
+  const vertical = isVertical916(project.width, project.height);
+  const safeZoneArea = vertical ? safeZoneOf(safeZone) : null;
   const [guides, setGuides] = useState<SnapGuides | null>(null);
   const [marquee, setMarquee] = useState<MarqueeRect | null>(null);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
@@ -257,6 +265,15 @@ function CanvasStage({
               </option>
             ))}
           </select>
+          <SafeZoneSelect
+            className="canvas-transition-select mono"
+            value={vertical ? safeZone : null}
+            onChange={setSafeZone}
+            label={t("safeZone.label")}
+            offLabel={t("safeZone.off")}
+            hint={t(vertical ? "safeZone.hint" : "safeZone.unavailable")}
+            disabled={!vertical}
+          />
           <div className="canvas-zoom-controls mono">
             <button
               type="button"
@@ -320,6 +337,7 @@ function CanvasStage({
                 openEditMenu={editMenu.open}
               />
             ))}
+            {safeZoneArea && <SafeZoneOverlay zone={safeZoneArea} />}
             {guides?.vertical.map((x) => (
               <div key={`v-${x}`} className="snap-guide snap-guide-v" style={{ left: `${x}%` }} />
             ))}

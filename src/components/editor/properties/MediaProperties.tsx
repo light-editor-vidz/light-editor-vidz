@@ -4,6 +4,7 @@ import { Image as ImageIcon, Video as VideoIcon } from "lucide-react";
 import type { Element } from "../../../bindings/Element";
 import type { ElementPatch } from "../../../lib/elements";
 import ColorPickerField from "../ColorPickerField";
+import { ChromaKeyFields } from "./ChromaKeyFields";
 import { NumberField } from "./NumberField";
 import { Header } from "./Header";
 import { BackgroundColorField } from "./BackgroundColorField";
@@ -129,6 +130,7 @@ export function MediaProperties({
               <option value="loop">{t("properties.videoEndLoop")}</option>
             </select>
           </div>
+          <ChromaKeyFields value={element.chroma_key} onChange={(chroma_key) => onUpdate({ chroma_key })} />
         </>
       )}
 

@@ -17,6 +17,7 @@ pub struct ExportOptions {
     pub height: Option<u32>,
     pub fps: Option<u32>,
     pub crf: Option<u32>,
+    pub loudness: Option<f64>,
 }
 
 /// État partagé de l'export en cours : drapeau d'annulation et verrou « un seul export à la
@@ -53,6 +54,7 @@ pub struct ExportResult {
     /// Sources média (images, vidéos, sons) introuvables ou illisibles : l'export a réussi mais
     /// elles n'y figurent pas.
     pub missing_media: Vec<String>,
+    pub loudness_skipped: bool,
 }
 
 /// Exporte le projet en mp4. `output_path` vient d'un dialogue "Enregistrer sous" côté
@@ -88,6 +90,7 @@ pub async fn export_project(
             height: o.height,
             fps: o.fps,
             crf: o.crf,
+            loudness: o.loudness,
         })
         .unwrap_or_default();
     let output_path = PathBuf::from(output_path);
@@ -107,12 +110,15 @@ pub async fn export_project(
     .map_err(|e| format!("The export crashed: {e}"))??;
     Ok(ExportResult {
         missing_media: report.missing_media,
+        loudness_skipped: report.loudness_skipped,
     })
 }
 
 /// Exporte uniquement le son du projet (mix des pistes audio et de l'audio des vidéos) dans le
 /// format demandé. Même verrou, même annulation et même événement `export-progress` que
 /// `export_project`.
+// Les paramètres d'une commande Tauri sont les champs du message de l'interface.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn export_project_audio(
     app: tauri::AppHandle,
@@ -122,6 +128,7 @@ pub async fn export_project_audio(
     project: Project,
     output_path: String,
     format: AudioFormat,
+    loudness: Option<f64>,
 ) -> CmdResult<ExportResult> {
     let project_dir = projects.require(&project_dir)?;
     // Seule une destination choisie dans « Enregistrer sous » peut être écrite (et renommée
@@ -143,6 +150,7 @@ pub async fn export_project_audio(
             &project_dir,
             &output_path,
             format,
+            loudness,
             &cancel,
             |fraction| {
                 let _ = app.emit("export-progress", fraction);
@@ -153,7 +161,51 @@ pub async fn export_project_audio(
     .map_err(|e| format!("The export crashed: {e}"))??;
     Ok(ExportResult {
         missing_media: report.missing_media,
+        loudness_skipped: report.loudness_skipped,
     })
+}
+
+#[derive(Debug, Serialize)]
+pub struct VoiceRange {
+    pub start: f64,
+    pub end: f64,
+}
+
+/// Les passages voisés du projet, pour que l'aperçu baisse la musique comme le fera l'export.
+#[tauri::command]
+pub async fn project_voice_ranges(
+    projects: State<'_, OpenProjects>,
+    project_dir: String,
+    project: Project,
+) -> CmdResult<Vec<VoiceRange>> {
+    let project_dir = projects.require(&project_dir)?;
+    let ranges = tauri::async_runtime::spawn_blocking(move || {
+        crate::export::voice_ranges(&project, &project_dir)
+    })
+    .await
+    .map_err(|e| format!("The voice analysis crashed: {e}"))??;
+    Ok(ranges
+        .into_iter()
+        .map(|(start, end)| VoiceRange { start, end })
+        .collect())
+}
+
+/// Relit un fichier que l'application vient d'exporter, pour le contrôle avant publication. Seule
+/// une destination choisie dans « Enregistrer sous » (ou préparée pour un export) peut être lue.
+#[tauri::command]
+pub async fn inspect_export(
+    app: tauri::AppHandle,
+    path: String,
+) -> CmdResult<crate::export::inspect::DeliveryReport> {
+    app.state::<Approved>()
+        .check_output(&path)
+        .map_err(|e| CommandError::from(audio_dsp::error::CmdError::from(e)))?;
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        crate::export::inspect::inspect(&PathBuf::from(path))
+    })
+    .await
+    .map_err(|e| format!("The check crashed: {e}"))??;
+    Ok(report)
 }
 
 /// Demande l'arrêt de l'export en cours (sans effet s'il n'y en a pas).

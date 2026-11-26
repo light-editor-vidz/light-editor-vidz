@@ -1,8 +1,9 @@
 // Preview-side (real-time) helpers for animated subtitle display.
-// Word/char timing windows are split proportionally to word/char length
+// Word windows follow the real time of each word when the transcription gave
+// it; otherwise word/char windows are split proportionally to their length
 // within the cue's [start,end] window, since SRT only gives phrase-level
-// timestamps. Mirrors the same split formula used for export in
-// src/main/lib/subtitles.js — keep both in sync.
+// timestamps. Mirrors the export formula in
+// crates/video-export/src/subtitles.rs — keep both in sync.
 import type { SubtitleCue } from "./srt";
 
 import constants from "../shared/constants.json";
@@ -20,9 +21,25 @@ export interface TimedText {
   text: string;
 }
 
+/** The words with their real times, or `null` when they no longer spell the cue
+ * (corrected, translated) or are inconsistent. Each word stays until the next
+ * one; the first starts with the cue and the last ends with it. */
+function spokenWindows(cue: SubtitleCue, words: string[]): TimedWord[] | null {
+  const spoken = cue.words;
+  if (!spoken || spoken.length !== words.length || spoken.some((w, i) => w.text !== words[i])) return null;
+  const starts = [cue.start];
+  for (const { start } of spoken.slice(1)) {
+    if (!Number.isFinite(start) || start < starts[starts.length - 1] || start > cue.end) return null;
+    starts.push(start);
+  }
+  return words.map((text, i) => ({ start: starts[i], end: starts[i + 1] ?? cue.end, text }));
+}
+
 export function getWordWindows(cue: SubtitleCue): TimedWord[] {
   const words = cue.text.split(/\s+/).filter((w) => w.length > 0);
   if (words.length === 0) return [];
+  const spoken = spokenWindows(cue, words);
+  if (spoken) return spoken;
 
   const totalChars = words.reduce((sum, w) => sum + w.length, 0);
   const duration = cue.end - cue.start;

@@ -487,7 +487,7 @@ pub fn ffmpeg_target(format: &str) -> Result<(&'static str, &'static [&'static s
 /// Streams the buffer to ffmpeg as raw interleaved little-endian f32, so no
 /// intermediate file (gigabytes per hour of audio, often on a RAM-backed
 /// /tmp) is ever written.
-fn write_pcm(mut sink: impl Write, buf: &AudioBuffer, job: &Job) -> std::io::Result<()> {
+pub(crate) fn write_pcm(mut sink: impl Write, buf: &AudioBuffer, job: &Job) -> std::io::Result<()> {
     const BLOCK_FRAMES: usize = 4096;
     let frames = buf.num_frames();
     let mut bytes = Vec::with_capacity(BLOCK_FRAMES * buf.channels() * 4);

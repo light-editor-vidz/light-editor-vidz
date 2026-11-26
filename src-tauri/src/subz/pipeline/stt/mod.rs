@@ -23,6 +23,9 @@ pub struct Segment {
 pub struct Transcript {
     pub language: String,
     pub segments: Vec<Segment>,
+    /// Les mots avec le temps que le moteur leur a donné (vide s'il n'en donne pas) : le
+    /// surlignage mot à mot s'y cale.
+    pub words: Vec<TimedWord>,
 }
 
 pub trait SttEngine {
@@ -67,19 +70,22 @@ fn respell_from_segment(words: Vec<TimedWord>, text: &str) -> Vec<TimedWord> {
 }
 
 /// The cues of one segment: cut on the real time of its words when the engine gave them,
-/// otherwise the segment as it is (`build_cues` then splits it in proportion).
+/// otherwise the segment as it is (`build_cues` then splits it in proportion). The words, spelled
+/// as in the cues, are also added to `spoken`.
 pub fn cues_from_words(
     start: f64,
     end: f64,
     text: &str,
     words: Vec<TimedWord>,
     limits: CueLimits,
+    spoken: &mut Vec<TimedWord>,
 ) -> Vec<Segment> {
+    // The words give the times, the segment text gives the spelling: a provider's `words[]`
+    // may drop the punctuation the segment text carries. Each word takes the stretch of the
+    // segment text from where it starts to where the next word starts.
+    let words = respell_from_segment(words, text);
+    spoken.extend(words.iter().cloned());
     if words.len() > 1 {
-        // The words give the times, the segment text gives the spelling: a provider's `words[]`
-        // may drop the punctuation the segment text carries. Each word takes the stretch of the
-        // segment text from where it starts to where the next word starts.
-        let words = respell_from_segment(words, text);
         segmentation::split_timed(&words, limits)
     } else {
         vec![Segment {

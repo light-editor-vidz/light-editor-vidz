@@ -35,6 +35,7 @@ interface Props {
   onGeometryToggle: () => void;
   onSubtitlesToggle: () => void;
   onSequences: () => void;
+  onSilences: () => void;
   onExtractAudio: () => void;
 }
 
@@ -55,6 +56,7 @@ function Toolbar({
   onGeometryToggle,
   onSubtitlesToggle,
   onSequences,
+  onSilences,
   onExtractAudio,
 }: Props) {
   const { t, lang } = useT();
@@ -226,6 +228,17 @@ function Toolbar({
         <button className="tool-toggle-btn" onClick={onSequences}>
           <SequencesIcon />
           {t.sequences_split}
+        </button>
+      </div>
+
+      <div className="tool-divider" />
+
+      {/* Silences: detected, then added as cuts */}
+      <div className="tool-section">
+        <div className="tool-label">{t.tool_silences}</div>
+        <button className="tool-toggle-btn" onClick={onSilences}>
+          <SoundOffIcon />
+          {t.silences_open}
         </button>
       </div>
 

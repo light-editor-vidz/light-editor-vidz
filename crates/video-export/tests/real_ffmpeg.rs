@@ -131,7 +131,7 @@ fn thumbnails_are_extracted_by_seeking_one_frame_each() {
     let pattern = dir.path().join("t_%03d.jpg").to_string_lossy().into_owned();
 
     r.run(
-        &video_export::preview::thumbnail_args(&src, &pattern, 5, 6.0),
+        &video_export::preview::thumbnail_args(&src, &pattern, 5, 6.0, None),
         &mut |_| {},
     )
     .unwrap();
@@ -141,6 +141,53 @@ fn thumbnails_are_extracted_by_seeking_one_frame_each() {
             dir.path().join(format!("t_{i:03}.jpg")).is_file(),
             "thumbnail {i}"
         );
+    }
+}
+
+#[test]
+fn the_exported_sound_reaches_the_loudness_target() {
+    let Some(r) = runner() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let src = make_clip(&r, dir.path());
+    let out = dir.path().join("loud.mp4").to_string_lossy().into_owned();
+
+    export(
+        &r,
+        &options(&src, &out, serde_json::json!({"loudness": -14.0})),
+    )
+    .unwrap();
+
+    let log = std::process::Command::new(&r.ffmpeg)
+        .args(["-hide_banner", "-nostats", "-i", &out])
+        .args(["-vn", "-af", "ebur128", "-f", "null", "-"])
+        .output()
+        .unwrap();
+    let log = String::from_utf8_lossy(&log.stderr).into_owned();
+    let measured: f64 = log
+        .rsplit("I:")
+        .next()
+        .and_then(|v| v.split_whitespace().next()?.parse().ok())
+        .expect("mesure ebur128");
+    assert!((measured + 14.0).abs() < 1.0, "{measured} LUFS");
+}
+
+#[test]
+fn every_voice_cleanup_level_exports_with_the_loudness_target() {
+    let Some(r) = runner() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let src = make_clip(&r, dir.path());
+    for level in ["light", "medium", "strong"] {
+        let out = dir
+            .path()
+            .join(format!("{level}.mp4"))
+            .to_string_lossy()
+            .into_owned();
+        let patch = serde_json::json!({
+            "voice": {"level": level, "denoise": true, "gate": true},
+            "loudness": -16.0,
+        });
+        export(&r, &options(&src, &out, patch)).unwrap();
+        assert!((duration(&r, &out) - 3.0).abs() < 0.3, "{level}");
     }
 }
 
@@ -393,8 +440,11 @@ fn scenes_are_detected_and_merged_in_the_chosen_order() {
 
     // La seconde séquence d'abord, la première supprimée de la fusion.
     let out = dir.path().join("merged.mp4").to_string_lossy().into_owned();
-    r.run(&merge_args(&src, &out, &[sequences[1]], true), &mut |_| {})
-        .unwrap();
+    r.run(
+        &merge_args(&src, &out, &[sequences[1]], true, None),
+        &mut |_| {},
+    )
+    .unwrap();
     assert!((duration(&r, &out) - 2.0).abs() < 0.3);
 
     let out = dir
@@ -403,7 +453,7 @@ fn scenes_are_detected_and_merged_in_the_chosen_order() {
         .to_string_lossy()
         .into_owned();
     let swapped = [sequences[1], sequences[0]];
-    r.run(&merge_args(&src, &out, &swapped, true), &mut |_| {})
+    r.run(&merge_args(&src, &out, &swapped, true, None), &mut |_| {})
         .unwrap();
     assert!((duration(&r, &out) - 4.0).abs() < 0.3);
     assert!(r
@@ -447,4 +497,109 @@ fn the_audio_track_is_separated_without_the_video() {
     r.run(&extract_args(&src, &flac, false), &mut |_| {})
         .unwrap();
     assert_eq!(r.probe(&flac).unwrap().streams[0].codec_name, "flac");
+}
+
+/// Une mire HLG 10 bits construite depuis une mire SDR dont le blanc de référence est à 203 nits.
+fn make_hdr_clip(runner: &ProcessRunner, dir: &Path) -> String {
+    let path = dir.join("hdr.mp4").to_string_lossy().into_owned();
+    let args: Vec<String> = [
+        "-f",
+        "lavfi",
+        "-i",
+        "smptehdbars=s=640x360:r=10:d=1",
+        "-vf",
+        "format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv,\
+         zscale=t=linear:npl=203,format=gbrpf32le,\
+         zscale=p=bt2020:t=arib-std-b67:m=bt2020nc:r=tv:npl=203,format=yuv420p10le",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "8",
+        &path,
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    runner
+        .run(&args, &mut |_| {})
+        .expect("le clip HDR de test se crée");
+    path
+}
+
+/// La couleur moyenne (RVB) d'un carré au milieu de la barre cyan de la mire.
+fn cyan_patch(runner: &ProcessRunner, path: &str) -> [u8; 3] {
+    let out = std::process::Command::new(&runner.ffmpeg)
+        .args(["-v", "error", "-i", path, "-vf"])
+        .arg("crop=40:40:230:60,scale=1:1:flags=area,format=rgb24")
+        .args(["-frames:v", "1", "-f", "rawvideo", "-"])
+        .output()
+        .unwrap();
+    [out.stdout[0], out.stdout[1], out.stdout[2]]
+}
+
+#[test]
+fn an_hdr_source_is_exported_as_sdr_with_its_colours() {
+    let Some(r) = runner() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let src = make_hdr_clip(&r, dir.path());
+    assert_eq!(
+        r.probe(&src).unwrap().streams[0].color_transfer.as_deref(),
+        Some("arib-std-b67")
+    );
+    let out = dir.path().join("out.mp4").to_string_lossy().into_owned();
+
+    export(
+        &r,
+        &options(
+            &src,
+            &out,
+            serde_json::json!({"segments": [{"start": 0.0, "end": 1.0}]}),
+        ),
+    )
+    .unwrap();
+
+    let video = r.probe(&out).unwrap().streams.remove(0);
+    assert_eq!(video.color_transfer.as_deref(), Some("bt709"));
+    assert_eq!(video.pix_fmt.as_deref(), Some("yuv420p"));
+    // Cyan d'origine : (0, 191, 190). Sans conversion, il sort délavé, vers (113, 158, 160).
+    let [red, green, blue] = cyan_patch(&r, &out);
+    assert!(
+        red < 25 && green.abs_diff(188) < 12 && blue.abs_diff(187) < 12,
+        "({red}, {green}, {blue})"
+    );
+}
+
+#[test]
+fn the_silences_of_a_real_file_are_found() {
+    use video_export::silence::{parse_silences, silence_detect_args};
+    let Some(r) = runner() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("gaps.wav").to_string_lossy().into_owned();
+    // 1 s de son, 2 s de silence, 1 s de son, puis 1 s de silence jusqu'à la fin.
+    let args: Vec<String> = [
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=d=5",
+        "-af",
+        "volume=0:enable='between(t,1,3)+gte(t,4)'",
+        &src,
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    r.run(&args, &mut |_| {}).unwrap();
+    let log = dir.path().join("sil.log").to_string_lossy().into_owned();
+
+    r.run(&silence_detect_args(&src, &log, -35.0, 0.4), &mut |_| {})
+        .unwrap();
+
+    let found = parse_silences(&std::fs::read_to_string(&log).unwrap(), 5.0);
+    assert_eq!(found.len(), 2, "{found:?}");
+    for (silence, (start, end)) in found.iter().zip([(1.0, 3.0), (4.0, 5.0)]) {
+        assert!(
+            (silence.start - start).abs() < 0.1 && (silence.end - end).abs() < 0.1,
+            "{found:?}"
+        );
+    }
 }

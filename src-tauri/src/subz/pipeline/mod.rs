@@ -43,6 +43,9 @@ pub struct PipelineOutput {
     pub srt_path: String,
     pub srt_content: String,
     pub language: String,
+    /// Les mots horodatés de la transcription (vide si le moteur n'en donne pas).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<segmentation::TimedWord>,
     /// Codes (translated by the frontend, like error codes) of what degraded the result without
     /// failing the run: `vad_unavailable` = the speech-detection model could not be fetched, the
     /// transcription ran without it (more text invented on silences).
@@ -405,6 +408,7 @@ pub async fn run(
         srt_path: paths::to_webview(&srt_path),
         srt_content,
         language: transcript.language,
+        words: transcript.words,
         warnings,
     })
 }
@@ -907,6 +911,27 @@ mod tests {
         println!("language={} \n{srt}", transcript.language);
         assert_eq!(transcript.language, "en");
         assert!(srt.to_lowercase().contains("country"), "{srt}");
+        // Les mots horodatés dont se sert le surlignage karaoké : présents, dans l'ordre, et qui
+        // tombent dans les répliques.
+        let words = &transcript.words;
+        println!(
+            "{} words, first: {:?}",
+            words.len(),
+            &words[..words.len().min(6)]
+        );
+        assert!(words.len() >= 15, "{words:?}");
+        assert!(words.iter().all(|w| w.end >= w.start), "{words:?}");
+        assert!(
+            words.windows(2).all(|w| w[1].start >= w[0].start),
+            "{words:?}"
+        );
+        let cues = segmentation::build_cues(&transcript.segments);
+        assert!(
+            words.iter().all(|w| cues
+                .iter()
+                .any(|c| w.start >= c.start - 0.5 && w.end <= c.end + 0.5)),
+            "{words:?}"
+        );
         let wav = extracted.path.clone();
         drop(extracted);
         assert!(!wav.exists(), "the temporary WAV must be deleted");

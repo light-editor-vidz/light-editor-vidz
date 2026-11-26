@@ -9,7 +9,7 @@ import { acquireMediaObjectUrl } from "./mediaCache";
  * webview refuse ce protocole (`onError`), on bascule sur le flux HTTP local (`media_server.rs`), ou
  * à défaut sur l'URL `blob:` construite depuis les octets bruts (`read_media_file`, via `mediaCache`).
  */
-export function useMediaSource(projectDir: string, relativeSrc: string) {
+export function useMediaSource(projectDir: string, relativeSrc: string, { readablePixels = false } = {}) {
   // Les états sont rattachés à la source qui les a produits : changer de source repart du flux
   // sans réinitialisation manuelle.
   const key = `${projectDir}\n${relativeSrc}`;
@@ -27,8 +27,15 @@ export function useMediaSource(projectDir: string, relativeSrc: string) {
       return acquired.promise;
     };
     // Le flux HTTP local d'abord : une vidéo lue depuis un `blob:` se corrompt dans le WebView de Linux.
-    invoke<string | undefined>("project_stream_url", { projectDir, src: relativeSrc })
-      .then((url) => url || fromMemory(), fromMemory)
+    // Sauf pour lire les pixels (fond vert) : WebKitGTK les refuse à un canvas pour ce flux, même
+    // avec les en-têtes CORS ; l'URL `blob:`, de même origine, les donne.
+    const source = readablePixels
+      ? fromMemory()
+      : invoke<string | undefined>("project_stream_url", { projectDir, src: relativeSrc }).then(
+          (url) => url || fromMemory(),
+          fromMemory,
+        );
+    source
       .then((url) => {
         if (!cancelled) setBlob({ key, url });
       })
@@ -39,7 +46,7 @@ export function useMediaSource(projectDir: string, relativeSrc: string) {
       cancelled = true;
       release();
     };
-  }, [useBlob, projectDir, relativeSrc, key]);
+  }, [useBlob, projectDir, relativeSrc, key, readablePixels]);
 
   /** À appeler quand le lecteur signale une erreur : passe au repli blob (une seule fois). */
   const fallBack = useCallback(() => setFallbackFor(key), [key]);

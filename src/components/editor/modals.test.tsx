@@ -28,6 +28,7 @@ describe("ExportModal", () => {
         projectWidth={1920}
         projectHeight={1080}
         projectFps={30}
+        projectDuration={60}
         onExport={onExport}
         onExportAudio={onExportAudio}
         onClose={onClose}
@@ -48,7 +49,7 @@ describe("ExportModal", () => {
   it("starts on the original resolution, frame rate and medium quality", () => {
     const { container } = setup();
     const selected = [...container.querySelectorAll(".fps-option.selected")].map((b) => b.textContent);
-    expect(selected).toEqual(["Video (MP4)", "Original", "Original", "Medium"]);
+    expect(selected).toEqual(["Video (MP4)", "Original", "Original", "Medium", "Unchanged"]);
   });
 
   it("switches to audio only: formats replace the video settings, MP3 is preselected", () => {
@@ -60,11 +61,34 @@ describe("ExportModal", () => {
     expect(screen.queryByText("Resolution")).not.toBeInTheDocument();
     expect(screen.queryByText("Frame rate")).not.toBeInTheDocument();
     const selected = [...container.querySelectorAll(".fps-option.selected")].map((b) => b.textContent);
-    expect(selected).toEqual(["Audio only", "MP3"]);
+    expect(selected).toEqual(["Audio only", "MP3", "Unchanged"]);
 
     fireEvent.click(exportButton());
-    expect(onExportAudio).toHaveBeenCalledWith("mp3");
+    expect(onExportAudio).toHaveBeenCalledWith("mp3", null);
     expect(onExport).not.toHaveBeenCalled();
+  });
+
+  it("asks for the chosen loudness, for the video as for the audio alone", () => {
+    const { onExport, onExportAudio } = setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "-14 LUFS" }));
+    fireEvent.click(exportButton());
+    expect(onExport).toHaveBeenCalledWith(expect.objectContaining({ loudness: -14 }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Audio only" }));
+    fireEvent.click(exportButton());
+    expect(onExportAudio).toHaveBeenCalledWith("mp3", -14);
+  });
+
+  it("applies a destination preset and warns before the export about what will not fit", () => {
+    const { onExport } = setup({ projectDuration: 200 });
+
+    fireEvent.change(screen.getByLabelText("Destination"), { target: { value: "shorts" } });
+
+    expect(screen.getByText(/Duration: 3:20 \(expected ≤ 3:00\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Format: 1.78/)).toBeInTheDocument();
+    fireEvent.click(exportButton());
+    expect(onExport).toHaveBeenCalledWith(expect.objectContaining({ fps: 30, loudness: -14, crf: 23 }), "shorts");
   });
 
   it.each([
@@ -81,7 +105,7 @@ describe("ExportModal", () => {
     fireEvent.click(screen.getByRole("button", { name: label }));
     fireEvent.click(exportButton());
 
-    expect(onExportAudio).toHaveBeenCalledWith(format);
+    expect(onExportAudio).toHaveBeenCalledWith(format, null);
   });
 
   it("keeps the video settings when switching back from audio only", () => {
@@ -100,7 +124,7 @@ describe("ExportModal", () => {
 
     fireEvent.click(exportButton());
 
-    expect(onExport).toHaveBeenCalledWith({ width: null, height: null, fps: null, crf: 23 });
+    expect(onExport).toHaveBeenCalledWith({ width: null, height: null, fps: null, crf: 23, loudness: null });
   });
 
   it.each([

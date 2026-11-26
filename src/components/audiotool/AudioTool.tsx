@@ -1,3 +1,4 @@
+import { NO_VOICE_CLEANUP } from "../../lib/voice";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
@@ -150,6 +151,8 @@ export default function AudioTool({ path, origin, onOpen, onClose, registerClose
   const [toOrigin, setToOrigin] = useState(!!origin);
   const [format, setFormat] = useState<ExportFormat>("wav");
   const [wavDepth, setWavDepth] = useState<WavDepth>("float32");
+  const [loudness, setLoudness] = useState<number | null>(null);
+  const [voice, setVoice] = useState(NO_VOICE_CLEANUP);
   const [processing, setProcessing] = useState(false);
   // Quitter pendant l'export demande confirmation.
   useEffect(() => (processing ? markBusy("quit.audioExport") : undefined), [processing]);
@@ -435,7 +438,7 @@ export default function AudioTool({ path, origin, onOpen, onClose, registerClose
     setProcessing(true);
     setProgress(0);
     try {
-      await audioProcess(
+      const report = await audioProcess(
         buildProcessOptions(
           {
             filePath: loaded.path,
@@ -453,13 +456,16 @@ export default function AudioTool({ path, origin, onOpen, onClose, registerClose
             filterSlope: settings.filterSlope,
             filterQ: settings.filterQ,
             wavDepth,
+            loudness,
+            voice,
           },
           output,
         ),
         owner,
       );
       setExportOpen(false);
-      if (toComputer) say(t("audioTool.export.done", { name: baseName(output) }), "success");
+      if (report?.loudness_skipped) say(t("loudness.skipped"), "warning");
+      else if (toComputer) say(t("audioTool.export.done", { name: baseName(output) }), "success");
       if (projects.length > 0 || (toOrigin && origin)) await addToProjects(output);
     } catch (e) {
       if ((e as EngineError | null)?.code === "cancelled") say(t("audioTool.export.cancelled"), "warning");
@@ -690,6 +696,10 @@ export default function AudioTool({ path, origin, onOpen, onClose, registerClose
           wavDepth={wavDepth}
           onFormat={setFormat}
           onWavDepth={setWavDepth}
+          loudness={loudness}
+          onLoudness={setLoudness}
+          voice={voice}
+          onVoice={setVoice}
           problem={problemText}
           processing={processing}
           progress={progress}
